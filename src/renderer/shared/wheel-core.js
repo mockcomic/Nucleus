@@ -154,7 +154,8 @@ export function buildWheel(container, cfg, opts = {}) {
   centerLabel.textContent = ap.centerLabel || '';
   root.appendChild(hubIcon); root.appendChild(hubLabel); root.appendChild(centerLabel);
 
-  if (ap.animationMs > 0 && !opts.preview) {
+  const prefersReducedMotion = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (ap.animationMs > 0 && !opts.preview && !prefersReducedMotion) {
     root.style.animation = `wheelpop ${ap.animationMs}ms cubic-bezier(.34,1.56,.64,1)`;
     root.addEventListener('animationend', () => { root.style.animation = ''; }, { once: true });
   }

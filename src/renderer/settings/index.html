@@ -15,11 +15,20 @@
       <button class="tab-btn" data-tab="advanced">Advanced</button>
     </nav>
     <div class="side-foot">
+      <div id="save-state" class="save-state" aria-live="polite"></div>
       <div id="ver" class="muted"></div>
     </div>
   </aside>
 
   <main id="content">
+
+    <div id="cfg-warn" class="err cfg-warn hidden" role="alert">
+      <span>Your <b>config.json</b> was corrupt and could not be read — defaults are in use. The broken file was kept as <b>config.json.bad</b> in the config folder.</span>
+      <span class="cfg-warn-actions">
+        <button class="btn small" id="cfg-warn-folder">Open config folder</button>
+        <button class="btn small" id="cfg-warn-x">Dismiss</button>
+      </span>
+    </div>
 
     <section class="tab" id="tab-segments">
       <div class="tab-head">
@@ -98,16 +107,16 @@
     <div class="preview-title">Live preview</div>
     <div id="wheel-preview"></div>
     <div class="row-line center">
-      <button class="btn primary" id="btn-test">▶ Test the real wheel</button>
+      <button class="btn primary" id="btn-test"><span class="g">&#xE9A1;</span> Test the real wheel</button>
     </div>
     <div class="hint muted">The preview uses the same renderer as the real overlay. Test pops the actual menu at your mouse.</div>
   </aside>
 
-  <div id="toasts"></div>
+  <div id="toasts" role="status" aria-live="polite"></div>
 
-  <div id="icon-modal" class="modal hidden">
+  <div id="icon-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="icon-modal-title">
     <div class="modal-card">
-      <div class="modal-head">Choose an icon <button id="icon-none" class="btn small">None</button><button id="icon-close" class="btn small">✕</button></div>
+      <div class="modal-head"><span id="icon-modal-title">Choose an icon</span> <button id="icon-none" class="btn small">None</button><button id="icon-close" class="btn small glyph" aria-label="Close">&#xE894;</button></div>
       <div id="icon-grid" class="icon-grid"></div>
     </div>
   </div>

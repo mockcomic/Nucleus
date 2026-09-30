@@ -1,0 +1,361 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-30T17:23:46.400Z",
+  "title": "Design System: Radial Wheel",
+  "extensions": {
+    "colorMeta": {
+      "pilot-blue": {
+        "role": "primary",
+        "displayName": "Pilot Blue",
+        "canonical": "#4c9ff0",
+        "tonalRamp": [
+          "oklch(23% 0.08 254)",
+          "oklch(34% 0.12 254)",
+          "oklch(45% 0.15 253)",
+          "oklch(56% 0.16 251)",
+          "oklch(68% 0.14 249)",
+          "oklch(78% 0.10 248)",
+          "oklch(88% 0.06 247)",
+          "oklch(95% 0.03 246)"
+        ]
+      },
+      "pilot-blue-deep": {
+        "role": "primary",
+        "displayName": "Pilot Blue Deep",
+        "canonical": "#2e7dd1",
+        "tonalRamp": [
+          "oklch(21% 0.08 256)",
+          "oklch(30% 0.11 255)",
+          "oklch(40% 0.14 254)",
+          "oklch(49% 0.15 253)",
+          "oklch(58% 0.15 251)",
+          "oklch(68% 0.13 249)",
+          "oklch(80% 0.09 248)",
+          "oklch(92% 0.04 246)"
+        ]
+      },
+      "midnight": {
+        "role": "neutral",
+        "displayName": "Midnight",
+        "canonical": "#0f1419",
+        "tonalRamp": [
+          "oklch(13% 0.02 256)",
+          "oklch(20% 0.025 256)",
+          "oklch(27% 0.03 255)",
+          "oklch(36% 0.03 254)",
+          "oklch(52% 0.025 252)",
+          "oklch(70% 0.018 250)",
+          "oklch(86% 0.01 249)",
+          "oklch(95% 0.005 248)"
+        ]
+      },
+      "panel": {
+        "role": "neutral",
+        "displayName": "Panel",
+        "canonical": "#131a22",
+        "tonalRamp": [
+          "oklch(15% 0.02 256)",
+          "oklch(22% 0.026 256)",
+          "oklch(29% 0.03 255)",
+          "oklch(38% 0.03 254)",
+          "oklch(54% 0.025 252)",
+          "oklch(72% 0.018 250)",
+          "oklch(87% 0.01 249)",
+          "oklch(95% 0.005 248)"
+        ]
+      },
+      "card": {
+        "role": "neutral",
+        "displayName": "Card",
+        "canonical": "#161f29",
+        "tonalRamp": [
+          "oklch(16% 0.022 256)",
+          "oklch(24% 0.028 256)",
+          "oklch(31% 0.032 255)",
+          "oklch(40% 0.03 254)",
+          "oklch(56% 0.025 252)",
+          "oklch(73% 0.018 250)",
+          "oklch(88% 0.01 249)",
+          "oklch(96% 0.005 248)"
+        ]
+      },
+      "field-bg": {
+        "role": "neutral",
+        "displayName": "Field Well",
+        "canonical": "#0d141b",
+        "tonalRamp": [
+          "oklch(12% 0.022 257)",
+          "oklch(19% 0.027 257)",
+          "oklch(26% 0.032 256)",
+          "oklch(35% 0.03 255)",
+          "oklch(51% 0.025 253)",
+          "oklch(69% 0.018 251)",
+          "oklch(85% 0.01 249)",
+          "oklch(95% 0.005 248)"
+        ]
+      },
+      "btn-bg": {
+        "role": "neutral",
+        "displayName": "Button Slate",
+        "canonical": "#1d2a37",
+        "tonalRamp": [
+          "oklch(17% 0.03 255)",
+          "oklch(25% 0.035 255)",
+          "oklch(32% 0.04 254)",
+          "oklch(41% 0.035 253)",
+          "oklch(57% 0.028 252)",
+          "oklch(74% 0.02 250)",
+          "oklch(88% 0.011 249)",
+          "oklch(96% 0.005 248)"
+        ]
+      },
+      "hairline": {
+        "role": "neutral",
+        "displayName": "Hairline",
+        "canonical": "#21303e"
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "canonical": "#e8eef4"
+      },
+      "ink-muted": {
+        "role": "neutral",
+        "displayName": "Ink Muted",
+        "canonical": "#8fa3b5"
+      },
+      "danger": {
+        "role": "semantic",
+        "displayName": "Signal Red",
+        "canonical": "#e05656",
+        "tonalRamp": [
+          "oklch(26% 0.12 27)",
+          "oklch(36% 0.16 27)",
+          "oklch(46% 0.19 27)",
+          "oklch(56% 0.2 27)",
+          "oklch(66% 0.19 26)",
+          "oklch(77% 0.14 26)",
+          "oklch(88% 0.08 26)",
+          "oklch(95% 0.04 26)"
+        ]
+      },
+      "ring-inner": {
+        "role": "surface",
+        "displayName": "Ring Inner Plate",
+        "canonical": "#1b2733"
+      },
+      "ring-outer": {
+        "role": "surface",
+        "displayName": "Ring Outer Plate",
+        "canonical": "#16202b"
+      },
+      "wheel-center": {
+        "role": "surface",
+        "displayName": "Wheel Center",
+        "canonical": "#0a0e12"
+      }
+    },
+    "typographyMeta": {
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Tab titles in the Settings content header only."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Sidebar brand wordmark and section heads."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Base UI voice; buttons inherit."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Form labels, hints, muted metadata."
+      },
+      "mono": {
+        "displayName": "Machine Truth",
+        "purpose": "Consolas for paths, target values, code chips."
+      }
+    },
+    "shadows": [
+      {
+        "name": "wheel-drop",
+        "value": "filter: drop-shadow via SVG feDropShadow dx=0 dy=6 stdDeviation=14 flood-color rgba(0,0,0,0.55)",
+        "purpose": "The entire wheel floats over the desktop on this single deep drop."
+      },
+      {
+        "name": "float-high",
+        "value": "0 12px 32px rgba(0,0,0,0.55)",
+        "purpose": "Dropdown/combo lists and the icon-picker modal — highest layer."
+      },
+      {
+        "name": "float-low",
+        "value": "0 6px 20px rgba(0,0,0,0.4)",
+        "purpose": "Toasts and ephemeral notices."
+      },
+      {
+        "name": "pilot-glow",
+        "value": "0 0 10px var(--accent)",
+        "purpose": "Brand dot only — the one permitted glow."
+      },
+      {
+        "name": "modal-scrim",
+        "value": "rgba(5,8,11,0.65) full-viewport tint",
+        "purpose": "Only full-viewport translucency in the system."
+      }
+    ],
+    "motion": [
+      {
+        "name": "wheel-pop",
+        "value": "scale(0.82) opacity(0) -> scale(1) opacity(1), 160ms",
+        "purpose": "Summon animation; user-tunable 0-400ms via appearance.animationMs."
+      },
+      {
+        "name": "spring",
+        "value": "cubic-bezier(0.34, 1.56, 0.64, 1) 120ms",
+        "purpose": "Segment hover outward nudge — the only overshoot in the system."
+      },
+      {
+        "name": "fade-state",
+        "value": "100ms ease",
+        "purpose": "Fill/color state changes on segments, hub, buttons."
+      },
+      {
+        "name": "dim-others",
+        "value": "120ms ease opacity to 0.55",
+        "purpose": "Non-hovered segments recede when any segment is hovered."
+      },
+      {
+        "name": "toast-in",
+        "value": "180ms ease translateY(-6px) -> 0",
+        "purpose": "Toast entrance; pairs with undo affordance."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "@media (prefers-reduced-motion: reduce): pop and spring become instant or crossfade",
+        "purpose": "Required alternative for every animation."
+      }
+    ],
+    "breakpoints": []
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The single confirming action per view: Add segment, Save, Re-scan.",
+      "html": "<button class=\"ds-btn-primary\">Save changes</button>",
+      "css": ".ds-btn-primary { background: #2e7dd1; color: #fff; border: 1px solid #2e7dd1; padding: 7px 13px; font: 400 13px 'Segoe UI', system-ui, sans-serif; border-radius: 8px; cursor: pointer; transition: background .1s ease, border-color .1s ease; } .ds-btn-primary:hover { background: #4c9ff0; } .ds-btn-primary:focus-visible { outline: none; border-color: #4c9ff0; box-shadow: 0 0 0 2px rgba(76,159,240,.35); } .ds-btn-primary:active { transform: translateY(1px); }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button",
+      "description": "Default control: Browse, Export, Re-scan, row actions. Danger variant keeps this body with Signal Red text.",
+      "html": "<button class=\"ds-btn\">Export config</button>",
+      "css": ".ds-btn { background: #1d2a37; color: #e8eef4; border: 1px solid #21303e; padding: 7px 13px; font: 400 13px 'Segoe UI', system-ui, sans-serif; border-radius: 8px; cursor: pointer; transition: border-color .1s ease; } .ds-btn:hover { border-color: #4c9ff0; } .ds-btn:focus-visible { outline: none; border-color: #4c9ff0; box-shadow: 0 0 0 2px rgba(76,159,240,.35); }"
+    },
+    {
+      "name": "Text Input / Select",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Field-well input; focus is a single quiet border step to accent.",
+      "html": "<input class=\"ds-input\" type=\"text\" placeholder=\"Target, e.g. notepad.exe\" value=\"\">",
+      "css": ".ds-input { background: #0d141b; color: #e8eef4; border: 1px solid #21303e; border-radius: 7px; padding: 7px 9px; font: 400 13px 'Segoe UI', system-ui, sans-serif; outline: none; width: 100%; transition: border-color .1s ease; } .ds-input:focus { border-color: #4c9ff0; } .ds-input::placeholder { color: #8fa3b5; }"
+    },
+    {
+      "name": "Sidebar Tab",
+      "kind": "nav",
+      "refersTo": "tab-active",
+      "description": "Left-rail navigation: muted at rest, slate wash on hover, Pilot Blue Deep when active.",
+      "html": "<nav class=\"ds-nav\"><button class=\"ds-tab\">Segments</button><button class=\"ds-tab active\">Appearance</button></nav>",
+      "css": ".ds-nav { display: flex; flex-direction: column; gap: 4px; background: #131a22; padding: 12px; width: 210px; } .ds-tab { text-align: left; background: transparent; color: #8fa3b5; border: 0; padding: 10px 12px; border-radius: 8px; font: 400 14px 'Segoe UI', system-ui, sans-serif; cursor: pointer; transition: background .1s ease, color .1s ease; } .ds-tab:hover { background: #1a2430; color: #e8eef4; } .ds-tab.active { background: #2e7dd1; color: #fff; } .ds-tab:focus-visible { outline: none; box-shadow: 0 0 0 2px rgba(76,159,240,.45); }"
+    },
+    {
+      "name": "Settings Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "Flat content container at rest; hairline seam, no shadow (Float-Only Shadow Rule).",
+      "html": "<section class=\"ds-card\"><div class=\"ds-card-title\">Wheel geometry</div><p class=\"ds-card-body\">Inner and outer radius, ring split, gaps.</p></section>",
+      "css": ".ds-card { background: #161f29; border: 1px solid #21303e; border-radius: 10px; padding: 16px; margin-bottom: 14px; font-family: 'Segoe UI', system-ui, sans-serif; } .ds-card-title { color: #e8eef4; font-weight: 700; font-size: 13.5px; margin-bottom: 10px; } .ds-card p { color: #8fa3b5; font-size: 12.5px; line-height: 1.45; margin: 0; }"
+    },
+    {
+      "name": "Action-Type Chip",
+      "kind": "chip",
+      "refersTo": "chip",
+      "description": "Full-pill tag marking a segment's action type on list rows.",
+      "html": "<span class=\"ds-chip\">macro</span>",
+      "css": ".ds-chip { display: inline-block; background: #1d2a37; border: 1px solid #21303e; color: #8fa3b5; font: 400 11px 'Segoe UI', system-ui, sans-serif; padding: 1px 7px; border-radius: 20px; }"
+    },
+    {
+      "name": "Toast with Undo",
+      "kind": "custom",
+      "refersTo": "toast",
+      "description": "Ephemeral feedback; the undo link is the system's model for forgiving actions.",
+      "html": "<div class=\"ds-toast\">Segment deleted<span class=\"ds-toast-undo\">Undo</span></div>",
+      "css": ".ds-toast { background: #1d2a37; border: 1px solid #2e7dd1; border-radius: 10px; padding: 9px 13px; font: 400 13px 'Segoe UI', system-ui, sans-serif; color: #e8eef4; box-shadow: 0 6px 20px rgba(0,0,0,.4); display: flex; gap: 10px; align-items: center; } .ds-toast.error { border-color: #e05656; } .ds-toast-undo { color: #4c9ff0; font-weight: 600; cursor: pointer; }"
+    },
+    {
+      "name": "Combo Dropdown Row",
+      "kind": "custom",
+      "refersTo": null,
+      "description": "Installed-programs picker row: name, category, mono path — floating layer with float-high shadow.",
+      "html": "<div class=\"ds-combo\"><div class=\"ds-combo-row active\"><span class=\"ds-combo-name\">Calculator</span><span class=\"ds-combo-cat\">Accessories</span><span class=\"ds-combo-path\">C:\\Windows\\System32\\calc.exe</span></div></div>",
+      "css": ".ds-combo { background: #0d141b; border: 1px solid #2e7dd1; border-radius: 9px; box-shadow: 0 12px 32px rgba(0,0,0,.55); padding: 4px; width: 320px; font-family: 'Segoe UI', system-ui, sans-serif; } .ds-combo-row { display: grid; grid-template-columns: minmax(120px, auto) minmax(80px, 1fr); column-gap: 10px; align-items: baseline; padding: 6px 9px; border-radius: 6px; cursor: pointer; } .ds-combo-row:hover, .ds-combo-row.active { background: #2e7dd1; } .ds-combo-name { color: #e8eef4; font-weight: 600; font-size: 13px; } .ds-combo-cat { color: #8fa3b5; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .ds-combo-path { grid-column: 1 / -1; color: #5f7488; font-family: Consolas, monospace; font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Machined Object",
+    "overview": "An Apple-inspired physical system. Every surface reads as real material on a dark desk: machined edges lit from above, controls that press, a dial that springs under the finger. Depth comes from light and shadow on solid matter, never from glow. Machined midnight hardware: the Settings window is a well-built instrument panel — three deliberate columns, dense but breathable rows, hairline seams instead of decoration. The wheel itself is the product's hero object: a two-ring dial of tinted metal plates at the cursor, popping in with weight and springing under hover. Color is nearly absent from the chrome and precisely present where it means something — Pilot Blue for the thing you're about to act on.",
+    "keyCharacteristics": [
+      "One family, five weights: Segoe UI carries everything; Segoe Fluent Icons is the only pictographic voice; Consolas marks machine truth.",
+      "Tonal midnight ramp (bg → panel → card → field) with hairline borders; shadows reserved exclusively for floating objects.",
+      "A single accent — Pilot Blue — speaking for selection, focus, and primary action.",
+      "Motion with physics: the wheel's 160 ms pop and spring-hover overshoot are the signature; everything else stays under 200 ms.",
+      "Radius and padding steps are small and consistent; nothing is more decorative than its function."
+    ],
+    "rules": [
+      {
+        "name": "The Pilot Blue Rule",
+        "body": "The accent appears only where a user action is being invited, taken, or focused — primary buttons, active tab, focus rings, hover fills, slider outputs. It never decorates inactive content. Its rarity is what makes it read as 'live.'",
+        "section": "colors"
+      },
+      {
+        "name": "The No-Glow Rule",
+        "body": "The only permitted glow in the system is the 10px brand dot beside the sidebar title. Neon halos, acrylic blur frames, and illuminated edges — the gamer-HUD reflex — are banned outright.",
+        "section": "colors"
+      },
+      {
+        "name": "The One Family Rule",
+        "body": "Segoe UI carries every text role; no second UI typeface enters Settings. Hierarchy is weight and size only, at a tight 1.12–1.2 step ratio — no display posturing inside a tool.",
+        "section": "typography"
+      },
+      {
+        "name": "The Float-Only Shadow Rule",
+        "body": "If a surface can be scrolled behind, hovered over, or dismissed, it may have a shadow. Static cards, rows, and panels are flat and carry a hairline instead. No element ships with both a 1px border and a wide soft drop shadow as decoration.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Snap-Back Rule",
+        "body": "Spring overshoot belongs to the wheel's hover only. Every other transition in the system is an ease or ease-out under 200 ms; a button that bounces is a button that lies about what it is.",
+        "section": "components"
+      }
+    ],
+    "dos": [
+      "Do keep the tonal ramp honest: canvas → panel → card → field must each stay distinguishable from its neighbor, and muted text must clear 4.5:1 on its actual background — verify, don't assume.",
+      "Do use Pilot Blue Deep as the default accent surface and full Pilot Blue as its hover/lighter step, never the reverse.",
+      "Do give every interactive control the full state set: default, hover, focus, active, disabled — the toast-with-undo pattern is the model for forgiving, one-step-back feedback.",
+      "Do route all icons through Segoe Fluent Icons with the MDL2 fallback, sized to their surface (22px picker / 19px rows / scaled hub).",
+      "Do let the wheel preview and the real wheel share one renderer, always.",
+      "Do honor prefers-reduced-motion: the pop and spring degrade to instant or crossfade without losing the affordance."
+    ],
+    "donts": [
+      "Don't add glow, neon, or acrylic/HUD chrome anywhere the brand dot isn't — the confirmed anti-reference.",
+      "Don't put a drop shadow on static surfaces; borders belong to static cards, shadows to floating layers — not both on one element.",
+      "Don't exceed 12px radius on cards, modals, or panels (pills exempt).",
+      "Don't introduce a second UI typeface or a display font in any label, button, or data row.",
+      "Don't paint empty states or hints in gray so light it drops below AA contrast on the midnight ramp; #8fa3b5 on #161f29 is already the floor.",
+      "Don't decorate the wheel — its expression budget is motion and material, not texture or imagery."
+    ]
+  }
+}

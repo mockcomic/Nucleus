@@ -116,6 +116,7 @@ function bootstrap() {
 
   console.log(`[radial-wheel] ready — hotkey '${store.get().hotkey}' ${res.ok ? 'registered' : 'FAILED: ' + res.error}` +
     (store.importedFrom ? ` (imported ${store.importedFrom})` : '') +
+    (store.broken ? ' (config.json was corrupt — defaults in use, see config.json.bad)' : '') +
     (init.createdNew ? ' (first run)' : ''));
 }
 

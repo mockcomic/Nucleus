@@ -4,14 +4,12 @@ import { ICON_CATALOG } from '../shared/icon-catalog.js';
 const api = window.wheelAPI;
 const $ = (s, r = document) => r.querySelector(s);
 const clone = (o) => JSON.parse(JSON.stringify(o));
-const ICON_STACK = "'Segoe Fluent Icons','Segoe MDL2 Assets',sans-serif";
 
 let cfg = null;
 let dirty = false;
 let saveTimer = null;
 let openEditorKey = null;          // "ring-index" of the expanded row
 let iconModalTarget = null;        // item currently picking an icon
-let recordingHotkey = false;
 
 function el(tag, cls, attrs = {}, parent = null) {
   const e = document.createElement(tag);
@@ -30,7 +28,7 @@ function toast(msg, isError = false, undoFn = null, ttl = 2600) {
   const t = el('div', 'toast' + (isError ? ' error' : ''), {}, $('#toasts'));
   el('span', null, { text: msg }, t);
   if (undoFn) {
-    const u = el('span', 'undo', { text: 'Undo' }, t);
+    const u = el('button', 'undo', { text: 'Undo', type: 'button' }, t);
     u.onclick = () => { undoFn(); t.remove(); };
     ttl = 6000;
   }
@@ -38,8 +36,14 @@ function toast(msg, isError = false, undoFn = null, ttl = 2600) {
 }
 
 /* ------------------------------- persistence ------------------------------ */
+function setSaveState(text, state = '') {
+  const s = $('#save-state');
+  if (s) { s.textContent = text; s.className = 'save-state' + (state ? ' ' + state : ''); }
+}
+
 function touch(rerender = true) {
   dirty = true;
+  setSaveState('Saving…');
   if (rerender) { renderSegments(); renderPreview(); }
   clearTimeout(saveTimer);
   saveTimer = setTimeout(persist, 450);
@@ -51,20 +55,50 @@ async function persist() {
   if (r.ok) {
     cfg = r.config;
     updateHotkeyChip();
+    setSaveState('Saved');
+    const warn = $('#cfg-warn');
+    if (warn) warn.classList.add('hidden');   // a good save means config.json is fine now
     if (r.hotkeyError) showHkError(r.hotkeyError);
   } else {
+    dirty = true;
+    setSaveState('Not saved', 'err');
     toast('Could not save: ' + (r.error || 'unknown'), true);
   }
 }
 
 /* -------------------------------- tabs ------------------------------------ */
-document.querySelectorAll('.tab-btn').forEach((b) => {
-  b.addEventListener('click', () => {
-    document.querySelectorAll('.tab-btn').forEach((x) => x.classList.toggle('active', x === b));
-    document.querySelectorAll('.tab').forEach((t) => t.classList.add('hidden'));
-    $('#tab-' + b.dataset.tab).classList.remove('hidden');
+const tabBtns = [...document.querySelectorAll('.tab-btn')];
+function selectTab(b, focus = false) {
+  tabBtns.forEach((x) => {
+    x.classList.toggle('active', x === b);
+    x.setAttribute('aria-selected', String(x === b));
+    x.tabIndex = x === b ? 0 : -1;
+  });
+  document.querySelectorAll('.tab').forEach((t) => t.classList.add('hidden'));
+  const panel = $('#tab-' + b.dataset.tab);
+  panel.classList.remove('hidden');
+  panel.setAttribute('role', 'tabpanel');
+  panel.setAttribute('aria-labelledby', 'tabbtn-' + b.dataset.tab);
+  if (focus) b.focus();
+}
+tabBtns.forEach((b) => {
+  b.id = 'tabbtn-' + b.dataset.tab;
+  b.setAttribute('role', 'tab');
+  b.setAttribute('aria-controls', 'tab-' + b.dataset.tab);
+  b.addEventListener('click', () => selectTab(b));
+  b.addEventListener('keydown', (e) => {
+    const i = tabBtns.indexOf(b);
+    let n = -1;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowRight') n = (i + 1) % tabBtns.length;
+    else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') n = (i - 1 + tabBtns.length) % tabBtns.length;
+    else if (e.key === 'Home') n = 0;
+    else if (e.key === 'End') n = tabBtns.length - 1;
+    if (n >= 0) { e.preventDefault(); selectTab(tabBtns[n], true); }
   });
 });
+const navEl = document.querySelector('#sidebar nav');
+if (navEl) navEl.setAttribute('role', 'tablist');
+selectTab(tabBtns[0]);
 
 /* ------------------------------- segments --------------------------------- */
 const TYPE_OPTIONS = [
@@ -95,47 +129,87 @@ function renderSegments() {
   }
 }
 
+const GUARDED_TYPES = new Set(['command', 'macro', 'sys']);
+
 function segRow(ring, item, i) {
   const row = el('div', 'seg-row');
+  row.dataset.segKey = `${ring}-${i}`;
   const main = el('div', 'seg-main', {}, row);
   const key = `${ring}-${i}`;
 
+  // Proper disclosure button (mouse click on the row also opens the editor below).
+  const disc = el('button', 'btn mini seg-disc', {
+    title: openEditorKey === key ? 'Close editor' : 'Edit segment',
+    'aria-label': `Edit segment ${item.label || '(no name)'}`,
+    'aria-expanded': String(openEditorKey === key)
+  }, main);
+  el('span', 'g', { text: '\uE70D' }, disc);   // ChevronDown
+
   const icoSpan = el('span', 'seg-ico', {}, main);
-  icoSpan.textContent = item.icon || (item.type === 'sys' ? '⚙' : '▸');
+  icoSpan.textContent = item.icon || (item.type === 'sys' ? '\uE713' : '\uE76C');
   el('span', 'seg-name', { text: item.label || '(no name)' }, main);
   el('span', 'seg-type', { text: item.type }, main);
   el('span', 'seg-val', { text: item.type === 'sys' ? sysLabel(item.value) : item.value }, main);
 
   const acts = el('div', 'seg-actions', {}, main);
-  const mini = (label, title, fn) => {
-    const b = el('button', 'btn mini', { text: label, title }, acts);
+  const mini = (glyph, title, fn) => {
+    const b = el('button', 'btn mini', { title, 'aria-label': title }, acts);
+    el('span', 'g', { text: glyph }, b);
     b.onclick = (e) => { e.stopPropagation(); fn(); };
+    return b;
   };
-  mini('↑', 'Move earlier', () => { if (i > 0) { const a = cfg.rings[ring]; [a[i - 1], a[i]] = [a[i], a[i - 1]]; touch(); } });
-  mini('↓', 'Move later', () => { const a = cfg.rings[ring]; if (i < a.length - 1) { [a[i], a[i + 1]] = [a[i + 1], a[i]]; touch(); } });
-  mini('⇄', 'Move to other ring', () => {
+  mini('\uE74A', 'Move earlier', () => { if (i > 0) { const a = cfg.rings[ring]; [a[i - 1], a[i]] = [a[i], a[i - 1]]; touch(); } });
+  mini('\uE74B', 'Move later', () => { const a = cfg.rings[ring]; if (i < a.length - 1) { [a[i], a[i + 1]] = [a[i + 1], a[i]]; touch(); } });
+  mini('\uE8AB', 'Move to other ring', () => {
     const other = ring === '1' ? '2' : '1';
     cfg.rings[ring].splice(i, 1);
     cfg.rings[other].push(item);
     touch();
   });
-  mini('▶', 'Try this action now', async () => {
+  // ▶ (E768 Play) can fire arbitrary shell commands, injected keystrokes, or
+  // lock/sleep — those require a deliberate second click, not a 2px slip from ✕.
+  let armed = false, armTimer = null;
+  const runBtn = mini('\uE9A1', 'Try this action now', async () => {   // Play — E768 renders the catalog's Mic glyph
+    if (GUARDED_TYPES.has(item.type) && !armed) {
+      armed = true;
+      runBtn.querySelector('.g').textContent = '\uE7BA';   // Warning
+      runBtn.classList.add('armed');
+      runBtn.title = `Really run “${item.label}”? This ${item.type} can affect other apps — click again within 3s`;
+      clearTimeout(armTimer);
+      armTimer = setTimeout(disarm, 3000);
+      return;
+    }
+    disarm();
     const r = await api.previewAction(item);
     toast(r.ok ? `Ran “${item.label}”` : `“${item.label}” failed: ${r.error}`, !r.ok);
   });
-  mini('✕', 'Delete', () => {
+  function disarm() {
+    armed = false;
+    clearTimeout(armTimer);
+    runBtn.querySelector('.g').textContent = '\uE9A1';
+    runBtn.classList.remove('armed');
+    runBtn.title = 'Try this action now';
+  }
+  mini('\uE75D', 'Delete', () => {   // Trash (E894 stays reserved for clear/close)
+    if (cfg.rings['1'].length + cfg.rings['2'].length <= 1) {
+      toast('The wheel needs at least one segment', true);
+      return;
+    }
     const snapshot = clone(cfg);
     cfg.rings[ring].splice(i, 1);
     touch();
     toast(`Removed “${item.label}”`, false, () => { cfg = snapshot; touch(); });
   });
 
-  main.addEventListener('click', () => {
+  const toggleEditor = () => {
     openEditorKey = openEditorKey === key ? null : key;
     renderSegments();
     const f = document.querySelector('.seg-edit');
     if (f) f.querySelector('input')?.focus();
-  });
+    else document.querySelector(`[data-seg-key="${key}"] .seg-disc`)?.focus();
+  };
+  disc.onclick = (e) => { e.stopPropagation(); toggleEditor(); };
+  main.addEventListener('click', toggleEditor);
 
   if (openEditorKey === key) row.appendChild(segEditor(ring, item));
   return row;
@@ -150,34 +224,56 @@ let sysCatalogCache = null;
 
 function segEditor(ring, item) {
   const f = el('div', 'seg-edit');
-  const bind = (inputEl, apply, evt = 'input') => { inputEl.addEventListener(evt, () => { apply(inputEl); touch(); }); return inputEl; };
+  const uid = `se-${item.id}`;
+  // Text inputs must NOT rerender the row list mid-keystroke — renderSegments()
+  // tears down host.innerHTML and destroys the focused input. Write the model,
+  // sync the row captions in place, debounce-save without rerender.
+  const bind = (inputEl, apply, evt = 'input') => {
+    inputEl.addEventListener(evt, () => { apply(inputEl); syncRowText(); touch(false); });
+    return inputEl;
+  };
+  const syncRowText = () => {
+    const row = f.closest('.seg-row');
+    if (!row) return;
+    const name = row.querySelector('.seg-name');
+    if (name) name.textContent = item.label || '(no name)';
+    const val = row.querySelector('.seg-val');
+    if (val) val.textContent = item.type === 'sys' ? sysLabel(item.value) : item.value;
+  };
 
-  el('label', null, { text: 'Label' }, f);
-  const inLabel = bind(el('input', null, { type: 'text', maxlength: '40', value: item.label }, f), (e) => item.label = e.value);
+  el('label', null, { text: 'Label', for: uid + '-label' }, f);
+  const inLabel = bind(el('input', null, { type: 'text', maxlength: '40', value: item.label, id: uid + '-label' }, f), (e) => item.label = e.value);
   f.appendChild(inLabel);
 
-  el('label', null, { text: 'Type' }, f);
-  const selType = el('select', null, {}, f);
+  el('label', null, { text: 'Type', for: uid + '-type' }, f);
+  const selType = el('select', null, { id: uid + '-type' }, f);
   for (const [v, t] of TYPE_OPTIONS) el('option', null, { value: v, text: t }, selType);
   selType.value = item.type;
-  selType.addEventListener('change', () => { item.type = selType.value; renderSegments(); touch(); });
+  selType.addEventListener('change', () => {
+    item.type = selType.value;
+    touch();                                     // rebuilds the editor for the new type
+    const ed = document.querySelector('.seg-edit');
+    ed?.querySelector('select')?.focus();        // keep the keyboard in the editor
+  });
 
-  el('label', null, { text: item.type === 'macro' ? 'Keys' : 'Target' }, f);
+  const labTarget = el('label', null, { text: item.type === 'macro' ? 'Keys' : 'Target' }, f);
   if (item.type === 'sys') {
-    const sel = el('select', null, {}, f);
+    const sel = el('select', null, { id: uid + '-target' }, f);
+    labTarget.setAttribute('for', uid + '-target');
     for (const c of (sysCatalogCache || [])) el('option', null, { value: c.id, text: `${c.group} — ${c.label}` }, sel);
     sel.value = item.value;
-    sel.addEventListener('change', () => { item.value = sel.value; touch(); });
+    sel.addEventListener('change', () => { item.value = sel.value; syncRowText(); touch(false); });
   } else {
     const rowv = el('div', null, { style: 'display:flex;gap:6px;grid-column:span 2' }, f);
-    const inV = bind(el('input', null, { type: 'text', value: item.value, placeholder: valueHint(item.type) }), (e) => item.value = e.value);
+    const inV = bind(el('input', null, { type: 'text', value: item.value, placeholder: valueHint(item.type), id: uid + '-target' }), (e) => item.value = e.value);
+    labTarget.setAttribute('for', uid + '-target');
     rowv.appendChild(inV);
     if (item.type === 'app' || item.type === 'file') {
       const b = el('button', 'btn small', { text: 'Browse…' }, rowv);
       b.onclick = async (ev) => {
         ev.stopPropagation();
         const p = await api.pickFile(item.type === 'app' ? { extensions: ['exe', 'lnk', 'bat', 'cmd', 'msc'] } : {});
-        if (p) { item.value = p; renderSegments(); touch(); }
+        if (p) { item.value = p; touch(); }
       };
     }
     if (item.type === 'app') appCombo(item, inV, f);
@@ -189,8 +285,8 @@ function segEditor(ring, item) {
   iconPrev.textContent = item.icon || '—';
   iconPrev.style.color = item.icon ? 'var(--accent)' : 'var(--dim)';
   const pick = el('button', 'btn small', { text: 'Choose…' }, iconBox);
-  pick.onclick = () => { iconModalTarget = item; $('#icon-modal').classList.remove('hidden'); };
-  const clr = el('button', 'btn small', { text: '✕' }, iconBox);
+  pick.onclick = () => openIconModal(item, pick);
+  const clr = el('button', 'btn small glyph', { text: '\uE894', title: 'Clear icon', 'aria-label': 'Clear icon' }, iconBox);
   clr.onclick = () => { item.icon = ''; renderSegments(); touch(); };
 
   el('label', null, { text: 'Color' }, f);
@@ -229,11 +325,13 @@ function appCombo(item, inV, f) {
   const host = el('div', null, { style: 'grid-column:1 / -1;position:relative' }, f);
   const row = el('div', 'row-line', { style: 'margin-top:2px' }, host);
   el('span', 'muted', { text: 'Installed programs' }, row).style.fontSize = '12px';
-  const search = el('input', null, { type: 'text', placeholder: 'Start typing to search…  (▾ opens the full list)' }, row);
+  const search = el('input', null, { type: 'text', placeholder: 'Start typing to search…  (▾ opens the full list)', 'aria-label': 'Search installed programs', role: 'combobox', 'aria-autocomplete': 'list', 'aria-controls': `list-${item.id}` }, row);
   search.style.flex = '1';
-  const ddBtn = el('button', 'btn small', { text: '▾', title: 'Show all installed programs' }, row);
-  const scanBtn = el('button', 'btn small', { text: '↻', title: 'Re-scan the installed programs list' }, row);
-  const list = el('div', 'combo-list hidden', {}, host);
+  const ddBtn = el('button', 'btn small', { title: 'Show all installed programs', 'aria-label': 'Show all installed programs' }, row);
+  el('span', 'g', { text: '\uE70D' }, ddBtn);   // ChevronDown
+  const scanBtn = el('button', 'btn small', { title: 'Re-scan the installed programs list', 'aria-label': 'Re-scan the installed programs list' }, row);
+  el('span', 'g', { text: '\uE72C' }, scanBtn); // Refresh
+  const list = el('div', 'combo-list hidden', { id: `list-${item.id}`, role: 'listbox', 'aria-label': 'Installed programs' }, host);
 
   let rows = [];
   let active = -1;
@@ -241,19 +339,19 @@ function appCombo(item, inV, f) {
   function renderList() {
     const q = search.value.trim().toLowerCase();
     list.innerHTML = ''; rows = []; active = -1;
-    if (appsCache && appsCache.loading) { el('div', 'combo-empty muted', { text: 'Scanning installed programs…' }, list); return; }
+    search.removeAttribute('aria-activedescendant');
+    if (appsCache && appsCache.loading) { el('div', 'combo-empty muted', { text: 'Scanning installed programs…', role: 'presentation' }, list); return; }
     const all = (appsCache && appsCache.items) || [];
     const shown = (q ? all.filter((a) => a.name.toLowerCase().includes(q) || a.path.toLowerCase().includes(q)) : all).slice(0, 120);
     if (!shown.length) { el('div', 'combo-empty muted', { text: q ? 'No installed program matches “' + q + '” — keep typing, or Browse… for an exact path.' : 'No installed programs found.' }, list); return; }
-    for (const a of shown) {
-      const r = el('div', 'combo-row', { tabindex: '0' }, list);
+    shown.forEach((a, idx) => {
+      const r = el('div', 'combo-row', { role: 'option', 'aria-selected': 'false', id: `opt-${item.id}-${idx}` }, list);
       el('span', 'cr-name', { text: a.name }, r);
       el('span', 'cr-cat', { text: a.category }, r);
       el('span', 'cr-path', { text: a.path }, r);
       r.addEventListener('mousedown', (ev) => { ev.preventDefault(); pick(a); });
-      r.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); pick(a); } });
       rows.push(r);
-    }
+    });
     el('div', 'combo-foot muted', { text: `${shown.length} of ${all.length} — click to fill “Target”` }, list);
   }
 
@@ -281,8 +379,9 @@ function appCombo(item, inV, f) {
       ev.preventDefault(); showList();
       if (!rows.length) return;
       active = ev.key === 'ArrowDown' ? (active + 1) % rows.length : (active - 1 + rows.length) % rows.length;
-      rows.forEach((r, i) => r.classList.toggle('active', i === active));
+      rows.forEach((r, i) => { r.classList.toggle('active', i === active); r.setAttribute('aria-selected', String(i === active)); });
       rows[active].scrollIntoView({ block: 'nearest' });
+      search.setAttribute('aria-activedescendant', rows[active].id);
     } else if (ev.key === 'Enter') {
       if (active >= 0 && rows[active]) { ev.preventDefault(); rows[active].dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); }
     } else if (ev.key === 'Escape') { list.classList.add('hidden'); }
@@ -300,21 +399,47 @@ function valueHint(type) {
 }
 
 /* ------------------------------- icon modal ------------------------------- */
+const iconModal = $('#icon-modal');
+let iconModalOpener = null;
+
+function openIconModal(item, opener) {
+  iconModalTarget = item;
+  iconModalOpener = opener || null;
+  iconModal.classList.remove('hidden');
+  $('#icon-close').focus();
+}
+function closeIconModal() {
+  iconModal.classList.add('hidden');
+  if (iconModalOpener && document.contains(iconModalOpener)) iconModalOpener.focus();
+  iconModalOpener = null;
+}
+
 (function buildIconGrid() {
   const grid = $('#icon-grid');
   for (const g of ICON_CATALOG) {
-    const cell = el('button', 'icon-cell', {}, grid);
+    const cell = el('button', 'icon-cell', { 'aria-label': g.name }, grid);
     el('span', 'g', { text: g.code }, cell);
     el('span', 'n', { text: g.name }, cell);
     cell.onclick = () => {
       if (iconModalTarget) { iconModalTarget.icon = g.code; }
-      $('#icon-modal').classList.add('hidden');
+      closeIconModal();
       touch();
     };
   }
-  $('#icon-none').onclick = () => { if (iconModalTarget) iconModalTarget.icon = ''; $('#icon-modal').classList.add('hidden'); touch(); };
-  $('#icon-close').onclick = () => $('#icon-modal').classList.add('hidden');
-  $('#icon-modal').addEventListener('click', (e) => { if (e.target.id === 'icon-modal') e.target.classList.add('hidden'); });
+  $('#icon-none').onclick = () => { if (iconModalTarget) iconModalTarget.icon = ''; closeIconModal(); touch(); };
+  $('#icon-close').onclick = closeIconModal;
+  iconModal.addEventListener('click', (e) => { if (e.target === iconModal) closeIconModal(); });
+  // Dialog behavior: Esc dismisses, Tab stays inside the modal.
+  iconModal.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.stopPropagation(); closeIconModal(); }
+    else if (e.key === 'Tab') {
+      const btns = [...iconModal.querySelectorAll('button')];
+      if (!btns.length) return;
+      const first = btns[0], last = btns[btns.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    }
+  });
 })();
 
 /* ------------------------------- appearance ------------------------------- */
@@ -333,11 +458,15 @@ function renderAppearance() {
   host.innerHTML = '';
   for (const [key, label, min, max, step] of SLIDERS) {
     const row = el('div', 'slider-row', {}, host);
-    const lab = el('label', null, {}, row);
+    const id = 'slider-' + key;
+    const lab = el('label', null, { for: id }, row);
     el('span', null, { text: label }, lab);
     const out = el('output', null, { text: String(cfg.appearance[key]) }, lab);
-    const r = el('input', null, { type: 'range', min, max, step, value: cfg.appearance[key] }, row);
-    r.addEventListener('input', () => { cfg.appearance[key] = parseFloat(r.value); out.textContent = r.value; touch(); });
+    out.setAttribute('for', id);
+    const r = el('input', null, { type: 'range', min, max, step, value: cfg.appearance[key], id }, row);
+    // Only the preview needs the new value — never rerender the segment rows per drag frame.
+    r.addEventListener('input', () => { cfg.appearance[key] = parseFloat(r.value); out.textContent = r.value; renderPreview(); });
+    r.addEventListener('change', () => touch(false));
   }
 
   const cg = $('#color-grid');
@@ -347,7 +476,8 @@ function renderAppearance() {
     const item = el('label', 'color-item', {}, cg);
     const inp = el('input', null, { type: 'color', value: cfg.appearance.colors[k] }, item);
     el('span', null, { text: lab }, item);
-    inp.addEventListener('input', () => { cfg.appearance.colors[k] = inp.value; touch(); });
+    inp.addEventListener('input', () => { cfg.appearance.colors[k] = inp.value; renderPreview(); });
+    inp.addEventListener('change', () => touch(false));
   }
 }
 
@@ -369,7 +499,7 @@ function renderPresets() {
       const i = el('i', null, {}, sw); i.style.background = colors[k];
     }
     el('span', null, { text: name }, b);
-    b.onclick = () => { cfg.appearance.colors = { ...colors }; renderAppearance(); touch(); };
+    b.onclick = () => { cfg.appearance.colors = { ...colors }; renderAppearance(); renderPreview(); touch(false); };
   }
 }
 
@@ -389,6 +519,7 @@ let recording = false;
 $('#recorder-btn').addEventListener('click', () => {
   recording = !recording;
   $('#recorder-btn').textContent = recording ? 'Press your shortcut… (Esc cancels)' : 'Change…';
+  $('#recorder-btn').setAttribute('aria-pressed', String(recording));
   $('#hk-display').classList.toggle('recording', recording);
 });
 
@@ -447,26 +578,48 @@ function wireBehaviorCheckboxes() {
     };
   }
   $('#ap-showlabels').checked = cfg.appearance.showLabels;
-  $('#ap-showlabels').onchange = (e) => { cfg.appearance.showLabels = e.target.checked; touch(); };
+  $('#ap-showlabels').onchange = (e) => { cfg.appearance.showLabels = e.target.checked; renderPreview(); touch(false); };
   const cl = $('#ap-centerlabel');
   cl.value = cfg.appearance.centerLabel;
-  cl.addEventListener('input', () => { cfg.appearance.centerLabel = cl.value; touch(); });
-  $('#btn-test').addEventListener('click', async () => { await api.testWheel(); });
+  cl.oninput = () => { cfg.appearance.centerLabel = cl.value; renderPreview(); touch(false); };   // preview live AND persist (no row-list rerender while typing)
+  $('#btn-test').onclick = async () => { await api.testWheel(); };                   // onclick, not addEventListener: never stacks across rerenders
 }
 
 /* -------------------------------- advanced --------------------------------- */
+async function restoreConfig(snapshot) {
+  const u = await api.setConfig(snapshot);
+  if (u.ok) {
+    cfg = clone(u.config); dirty = false;
+    renderAll();
+    showHkError(u.hotkeyError || null);
+    toast('Previous config restored');
+  } else {
+    toast('Could not undo: ' + (u.error || 'unknown'), true);
+  }
+}
+
 async function wireAdvanced() {
   $('#ver').textContent = 'v' + (await api.appVersion());
   $('#btn-export').onclick = async () => { const r = await api.exportConfig(); if (r.ok) toast('Exported to ' + r.path); };
   $('#btn-import').onclick = async () => {
+    const snapshot = clone(cfg);
     const r = await api.importConfig();
-    if (r.ok) { cfg = clone(r.config); renderAll(); toast('Config imported'); }
-    else if (!r.canceled) toast(r.error, true);
+    if (r.ok) {
+      cfg = clone(r.config); dirty = false;
+      renderAll();
+      showHkError(r.hotkeyError || null);          // never let the chip claim a combo that failed to register
+      toast('Config imported', false, async () => { await restoreConfig(snapshot); });
+    } else if (!r.canceled) toast(r.error, true);
   };
   $('#btn-reset').onclick = async () => {
-    if (!confirm('Reset ALL settings to defaults? This cannot be undone.')) return;
+    const snapshot = clone(cfg);
     const r = await api.resetConfig();
-    if (r.ok) { cfg = clone(r.config); renderAll(); toast('Settings reset'); }
+    if (r.ok) {
+      cfg = clone(r.config); dirty = false;
+      renderAll();
+      showHkError(r.hotkeyError || null);
+      toast('Settings reset to defaults', false, async () => { await restoreConfig(snapshot); });
+    }
   };
   $('#btn-openfolder').onclick = () => api.openConfigFolder();
   $('#btn-quit').onclick = () => { if (confirm('Exit Radial Wheel? The hotkey will stop working until you launch it again.')) api.requestQuit(); };
@@ -496,9 +649,21 @@ async function boot() {
   cfg = r.config;
   sysCatalogCache = await api.sysCatalog();
   renderAll();
+  setSaveState('Saved');
   wireAdvanced();
+  wireConfigWarn(r);
   if (r.hotkeyError) showHkError(r.hotkeyError);
+  if (r.importedFrom) toast('Settings imported from your previous (legacy) config', false, null, 5000);
   api.onConfigChanged((newCfg) => { if (!dirty) { cfg = newCfg; renderAll(); } });
   window.addEventListener('resize', () => renderPreview());
+}
+
+function wireConfigWarn(r) {
+  const w = $('#cfg-warn');
+  if (!w) return;
+  if (!r.broken) { w.classList.add('hidden'); return; }
+  $('#cfg-warn-folder').onclick = () => api.openConfigFolder();
+  $('#cfg-warn-x').onclick = () => w.classList.add('hidden');
+  w.classList.remove('hidden');
 }
 boot();

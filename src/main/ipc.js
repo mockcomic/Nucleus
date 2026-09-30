@@ -36,11 +36,13 @@ function registerIpc(deps) {
   ipcMain.handle('config:get', () => ({
     config: JSON.parse(JSON.stringify(store.get())),
     hotkeyError: store.hotkeyError || null,
-    importedFrom: store.importedFrom || null
+    importedFrom: store.importedFrom || null,
+    broken: !!store.broken
   }));
 
   ipcMain.handle('config:set', (ev, cfg) => {
     const merged = store.set(cfg);
+    store.broken = false;   // a successful write means config.json is healthy again
     return { ok: true, config: JSON.parse(JSON.stringify(merged)), hotkeyError: store.hotkeyError || null };
   });
 
@@ -63,7 +65,8 @@ function registerIpc(deps) {
     try {
       const raw = JSON.parse(fs.readFileSync(r.filePaths[0], 'utf8'));
       const merged = store.set(raw);
-      return { ok: true, config: merged };
+      store.broken = false;
+      return { ok: true, config: merged, hotkeyError: store.hotkeyError || null };
     } catch (err) {
       return { ok: false, error: 'Invalid config file: ' + (err.message || err) };
     }
@@ -71,7 +74,8 @@ function registerIpc(deps) {
 
   ipcMain.handle('config:reset', () => {
     const merged = store.set({}); // validate({}) == defaults
-    return { ok: true, config: merged };
+    store.broken = false;
+    return { ok: true, config: merged, hotkeyError: store.hotkeyError || null };
   });
 
   ipcMain.handle('config:open-folder', () => shell.openPath(path.dirname(store.file())));

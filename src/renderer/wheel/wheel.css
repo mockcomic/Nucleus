@@ -39,3 +39,9 @@ html, body {
 
 .hub { transition: fill .1s ease; }
 .hub-icon, .hub-label, .center-label { pointer-events: none; }
+
+/* reduced motion: state changes land instantly; hover fill + hub report keep the affordance */
+@media (prefers-reduced-motion: reduce) {
+  .seg, .seg path, .hub { transition: none; }
+  .wheel-root.any-hover .seg.hovered { transition: none; transform: none; }
+}
