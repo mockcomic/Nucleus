@@ -142,9 +142,9 @@ input[type=range]:focus-visible::-webkit-slider-thumb { outline: 2px solid var(-
 .btn.danger:hover { border-color: var(--danger); }
 .btn.small { padding: 3px 9px; font-size: 12px; }
 .btn.mini { padding: 2px 7px; font-size: 12px; border-radius: 6px; }
-.btn.mini.armed { color: var(--danger); border-color: var(--danger); }
-.seg-actions .btn.mini:nth-last-child(2) { margin-left: 6px; }   /* Try separates from the reorder cluster */
-.seg-actions .btn.mini:last-child { margin-left: 4px; }           /* slip-guard: Try is never flush against Delete */
+.btn.armed { color: var(--danger); border-color: var(--danger); }
+.seg-actions .act-sep { width: 1px; height: 14px; background: var(--line); margin: 0 5px; flex: none; }
+.btn.mini.act-del:hover { border-color: var(--danger); color: var(--danger); }   /* destructive hover, distinct from Try's accent hover */
 .seg-disc { align-self: center; }
 .seg-disc[aria-expanded='true'] .g { transform: rotate(180deg); }
 .seg-disc .g { transition: transform .14s var(--ease-out); }
@@ -185,7 +185,7 @@ input[type=range]:focus-visible::-webkit-slider-thumb { outline: 2px solid var(-
 .preset { border: 1px solid var(--line); border-radius: 999px; padding: 5px 11px; cursor: pointer; font-size: 12.5px; background: var(--sheen-quiet), var(--card); display: flex; align-items: center; gap: 6px; color: var(--text);
   transition: border-color .12s var(--ease-out), background .12s var(--ease-out), transform .1s var(--ease-out); }
 .preset:hover { border-color: var(--accent); }
-.preset:active { transform: scale(.97); }
+.preset:active { transform: scale(.985); }   /* the system's press value — same quiet sink as .btn */
 .preset.active { border-color: var(--accent); background: var(--well-hover); box-shadow: inset 0 0 0 1px var(--ring-active); font-weight: 600; }
 .preset.theme { padding: 6px 11px 6px 6px; gap: 8px; }
 .preset.theme .mini { display: block; width: 40px; height: 40px; flex: none; overflow: hidden; }
@@ -212,7 +212,22 @@ input[type=range]:focus-visible::-webkit-slider-thumb { outline: 2px solid var(-
 #wheel-preview { flex: 1; display: flex; align-items: center; justify-content: center; min-height: 0;
   background: radial-gradient(circle at 50% 42%, var(--preview-hi), var(--preview-lo) 75%); border-radius: var(--radius); border: 1px solid var(--line);
   box-shadow: inset 0 1px 0 rgba(255,255,255,.04); overflow: hidden; }   /* lit inner lip */
-#wheel-preview svg { pointer-events: none; }
+/* Preview is LIVE: hover routes through the same hitTest as the real wheel
+   (settings.js bindPreviewHover). These mirror wheel.css's interaction states
+   scoped to the pane — the Snap-Back Rule's spring belongs to the wheel
+   wherever it renders. The overlay's own file stays the source of truth. */
+#wheel-preview .wheel-root { transform-box: fill-box; transform-origin: center; }
+#wheel-preview .seg { transition: opacity .12s ease; }
+#wheel-preview .seg path { transition: fill .1s ease; }
+#wheel-preview .seg text { pointer-events: none; }
+#wheel-preview .wheel-root.any-hover .seg { opacity: .55; }
+#wheel-preview .wheel-root.any-hover .seg.hovered {
+  opacity: 1;
+  transform: translate(var(--tx, 0), var(--ty, 0));
+  transition: transform .12s cubic-bezier(.34,1.56,.64,1), opacity .12s ease;
+}
+#wheel-preview .wheel-root.any-hover .seg.hovered .seg-icon { filter: brightness(1.18); transition: filter .12s ease; }
+#wheel-preview .top-light, #wheel-preview .rim, #wheel-preview .hub-top { pointer-events: none; }
 
 /* toasts */
 #toasts { position: fixed; top: 16px; right: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 50; }
@@ -241,7 +256,11 @@ input[type=range]:focus-visible::-webkit-slider-thumb { outline: 2px solid var(-
 .di-status { padding: 6px 16px 0; font-size: 12px; min-height: 22px; }
 .di-grid { grid-template-columns: repeat(6, 1fr); }
 .di-cell .di-thumb { width: 36px; height: 36px; object-fit: contain; background: rgba(255,255,255,.05); border: 1px solid var(--line); border-radius: 8px; padding: 3px; }
-.di-subhead { padding: 10px 16px 0; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
+/* DESIGN.md: the uppercase-tracked label voice is reserved for the preview
+   title alone — this subhead is a plain caption. */
+.di-subhead { padding: 10px 16px 0; font-size: 11px; display: flex; align-items: baseline; gap: 10px; }
+/* curated-first picker: the full wall stays one explicit click away */
+#icon-grid:not(.show-all) .icon-cell.off { display: none; }
 .seg-ico img, .seg-ico-img { width: 19px; height: 19px; object-fit: contain; display: inline-block; vertical-align: middle; background: none; border: 0; }
 
 
@@ -277,6 +296,10 @@ input[type=range]:focus-visible::-webkit-slider-thumb { outline: 2px solid var(-
   input[type=range]::-webkit-slider-thumb,
   input[type=text], input[type=number], select { transition: none; }
   .btn:active, .tab-btn:active, .preset:active { transform: none; }
+  /* the live preview mirrors the overlay's reduced-motion contract */
+  #wheel-preview .seg, #wheel-preview .seg path,
+  #wheel-preview .wheel-root.any-hover .seg.hovered .seg-icon { transition: none; }
+  #wheel-preview .wheel-root.any-hover .seg.hovered { transition: none; transform: none; }
 }
 
 /* ─── light mode ───────────────────────────────────────────────────────────

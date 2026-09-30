@@ -59,6 +59,10 @@ class Overlay {
     });
     this.win.webContents.on('before-input-event', (e, input) => {
       if (input.type === 'keyDown' && (input.key === 'Escape' || input.key === 'Cancel')) {
+        // Esc-dismiss is a user setting (Behavior → Dismiss with Esc); the live
+        // config is the source of truth at the moment the key arrives.
+        const bh = (this.deps.getConfig() || {}).behavior || {};
+        if (bh.dismissOnEscape === false) return;
         this.hide();
         e.preventDefault();
       }

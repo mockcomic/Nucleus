@@ -37,6 +37,7 @@ function registerIpc(deps) {
   /* ---- config ---- */
   ipcMain.handle('config:get', () => ({
     config: JSON.parse(JSON.stringify(store.get())),
+    rev: store.rev,
     hotkeyError: store.hotkeyError || null,
     importedFrom: store.importedFrom || null,
     broken: !!store.broken
@@ -45,7 +46,7 @@ function registerIpc(deps) {
   ipcMain.handle('config:set', (ev, cfg) => {
     const merged = store.set(cfg);
     store.broken = false;   // a successful write means config.json is healthy again
-    return { ok: true, config: JSON.parse(JSON.stringify(merged)), hotkeyError: store.hotkeyError || null };
+    return { ok: true, config: JSON.parse(JSON.stringify(merged)), rev: store.rev, hotkeyError: store.hotkeyError || null };
   });
 
   ipcMain.handle('config:export', async (ev) => {

@@ -1,5 +1,5 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <title>Radial Wheel — Settings</title>
@@ -27,6 +27,14 @@
       <span class="cfg-warn-actions">
         <button class="btn small" id="cfg-warn-folder">Open config folder</button>
         <button class="btn small" id="cfg-warn-x">Dismiss</button>
+      </span>
+    </div>
+
+    <div id="cfg-conflict" class="err cfg-warn hidden" role="alert">
+      <span><b>config.json changed outside this window</b> while you were editing. Your edits are safe here — choose whose version the app keeps.</span>
+      <span class="cfg-warn-actions">
+        <button class="btn small" id="cfg-conflict-mine">Keep mine</button>
+        <button class="btn small" id="cfg-conflict-theirs">Take disk version</button>
       </span>
     </div>
 
@@ -111,6 +119,7 @@
       </div>
       <div class="card">
         <button class="btn danger" id="btn-quit">Exit Radial Wheel</button>
+        <div class="hint muted">Quits the tray app — the summon hotkey stops working until you launch Radial&nbsp;Wheel again.</div>
       </div>
     </section>
   </main>
@@ -136,7 +145,7 @@
       </div>
       <div id="di-status" class="di-status muted" aria-live="polite"></div>
       <div id="di-grid" class="icon-grid di-grid hidden"></div>
-      <div class="di-subhead muted">Or pick a system glyph:</div>
+      <div class="di-subhead muted">Or pick a system glyph: <button class="btn mini" id="glyph-all" type="button">Show all</button></div>
       <div id="icon-grid" class="icon-grid"></div>
     </div>
   </div>

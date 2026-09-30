@@ -89,7 +89,7 @@ function quitApp() {
   app.quit();
 }
 
-function handleConfigChanged({ config, hotkeyChanged, autostartChanged, reload }) {
+function handleConfigChanged({ config, rev, hotkeyChanged, autostartChanged, reload }) {
   if (hotkeyChanged) {
     hotkeyMgr.unregister();
     applyHotkeyState();   // stays unregistered while the tray/game suppressors hold
@@ -97,7 +97,13 @@ function handleConfigChanged({ config, hotkeyChanged, autostartChanged, reload }
   if (autostartChanged) autostart.set(config.behavior.autostart);
   try { gameWatcher && gameWatcher.configure(); } catch { /* never let config break the watcher */ }
   if (tray) tray.update();
-  try { settingsWin.send('config:changed', config); } catch { /* settings may be closed */ }
+  // The settings window is the source of every store.set(); echoing the config
+  // back to it raced ahead of the IPC reply, replacing cfg under the open
+  // editor and silently dropping writes made through its captured item refs.
+  // Only reload() (tray reload / config.json watch) is an external change.
+  if (reload) {
+    try { settingsWin.send('config:changed', { config: JSON.parse(JSON.stringify(config)), rev }); } catch { /* settings may be closed */ }
+  }
 }
 
 function bootstrap() {

@@ -230,6 +230,8 @@ class ConfigStore extends EventEmitter {
     this._watcher = null;
     this._suppressUntil = 0;
     this._lastGood = null;
+    this.rev = 0;   // bumped on every genuine content change; the settings window
+                    // uses it to tell its own saves' echoes from external edits
   }
 
   file() { return path.join(app.getPath('userData'), 'config.json'); }
@@ -273,8 +275,9 @@ class ConfigStore extends EventEmitter {
     const old = this._cfg;
     this._cfg = merged;
     this._lastGood = merged;
+    this.rev++;
     this._write();
-    this.emit('changed', { config: merged, old, hotkeyChanged: old.hotkey !== merged.hotkey, autostartChanged: old.behavior.autostart !== merged.behavior.autostart });
+    this.emit('changed', { config: merged, old, rev: this.rev, hotkeyChanged: old.hotkey !== merged.hotkey, autostartChanged: old.behavior.autostart !== merged.behavior.autostart });
     return merged;
   }
 
@@ -282,9 +285,11 @@ class ConfigStore extends EventEmitter {
     try {
       const cfg = validate(JSON.parse(fs.readFileSync(this.file(), 'utf8')));
       const old = this._cfg;
+      if (JSON.stringify(cfg) === JSON.stringify(old)) return cfg;   // no-op watch event — not an external change
       this._cfg = cfg;
       this._lastGood = cfg;
-      this.emit('changed', { config: cfg, old, hotkeyChanged: old.hotkey !== cfg.hotkey, autostartChanged: old.behavior.autostart !== cfg.behavior.autostart, reload: true });
+      this.rev++;
+      this.emit('changed', { config: cfg, old, rev: this.rev, hotkeyChanged: old.hotkey !== cfg.hotkey, autostartChanged: old.behavior.autostart !== cfg.behavior.autostart, reload: true });
       return cfg;
     } catch {
       if (this._lastGood) { this._cfg = this._lastGood; }

@@ -28,12 +28,29 @@ function el(tag, cls, attrs = {}, parent = null) {
 function toast(msg, isError = false, undoFn = null, ttl = 2600) {
   const t = el('div', 'toast' + (isError ? ' error' : ''), {}, $('#toasts'));
   el('span', null, { text: msg }, t);
+  // A toast the user can still hold is a toast they can still act on: the ttl
+  // freezes while the pointer or keyboard focus is inside it, so an Undo link
+  // is catchable, not lucky. (Autosave has already committed — this is the net.)
+  let left = ttl, timer = null, at = 0;
+  const arm = () => {
+    at = Date.now();
+    timer = setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 250); }, left);
+  };
+  const stop = () => {
+    if (!timer) return;
+    clearTimeout(timer); timer = null;
+    left = Math.max(800, left - (Date.now() - at));   // never resume to less than a beat
+  };
   if (undoFn) {
     const u = el('button', 'undo', { text: 'Undo', type: 'button' }, t);
-    u.onclick = () => { undoFn(); t.remove(); };
-    ttl = 6000;
+    u.onclick = () => { stop(); undoFn(); t.remove(); };
+    ttl = left = 6000;
   }
-  setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 250); }, ttl);
+  t.addEventListener('mouseenter', stop);
+  t.addEventListener('mouseleave', arm);
+  t.addEventListener('focusin', stop);
+  t.addEventListener('focusout', arm);
+  arm();
 }
 
 /* ------------------------------- persistence ------------------------------ */
@@ -45,21 +62,33 @@ function setSaveState(text, state = '') {
 function touch(rerender = true) {
   dirty = true;
   setSaveState('Saving…');
-  if (rerender) { renderSegments(); renderPreview(); }
+  if (rerender) renderSegments();
+  renderPreview();                      // the preview must track EVERY model change, even mid-keystroke edits that skip the row-list rebuild
   clearTimeout(saveTimer);
   saveTimer = setTimeout(persist, 450);
 }
 
 async function persist() {
   dirty = false;
+  const sent = JSON.stringify(cfg);
   const r = await api.setConfig(cfg);
   if (r.ok) {
-    cfg = r.config;
+    if (typeof r.rev === 'number') storeRev = r.rev;   // our graph now matches the store's revision
+    // Do NOT adopt the reply blindly: it is a fresh object graph, and swapping
+    // it in would orphan the item refs the open editor/modal captured. Adopt
+    // only when the store normalized our payload (and nothing was typed during
+    // the round-trip — that newer local data must survive until the next save).
+    const local = JSON.stringify(cfg);
+    if (local === sent && local !== JSON.stringify(r.config)) {
+      cfg = r.config;
+      renderAll();
+    }
     updateHotkeyChip();
     setSaveState('Saved');
     const warn = $('#cfg-warn');
     if (warn) warn.classList.add('hidden');   // a good save means config.json is fine now
     if (r.hotkeyError) showHkError(r.hotkeyError);
+    if (pendingExternal) showConflict();       // disk changed while we typed — the user picks
   } else {
     dirty = true;
     setSaveState('Not saved', 'err');
@@ -179,6 +208,10 @@ function renderSegments() {
       cfg.rings[ring].push(item);
       openEditorKey = `${ring}-${cfg.rings[ring].length - 1}`;
       touch();
+      // touch() rerendered synchronously — land the caret in the new row's Label box
+      // so the user can type the name right away (and pre-select "New item" to replace it).
+      const lbl = document.querySelector('.seg-edit input');
+      if (lbl) { lbl.focus(); lbl.select(); }
     };
     if (!cfg.rings[ring].length) {
       el('div', 'empty-hint muted', { text: ring === '1' ? 'Empty — the wheel will use the outer ring only.' : 'Empty — no outer ring.' }, sec);
@@ -212,22 +245,45 @@ function segRow(ring, item, i) {
   el('span', 'seg-val', { text: item.type === 'sys' ? sysLabel(item.value) : item.value }, main);
 
   const acts = el('div', 'seg-actions', {}, main);
-  const mini = (glyph, title, fn) => {
-    const b = el('button', 'btn mini', { title, 'aria-label': title }, acts);
+  const mini = (glyph, label, fn, cls = '', tip = label) => {
+    const b = el('button', 'btn mini' + (cls ? ' ' + cls : ''), { title: tip, 'aria-label': label }, acts);
     el('span', 'g', { text: glyph }, b);
     b.onclick = (e) => { e.stopPropagation(); fn(); };
     return b;
   };
-  mini('\uE74A', 'Move earlier', () => { if (i > 0) { const a = cfg.rings[ring]; [a[i - 1], a[i]] = [a[i], a[i - 1]]; touch(); } });
-  mini('\uE74B', 'Move later', () => { const a = cfg.rings[ring]; if (i < a.length - 1) { [a[i], a[i + 1]] = [a[i + 1], a[i]]; touch(); } });
-  mini('\uE8AB', 'Move to other ring', () => {
-    const other = ring === '1' ? '2' : '1';
-    cfg.rings[ring].splice(i, 1);
-    cfg.rings[other].push(item);
+  /* Row carries four live controls + disclosure. Reorder acts on item identity,
+     not the captured index: hold-to-repeat keeps stepping across rerenders
+     while the item itself keeps moving. Ring-move and Duplicate live in the
+     editor — seven anonymous glyphs on one row read like a generic toolbar. */
+  const stepMove = (dir) => {
+    const a = cfg.rings[ring];
+    const j = a.indexOf(item);
+    const k = j + dir;
+    if (j < 0 || k < 0 || k >= a.length) return false;
+    [a[j], a[k]] = [a[k], a[j]];
     touch();
-  });
-  // ▶ (E768 Play) can fire arbitrary shell commands, injected keystrokes, or
-  // lock/sleep — those require a deliberate second click, not a 2px slip from ✕.
+    return true;
+  };
+  const holdRepeat = (btn, dir) => {
+    let t0 = null, t1 = null;
+    const stop = () => { clearTimeout(t0); clearInterval(t1); t0 = t1 = null; };
+    btn.addEventListener('pointerdown', () => {
+      // click = one step; holding past 420ms steps every 110ms until release or edge
+      t0 = setTimeout(() => { t1 = setInterval(() => { if (!stepMove(dir)) stop(); }, 110); }, 420);
+    });
+    btn.addEventListener('pointercancel', stop);
+    btn.addEventListener('blur', stop);
+    // the row rerenders mid-hold (touch() rebuilds it), so listen on window —
+    // the button that started the hold may already be gone when the mouse lets go
+    window.addEventListener('pointerup', () => stop(), { once: true });
+  };
+  holdRepeat(mini('\uE74A', 'Move earlier', () => stepMove(-1), '', 'Move earlier — hold to keep moving'), -1);
+  holdRepeat(mini('\uE74B', 'Move later', () => stepMove(1), '', 'Move later — hold to keep moving'), 1);
+  // One hairline separates the transport pair from the live-action pair —
+  // the slip-guard margins were conceding the mis-click; this resolves it.
+  el('span', 'act-sep', { 'aria-hidden': 'true' }, acts);
+  // Play can fire arbitrary shell commands, injected keystrokes, or lock/sleep
+  // — those require a deliberate second click, not a slip from Delete.
   let armed = false, armTimer = null;
   const runBtn = mini('\uE9A1', 'Try this action now', async () => {   // Play — E768 renders the catalog's Mic glyph
     if (GUARDED_TYPES.has(item.type) && !armed) {
@@ -242,7 +298,7 @@ function segRow(ring, item, i) {
     disarm();
     const r = await api.previewAction(item);
     toast(r.ok ? `Ran “${item.label}”` : `“${item.label}” failed: ${r.error}`, !r.ok);
-  });
+  }, 'act-run');
   function disarm() {
     armed = false;
     clearTimeout(armTimer);
@@ -250,16 +306,25 @@ function segRow(ring, item, i) {
     runBtn.classList.remove('armed');
     runBtn.title = 'Try this action now';
   }
-  mini('\uE75D', 'Delete', () => {   // Trash (E894 stays reserved for clear/close)
+  mini('\uE75D', 'Delete segment', () => {   // Trash (E894 stays reserved for clear/close)
     if (cfg.rings['1'].length + cfg.rings['2'].length <= 1) {
       toast('The wheel needs at least one segment', true);
       return;
     }
-    const snapshot = clone(cfg);
-    cfg.rings[ring].splice(i, 1);
+    // Inverse-op undo: the item goes back exactly where it was, and every
+    // edit made AFTER the delete survives. (Graph-swap undos silently ate
+    // unrelated later work — the critique's P1.)
+    const from = cfg.rings[ring];
+    const idx = from.indexOf(item);
+    from.splice(idx, 1);
     touch();
-    toast(`Removed “${item.label}”`, false, () => { cfg = snapshot; touch(); });
-  });
+    toast(`Removed “${item.label}”`, false, () => {
+      const cur = cfg.rings[ring];
+      if (cur.some((x) => x.id === item.id)) return;   // already restored meanwhile
+      cur.splice(Math.min(idx, cur.length), 0, item);
+      touch();
+    });
+  }, 'act-del');
 
   const toggleEditor = () => {
     openEditorKey = openEditorKey === key ? null : key;
@@ -359,22 +424,49 @@ function segEditor(ring, item) {
   colIn.addEventListener('input', () => { if (!chkAuto.checked) { item.color = colIn.value; touch(false); } });
 
   el('label', null, { text: 'Ring' }, f);
-  const ringBox = el('div', null, { style: 'display:flex;gap:12px' }, f);
+  const ringBox = el('div', null, { style: 'display:flex;gap:12px;align-items:center' }, f);
   for (const r of ['1', '2']) {
     const lb = el('label', 'chk', {}, ringBox);
     const rb = el('input', null, { type: 'radio', name: 'ringpick-' + item.id }, lb);
     rb.checked = String(ring) === r;
     rb.addEventListener('change', () => {
       if (rb.checked && String(ring) !== r) {
-        const other = r;
-        cfg.rings[ring].splice(cfg.rings[ring].indexOf(item), 1);
-        cfg.rings[other].push(item);
+        const from = cfg.rings[ring];
+        const idx = from.indexOf(item);
+        from.splice(idx, 1);
+        cfg.rings[r].push(item);
         openEditorKey = null;
         touch();
+        // Inverse-op undo — returns the item to its old ring and position;
+        // later edits made after the move survive.
+        toast(`Moved “${item.label || '(no name)'}” to the ${r === '1' ? 'inner' : 'outer'} ring`, false, () => {
+          const cur = cfg.rings[r];
+          const k = cur.indexOf(item);
+          if (k < 0) return;                        // moved on — inverse op is a no-op
+          cur.splice(k, 1);
+          const back = cfg.rings[ring];
+          back.splice(Math.min(idx, back.length), 0, item);
+          touch();
+        });
       }
     });
     lb.appendChild(document.createTextNode(r === '1' ? 'inner' : 'outer'));
   }
+  const dup = el('button', 'btn small', { type: 'button', text: 'Duplicate', title: 'Copy this segment into the next position' }, ringBox);
+  dup.onclick = (e) => {
+    e.stopPropagation();
+    const a = cfg.rings[ring];
+    if (a.length >= 24) { toast('A ring holds at most 24 segments', true); return; }   // config.js cleanRing cap
+    const copy = { ...clone(item), id: crypto.randomUUID() };
+    a.splice(a.indexOf(item) + 1, 0, copy);
+    openEditorKey = null;
+    touch();
+    toast(`Duplicated “${item.label || '(no name)'}”`, false, () => {
+      const cur = cfg.rings[ring];
+      const k = cur.findIndex((x) => x.id === copy.id);
+      if (k >= 0) { cur.splice(k, 1); touch(); }
+    });
+  };
   return f;
 }
 
@@ -462,6 +554,30 @@ function valueHint(type) {
 const iconModal = $('#icon-modal');
 let iconModalOpener = null;
 
+/* Writes from the modal must land on the CURRENT cfg graph, not the object
+   captured when the modal was opened — an external-change renderAll can swap
+   cfg while the modal is up, and a write through the stale ref would vanish. */
+function modalTarget() {
+  if (!iconModalTarget) return null;
+  for (const ring of ['1', '2'])
+    for (const it of cfg.rings[ring] || [])
+      if (it.id === iconModalTarget.id) return it;
+  return iconModalTarget;
+}
+
+/* Dialog hygiene: the scrim must seal the page behind it. #toasts stays
+   reachable (error toasts during a modal must still be visible), everything
+   else outside the dialog becomes inert — no stray Tab into the Settings
+   page, and screen readers don't read through the scrim. */
+const MODAL_BG = ['#sidebar', '#content', '#preview-pane'];
+function setModalInert(on) {
+  for (const sel of MODAL_BG) {
+    const n = $(sel);
+    if (!n) continue;
+    if (on) n.setAttribute('inert', ''); else n.removeAttribute('inert');
+  }
+}
+
 function openIconModal(item, opener) {
   iconModalTarget = item;
   iconModalOpener = opener || null;
@@ -469,39 +585,64 @@ function openIconModal(item, opener) {
   // Pre-fill the fetch term from the label — always editable, always re-runnable.
   q.value = (item.label || '').trim();
   $('#di-clear-img').classList.toggle('hidden', !item.iconImage);
+  const staleGrid = $('#di-grid');
+  staleGrid.innerHTML = ''; staleGrid.classList.add('hidden');   // never reopen onto last time's results
   iconModal.classList.remove('hidden');
+  setModalInert(true);
   q.focus();
   q.select();
-  runDiSearch();                        // fire once with the pre-filled term
+  // The offline, zero-latency glyph picker is the front door — the network
+  // search waits for an explicit Enter/Search (fast brand promise; the
+  // first frame is never a spinner, and never a failure line).
+  $('#di-status').textContent = (item.label || '').trim()
+    ? `Press Enter or “Search” to look for a “${(item.label || '').trim()}” logo, or pick a glyph below.`
+    : 'Type a term and press Enter to search for a logo, or pick a glyph below.';
 }
 function closeIconModal() {
   iconModal.classList.add('hidden');
+  setModalInert(false);
   if (iconModalOpener && document.contains(iconModalOpener)) iconModalOpener.focus();
   iconModalOpener = null;
 }
 
+/* The glyph wall is 57 cells deep — nobody scans that. A curated dozen is the
+   default decision surface; the full grid is one explicit click away. */
+const CURATED_GLYPHS = new Set(['\uE713', '\uE774', '\uE756', '\uE8C4', '\uE706', '\uE793',
+  '\uE734', '\uE9AC', '\uE9A1', '\uE77B', '\uE950', '\uE721', '\uE80F', '\uE754']);
+
 (function buildIconGrid() {
   const grid = $('#icon-grid');
   for (const g of ICON_CATALOG) {
-    const cell = el('button', 'icon-cell', { 'aria-label': g.name }, grid);
+    const cell = el('button', 'icon-cell' + (CURATED_GLYPHS.has(g.code) ? '' : ' off'), { 'aria-label': g.name }, grid);
     el('span', 'g', { text: g.code }, cell);
     el('span', 'n', { text: g.name }, cell);
     cell.onclick = () => {
-      if (iconModalTarget) { iconModalTarget.icon = g.code; }
+      const t = modalTarget();
+      if (t) { t.icon = g.code; }
       closeIconModal();
       touch();
     };
   }
-  $('#icon-none').onclick = () => { if (iconModalTarget) iconModalTarget.icon = ''; closeIconModal(); touch(); };
+  const all = $('#glyph-all');
+  if (all) {
+    const rest = ICON_CATALOG.length - CURATED_GLYPHS.size;
+    all.textContent = `Show all ${ICON_CATALOG.length} glyphs`;
+    all.onclick = () => {
+      const open = grid.classList.toggle('show-all');
+      all.textContent = open ? 'Show fewer' : `Show all ${ICON_CATALOG.length} glyphs`;
+    };
+  }
+  $('#icon-none').onclick = () => { const t = modalTarget(); if (t) t.icon = ''; closeIconModal(); touch(); };
   $('#icon-close').onclick = closeIconModal;
   iconModal.addEventListener('click', (e) => { if (e.target === iconModal) closeIconModal(); });
   // Dialog behavior: Esc dismisses, Tab stays inside the modal.
   iconModal.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') { e.stopPropagation(); closeIconModal(); }
     else if (e.key === 'Tab') {
-      const btns = [...iconModal.querySelectorAll('button')];
-      if (!btns.length) return;
-      const first = btns[0], last = btns[btns.length - 1];
+      // focusables, not just buttons — excluding #di-query let focus leave the dialog
+      const foci = [...iconModal.querySelectorAll('button, input, [href], select, textarea')].filter((n) => !n.disabled && n.offsetParent !== null);
+      if (!foci.length) return;
+      const first = foci[0], last = foci[foci.length - 1];
       if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
       else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
     }
@@ -546,7 +687,8 @@ async function pickDashboardIcon(res) {
   const r = await api.fetchIcon(res.slug);
   if (!r || !r.ok) { $('#di-status').textContent = (r && r.error) || 'Download failed — try again.'; return; }
   imgCache.set(res.slug, r.dataUrl);
-  iconModalTarget.iconImage = res.slug;
+  const t = modalTarget();
+  if (t) t.iconImage = res.slug;
   closeIconModal();
   touch();
 }
@@ -557,7 +699,8 @@ $('#di-query').addEventListener('keydown', (e) => {
 });
 $('#di-clear-img').onclick = () => {
   if (!iconModalTarget) return;
-  iconModalTarget.iconImage = '';
+  const t = modalTarget();
+  if (t) t.iconImage = '';
   closeIconModal();
   touch();
   toast('Logo removed — the glyph shows instead');
@@ -753,9 +896,11 @@ function renderThemes() {
     let armed = false;
     del.onclick = () => {
       if (!armed) { armed = true; del.textContent = 'Sure?'; del.classList.add('armed'); setTimeout(() => { if (del.isConnected) { armed = false; del.textContent = 'Delete theme'; del.classList.remove('armed'); } }, 2600); return; }
+      const snapshot = clone(cfg);   // capture the pre-delete graph — the undo restores it wholesale
       cfg.userThemes = (cfg.userThemes || []).filter((x) => x.id !== a.id);
       applyThemeColors(THEMES[0].colors, THEMES[0].id);   // removing the live theme lands on Midnight
-      toast('Theme deleted: ' + a.name);
+      // Same mercy as every other destructive act in this window: name it, undo it.
+      toast(`Deleted theme “${a.name}”`, false, () => { restoreConfig(snapshot); });
     };
   }
 }
@@ -873,7 +1018,7 @@ function wireBehaviorCheckboxes() {
   $('#ap-showlabels').onchange = (e) => { cfg.appearance.showLabels = e.target.checked; renderPreview(); touch(false); };
   const cl = $('#ap-centerlabel');
   cl.value = cfg.appearance.centerLabel;
-  cl.oninput = () => { cfg.appearance.centerLabel = cl.value; renderPreview(); touch(false); };   // preview live AND persist (no row-list rerender while typing)
+  cl.oninput = () => { cfg.appearance.centerLabel = cl.value; touch(false); };   // preview live AND persist (touch(false) rerenders the preview without the row-list rebuild)
   $('#btn-test').onclick = async () => { await api.testWheel(); };                   // onclick, not addEventListener: never stacks across rerenders
 }
 
@@ -914,16 +1059,67 @@ async function wireAdvanced() {
     }
   };
   $('#btn-openfolder').onclick = () => api.openConfigFolder();
-  $('#btn-quit').onclick = () => { if (confirm('Exit Radial Wheel? The hotkey will stop working until you launch it again.')) api.requestQuit(); };
+  /* Quit is the highest-stakes click in this window — answer it in-brand,
+     with the same armed second-click the theme delete and guarded Try use.
+     A native confirm() is Windows chrome wearing none of this system's voice. */
+  const quit = $('#btn-quit');
+  let quitArmed = false, quitTimer = null;
+  quit.onclick = () => {
+    if (!quitArmed) {
+      quitArmed = true;
+      quit.textContent = 'Click again to quit';
+      quit.classList.add('armed');
+      clearTimeout(quitTimer);
+      quitTimer = setTimeout(() => {
+        if (quit.isConnected) { quitArmed = false; quit.textContent = 'Exit Radial Wheel'; quit.classList.remove('armed'); }
+      }, 3000);
+      return;
+    }
+    api.requestQuit();
+  };
 }
 
-/* --------------------------------- preview --------------------------------- */
+/* --------------------------------- preview ---------------------------------
+   "Configure live, not blind" means the preview must show the product's
+   signature states — hover nudge, sibling dim, hub report. The overlay's
+   interaction CSS lives in wheel.css (which the settings page never loads),
+   so mirrored scoped rules for #wheel-preview carry them (see settings.css);
+   hover is routed through the SAME hitTest the real wheel uses. buildWheel's
+   `preview` flag suppresses the pop; click-firing is safe because no
+   segment-click handler exists on this page. */
+let previewBuilt = null;
+let previewHoverBound = false;
+
+function bindPreviewHover() {
+  if (previewHoverBound) return;
+  previewHoverBound = true;
+  const host = $('#wheel-preview');
+  host.addEventListener('mousemove', (e) => {
+    if (!previewBuilt) return;
+    const svg = host.querySelector('svg');
+    if (!svg) return;
+    const rct = svg.getBoundingClientRect();
+    const hit = previewBuilt.hitTest(e.clientX - rct.left, e.clientY - rct.top);
+    const seg = hit && hit.seg ? hit.seg : null;
+    previewBuilt.setHover(seg);
+    const rootG = svg.querySelector('.wheel-root');
+    if (rootG) rootG.classList.toggle('any-hover', !!seg);
+  });
+  host.addEventListener('mouseleave', () => {
+    if (!previewBuilt) return;
+    previewBuilt.setHover(null);
+    const rootG = $('#wheel-preview .wheel-root');
+    if (rootG) rootG.classList.remove('any-hover');
+  });
+}
+
 function renderPreview() {
   const host = $('#wheel-preview');
   const avail = Math.min(host.clientWidth, host.clientHeight) - 20;
   const need = cfg.appearance.outerRadius * 2 + 52;
   const scale = Math.min(1, Math.max(0.3, avail / need));
-  buildWheel(host, cfg, { preview: true, scale, iconImages: imgCache });
+  previewBuilt = buildWheel(host, cfg, { preview: true, scale, iconImages: imgCache });
+  bindPreviewHover();
 }
 
 /* ---------------------------------- boot ----------------------------------- */
@@ -938,18 +1134,84 @@ function renderAll() {
   renderPreview();
 }
 
+/* --------------------- external-change reconciliation ----------------------
+   "Edits are watched live" must be true in both directions. An external
+   config.json edit (or tray reload) that arrives mid-typing used to be
+   swallowed by `if (dirty) return` and then silently clobbered at persist.
+   Now: apply it when clean; queue it when dirty and, once our own save
+   settles, hand the choice to the user instead of picking a winner. */
+let storeRev = null;          // the store revision our cfg copy is based on
+let pendingExternal = null;   // queued { config, rev } from a reload while dirty
+
+function showConflict() {
+  const w = $('#cfg-conflict');
+  if (!w) { pendingExternal = null; return; }
+  w.classList.remove('hidden');
+}
+
+async function resolveConflict(keepMine) {
+  const theirs = pendingExternal;
+  pendingExternal = null;
+  const w = $('#cfg-conflict');
+  if (w) w.classList.add('hidden');
+  if (!theirs) return;
+  if (keepMine) {
+    // Our version wins: force-write our state over the disk copy.
+    dirty = true;
+    await persist();
+  } else {
+    // The disk wins: adopt it — with the usual mercy, one catchable undo.
+    const mine = clone(cfg);
+    cfg = theirs.config;
+    storeRev = theirs.rev;
+    dirty = false;
+    renderAll();
+    toast('Loaded the on-disk config', false, async () => {
+      cfg = mine; dirty = true;
+      renderAll();
+      await persist();
+    });
+  }
+}
+
+function wireConflict() {
+  const mine = $('#cfg-conflict-mine');
+  const disk = $('#cfg-conflict-theirs');
+  if (mine) mine.onclick = () => { resolveConflict(true); };
+  if (disk) disk.onclick = () => { resolveConflict(false); };
+}
+
 async function boot() {
   api.env?.().then((e) => { if (e && e.vibrant) document.documentElement.dataset.vibrant = '1'; });
   const r = await api.getConfig();
   cfg = r.config;
+  storeRev = typeof r.rev === 'number' ? r.rev : null;
   sysCatalogCache = await api.sysCatalog();
   renderAll();
   setSaveState('Saved');
   wireAdvanced();
+  wireConflict();
   wireConfigWarn(r);
   if (r.hotkeyError) showHkError(r.hotkeyError);
   if (r.importedFrom) toast('Settings imported from your previous (legacy) config', false, null, 5000);
-  api.onConfigChanged((newCfg) => { if (!dirty) { cfg = newCfg; renderAll(); } });
+  api.onConfigChanged((payload) => {
+    // main broadcasts only genuine reloads (file watch / tray), as { config, rev }
+    const newCfg = payload && payload.config !== undefined ? payload.config : payload;
+    const rev = payload && typeof payload.rev === 'number' ? payload.rev : null;
+    if (rev !== null && storeRev !== null && rev === storeRev) return;      // echo of our own save
+    if (dirty) {                                                             // mid-edit — queue, reconcile after save
+      pendingExternal = { config: newCfg, rev };
+      return;
+    }
+    if (JSON.stringify(cfg) === JSON.stringify(newCfg)) {                    // content already matches — just adopt the revision
+      if (rev !== null) storeRev = rev;
+      return;
+    }
+    if (rev !== null) storeRev = rev;
+    pendingExternal = null;
+    cfg = newCfg;
+    renderAll();                                                             // genuine external change
+  });
   window.addEventListener('resize', () => renderPreview());
 }
 

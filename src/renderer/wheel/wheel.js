@@ -75,9 +75,12 @@ window.addEventListener('mousedown', (e) => {
   if (hit && hit.seg) api.clickSegment(hit.seg.item); // main hides the overlay + executes
 });
 
+// Right-click dismiss is a setting, not a law: honor behavior.dismissOnRightClick.
+// The payload is the full validated config, shipped fresh on every summon.
 window.addEventListener('contextmenu', (e) => {
   e.preventDefault();
-  api.dismiss();
+  const bh = lastPayload && lastPayload.config && lastPayload.config.behavior;
+  if (!bh || bh.dismissOnRightClick !== false) api.dismiss();
 });
 
 // never show a stale frame between pops
