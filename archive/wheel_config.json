@@ -1,0 +1,50 @@
+{
+  "hotkey": "ctrl+alt+space",
+  "inner_radius": 95,
+  "ring_split": 0.5,
+  "outer_radius": 210,
+  "start_angle": 90,
+  "center_label": "",
+  "colors": {
+    "bg": "#101418",
+    "ring1": "#1b2733",
+    "ring2": "#16202b",
+    "hover": "#2e7dd1",
+    "text": "#e8eef4",
+    "center": "#0a0e12"
+  },
+  "font": [
+    "Segoe UI",
+    10,
+    "bold"
+  ],
+  "items": [
+    {
+      "label": "Notepad",
+      "type": "app",
+      "value": "notepad.exe"
+    },
+    {
+      "label": "Browser",
+      "type": "app",
+      "value": "https://google.com"
+    },
+    {
+      "label": "Lock",
+      "type": "sys",
+      "value": "lock"
+    },
+    {
+      "label": "Mute",
+      "type": "sys",
+      "value": "mute",
+      "ring": 2
+    },
+    {
+      "label": "Copy/Paste",
+      "type": "macro",
+      "value": "ctrl+c, wait=0.2, ctrl+v",
+      "ring": 2
+    }
+  ]
+}

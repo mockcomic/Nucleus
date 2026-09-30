@@ -1,0 +1,246 @@
+'use strict';
+/* Config store: defaults, validation, atomic save, legacy import, external-edit watch. */
+const { app } = require('electron');
+const fs = require('fs');
+const path = require('path');
+const EventEmitter = require('events');
+
+const VERSION = 1;
+let idSeq = 0;
+const nid = () => `i${Date.now().toString(36)}${(idSeq++).toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+
+const DEFAULT_COLORS = {
+  bg: '#0f1419', ring1: '#1b2733', ring2: '#16202b',
+  hover: '#2e7dd1', accent: '#4c9ff0', text: '#e8eef4', center: '#0a0e12'
+};
+
+function defaults() {
+  return {
+    version: VERSION,
+    hotkey: 'ctrl+alt+space',
+    appearance: {
+      innerRadius: 70, outerRadius: 210, ringSplit: 0.5, startAngle: 0, gapDeg: 3,
+      showLabels: true, fontSize: 12, centerLabel: '', animationMs: 160,
+      colors: { ...DEFAULT_COLORS }
+    },
+    behavior: {
+      autostart: true, dismissOnEscape: true, dismissOnRightClick: true,
+      reTriggerToggles: true
+    },
+    rings: {
+      1: [
+        { id: nid(), label: 'Browser', icon: '\uE774', type: 'url', value: 'https://google.com', color: null },
+        { id: nid(), label: 'Files', icon: '\uE8B7', type: 'app', value: 'explorer.exe', color: null },
+        { id: nid(), label: 'Settings', icon: '\uE713', type: 'sys', value: 'settings', color: null },
+        { id: nid(), label: 'Notes', icon: '\uE70F', type: 'app', value: 'notepad.exe', color: null }
+      ],
+      2: [
+        { id: nid(), label: 'Calculator', icon: '\uE8EF', type: 'app', value: 'calc.exe', color: null },
+        { id: nid(), label: 'Screenshot', icon: '\uE7B5', type: 'sys', value: 'screenshot', color: null },
+        { id: nid(), label: 'Mute', icon: '\uE74E', type: 'sys', value: 'mute', color: null },
+        { id: nid(), label: 'Lock', icon: '\uE72E', type: 'sys', value: 'lock', color: null },
+        { id: nid(), label: 'Sleep', icon: '\uE7E8', type: 'sys', value: 'sleep', color: null },
+        { id: nid(), label: 'Recycle Bin', icon: '\uE74D', type: 'sys', value: 'recycle_bin', color: null },
+        { id: nid(), label: 'Task Mgr', icon: '\uE9D9', type: 'sys', value: 'task_manager', color: null },
+        { id: nid(), label: 'Desktop', icon: '\uE7F4', type: 'sys', value: 'show_desktop', color: null }
+      ]
+    }
+  };
+}
+
+const HEX = /^#[0-9a-fA-F]{6}$/;
+const clamp = (v, lo, hi, dflt) =>
+  (typeof v === 'number' && isFinite(v)) ? Math.min(hi, Math.max(lo, v)) : dflt;
+
+const TYPES = new Set(['app', 'url', 'file', 'command', 'macro', 'sys']);
+const HOTKEY_RE = /^[a-z0-9+ ]{1,40}$/;
+
+function validate(raw) {
+  const base = defaults();
+  const src = raw && typeof raw === 'object' ? raw : {};
+  const ap = src.appearance || {};
+  const colorsIn = ap.colors || {};
+  const colors = {};
+  for (const k of Object.keys(DEFAULT_COLORS)) colors[k] = HEX.test(colorsIn[k] || '') ? colorsIn[k] : DEFAULT_COLORS[k];
+
+  const cleanItem = (it, i) => {
+    it = it && typeof it === 'object' ? it : {};
+    let type = String(it.type || 'app').toLowerCase();
+    if (!TYPES.has(type)) type = 'app';
+    return {
+      id: typeof it.id === 'string' && it.id ? it.id : nid(),
+      label: String(it.label ?? `Item ${i + 1}`).slice(0, 40),
+      icon: typeof it.icon === 'string' ? Array.from(it.icon).slice(0, 2).join('') : '',
+      type,
+      value: String(it.value ?? '').slice(0, 2048),
+      color: HEX.test(it.color || '') ? it.color : null
+    };
+  };
+  const cleanRing = (arr) => Array.isArray(arr) ? arr.slice(0, 24).map(cleanItem) : [];
+
+  const rings = (src.rings && typeof src.rings === 'object') ? src.rings : {};
+  let ring1 = cleanRing(Array.isArray(rings[1]) ? rings[1] : []);
+  let ring2 = cleanRing(Array.isArray(rings[2]) ? rings[2] : []);
+  if (!ring1.length && !ring2.length) ring1 = defaults().rings[1];  // never ship an empty wheel
+
+  const bhvIn = src.behavior || {};
+  const hotkey = HOTKEY_RE.test(String(src.hotkey ?? '').toLowerCase().trim())
+    ? String(src.hotkey).toLowerCase().trim() : base.hotkey;
+
+  return {
+    version: VERSION,
+    hotkey,
+    appearance: {
+      innerRadius: clamp(ap.innerRadius, 24, 140, base.appearance.innerRadius),
+      outerRadius: clamp(ap.outerRadius, 120, 360, base.appearance.outerRadius),
+      ringSplit: clamp(ap.ringSplit, 0.2, 0.8, base.appearance.ringSplit),
+      startAngle: clamp(ap.startAngle, 0, 359.9, base.appearance.startAngle),
+      gapDeg: clamp(ap.gapDeg, 0, 10, base.appearance.gapDeg),
+      showLabels: ap.showLabels !== false,
+      fontSize: clamp(ap.fontSize, 8, 20, base.appearance.fontSize),
+      centerLabel: String(ap.centerLabel ?? '').slice(0, 24),
+      animationMs: clamp(ap.animationMs, 0, 400, base.appearance.animationMs),
+      colors
+    },
+    behavior: {
+      autostart: bhvIn.autostart !== false,
+      dismissOnEscape: bhvIn.dismissOnEscape !== false,
+      dismissOnRightClick: bhvIn.dismissOnRightClick !== false,
+      reTriggerToggles: bhvIn.reTriggerToggles !== false
+    },
+    rings: { 1: ring1, 2: ring2 }
+  };
+}
+
+/* Map the old Python wheel_config.json (flat items[] with ring field) into v1. */
+function importLegacy(cfgDirCandidates) {
+  for (const dir of cfgDirCandidates) {
+    const p = path.join(dir, 'wheel_config.json');
+    try {
+      if (!fs.existsSync(p)) continue;
+      const old = JSON.parse(fs.readFileSync(p, 'utf8'));
+      const d = defaults();
+      const out = {
+        version: VERSION,
+        hotkey: HOTKEY_RE.test(String(old.hotkey || '').toLowerCase()) ? old.hotkey.toLowerCase() : d.hotkey,
+        appearance: {
+          ...d.appearance,
+          innerRadius: clamp(old.inner_radius, 24, 140, clamp((old.inner_radius || 95) * 0.74, 24, 140, 70)),
+          outerRadius: clamp(old.outer_radius, 120, 360, d.appearance.outerRadius),
+          ringSplit: clamp(old.ring_split, 0.2, 0.8, d.appearance.ringSplit),
+          startAngle: typeof old.start_angle === 'number'
+            ? (((90 - old.start_angle) % 360) + 360) % 360 : 0,
+          colors: { ...d.appearance.colors, ...(old.colors || {}) },
+          centerLabel: String(old.center_label || '')
+        },
+        behavior: { ...d.behavior },
+        rings: { 1: [], 2: [] }
+      };
+      if (Array.isArray(old.font) && typeof old.font[1] === 'number')
+        out.appearance.fontSize = clamp(old.font[1], 8, 20, 12);
+      for (const it of (old.items || [])) {
+        const ring = String(it.ring) === '2' ? '2' : '1';
+        let type = String(it.type || 'app').toLowerCase();
+        if (!TYPES.has(type)) type = 'app';
+        out.rings[ring].push({ id: nid(), label: it.label || 'Item', icon: '', type, value: it.value || '', color: null });
+      }
+      return { config: validate(out), importedFrom: p };
+    } catch { /* try next candidate */ }
+  }
+  return null;
+}
+
+class ConfigStore extends EventEmitter {
+  constructor() {
+    super();
+    this._cfg = validate({});
+    this._createdNew = false;
+    this._watcher = null;
+    this._suppressUntil = 0;
+    this._lastGood = null;
+  }
+
+  file() { return path.join(app.getPath('userData'), 'config.json'); }
+
+  init() {
+    const p = this.file();
+    try {
+      if (fs.existsSync(p)) {
+        this._cfg = validate(JSON.parse(fs.readFileSync(p, 'utf8')));
+        this._lastGood = this._cfg;
+      } else {
+        throw new Error('missing');
+      }
+    } catch (err) {
+      const candidates = [app.getAppPath(), path.join(app.getAppPath(), 'archive'), app.getPath('userData')];
+      const legacy = importLegacy(candidates);
+      if (legacy) {
+        this._cfg = legacy.config;
+        this.importedFrom = legacy.importedFrom;
+      } else {
+        this._cfg = validate({});
+      }
+      this._createdNew = true;
+      try { fs.mkdirSync(path.dirname(p), { recursive: true }); } catch {}
+      this._write();
+      if (err.message === 'missing' && !legacy) {
+        // brand-new install, nothing else to do
+      } else if (err.message !== 'missing') {
+        try { fs.copyFileSync(p, p + '.bad'); } catch {}
+        this.broken = true;
+      }
+    }
+    this._watch();
+    return { config: this._cfg, createdNew: this._createdNew };
+  }
+
+  get() { return this._cfg; }
+
+  set(newCfg) {
+    const merged = validate({ ...newCfg, version: VERSION });
+    const old = this._cfg;
+    this._cfg = merged;
+    this._lastGood = merged;
+    this._write();
+    this.emit('changed', { config: merged, old, hotkeyChanged: old.hotkey !== merged.hotkey, autostartChanged: old.behavior.autostart !== merged.behavior.autostart });
+    return merged;
+  }
+
+  reload() {
+    try {
+      const cfg = validate(JSON.parse(fs.readFileSync(this.file(), 'utf8')));
+      const old = this._cfg;
+      this._cfg = cfg;
+      this._lastGood = cfg;
+      this.emit('changed', { config: cfg, old, hotkeyChanged: old.hotkey !== cfg.hotkey, autostartChanged: old.behavior.autostart !== cfg.behavior.autostart, reload: true });
+      return cfg;
+    } catch {
+      if (this._lastGood) { this._cfg = this._lastGood; }
+      return this._cfg;
+    }
+  }
+
+  _write() {
+    const p = this.file();
+    const tmp = p + '.tmp';
+    this._suppressUntil = Date.now() + 300;
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(tmp, JSON.stringify(this._cfg, null, 2), 'utf8');
+    fs.renameSync(tmp, p);
+  }
+
+  _watch() {
+    const p = this.file();
+    try {
+      this._watcher && this._watcher.close();
+      fs.watch(path.dirname(p), (evt, name) => {
+        if (name !== 'config.json') return;
+        if (Date.now() < this._suppressUntil) return;
+        clearTimeout(this._t);
+        this._t = setTimeout(() => this.reload(), 200);
+      });
+    } catch { /* watch is best-effort */ }
+  }
+}
+
+module.exports = { ConfigStore, validate, defaults, VERSION };

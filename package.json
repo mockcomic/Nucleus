@@ -1,0 +1,50 @@
+{
+  "name": "radial-wheel",
+  "productName": "Radial Wheel",
+  "version": "1.0.0",
+  "description": "A polished, always-running radial launcher menu for Windows",
+  "main": "src/main/main.js",
+  "author": "Radial Wheel",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "start:hidden": "wscript scripts/launch-hidden.vbs",
+    "make-icons": "node scripts/make-icons.mjs",
+    "dist": "node scripts/make-icons.mjs && electron-builder"
+  },
+  "dependencies": {
+    "koffi": "^2.9.2"
+  },
+  "devDependencies": {
+    "electron": "^44.5.1",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "local.radialwheel",
+    "productName": "Radial Wheel",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "portable",
+        "nsis"
+      ],
+      "icon": "assets/tray.ico",
+      "signExecutable": false
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "deleteAppDataOnUninstall": false
+    },
+    "portable": {
+      "artifactName": "RadialWheel-${version}-portable.exe"
+    }
+  }
+}

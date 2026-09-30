@@ -1,0 +1,117 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Radial Wheel — Settings</title>
+  <link rel="stylesheet" href="settings.css">
+</head>
+<body>
+  <aside id="sidebar">
+    <div class="brand"><span class="brand-dot"></span> Radial&nbsp;Wheel</div>
+    <nav>
+      <button class="tab-btn active" data-tab="segments">Segments</button>
+      <button class="tab-btn" data-tab="appearance">Appearance</button>
+      <button class="tab-btn" data-tab="behavior">Hotkey &amp; Behavior</button>
+      <button class="tab-btn" data-tab="advanced">Advanced</button>
+    </nav>
+    <div class="side-foot">
+      <div id="ver" class="muted"></div>
+    </div>
+  </aside>
+
+  <main id="content">
+
+    <section class="tab" id="tab-segments">
+      <div class="tab-head">
+        <h2>Wheel segments</h2>
+        <span class="muted">Click a row to edit. Inner ring fills first; the outer ring appears when it has items.</span>
+      </div>
+      <div id="ring-lists"></div>
+    </section>
+
+    <section class="tab hidden" id="tab-appearance">
+      <div class="tab-head"><h2>Appearance</h2></div>
+      <div id="presets" class="preset-row"></div>
+      <div id="appearance-controls" class="card slider-grid"></div>
+      <div class="card">
+        <div class="card-title">Colors</div>
+        <div id="color-grid" class="color-grid"></div>
+      </div>
+      <div class="card row-card">
+        <label class="chk"><input type="checkbox" id="ap-showlabels"> Show labels</label>
+        <label class="lbl-grow">Center text <input type="text" id="ap-centerlabel" maxlength="24" placeholder="e.g. RADIAL"></label>
+      </div>
+    </section>
+
+    <section class="tab hidden" id="tab-behavior">
+      <div class="tab-head"><h2>Hotkey &amp; behavior</h2></div>
+      <div class="card">
+        <div class="card-title">Summon hotkey</div>
+        <div id="hk-error" class="err hidden"></div>
+        <div class="row-line">
+          <div id="hk-display" class="hk-chip">Ctrl + Alt + Space</div>
+          <button id="recorder-btn" class="btn">Change…</button>
+        </div>
+        <div class="hint muted">Click “Change…”, then press any modifier combination (Ctrl/Alt/Shift/Win + key). It registers instantly — if the combo is taken by another app you'll be told and the old hotkey stays active.</div>
+      </div>
+      <div class="card">
+        <div class="card-title">Startup</div>
+        <label class="chk"><input type="checkbox" id="autostart-chk"> Launch Radial Wheel when I sign in to Windows</label>
+      </div>
+      <div class="card">
+        <div class="card-title">Wheel behavior</div>
+        <label class="chk"><input type="checkbox" id="bh-esc"> Dismiss with Esc</label>
+        <label class="chk"><input type="checkbox" id="bh-right"> Right-click dismisses the wheel</label>
+        <label class="chk"><input type="checkbox" id="bh-retrigger"> Pressing the hotkey again hides the wheel</label>
+      </div>
+    </section>
+
+    <section class="tab hidden" id="tab-advanced">
+      <div class="tab-head"><h2>Advanced</h2></div>
+      <div class="card">
+        <div class="card-title">Config file</div>
+        <div class="hint muted" id="cfg-path-hint">Stored in %APPDATA%\Radial Wheel\config.json — edits are watched live.</div>
+        <div class="row-line wrap">
+          <button class="btn" id="btn-export">Export…</button>
+          <button class="btn" id="btn-import">Import…</button>
+          <button class="btn" id="btn-reset">Reset to defaults</button>
+          <button class="btn" id="btn-openfolder">Open config folder</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">Action types</div>
+        <ul class="type-help">
+          <li><b>app</b> — launch a program or open a file (paths or shell names like <code>notepad.exe</code>)</li>
+          <li><b>url</b> — open a link in your default browser</li>
+          <li><b>command</b> — run any shell command</li>
+          <li><b>macro</b> — synthesize keystrokes: <code>ctrl+c, wait=0.2, ctrl+v</code> · <code>type:hello world</code></li>
+          <li><b>sys</b> — built-in Windows actions (lock, sleep, volume, settings pages…)</li>
+        </ul>
+      </div>
+      <div class="card">
+        <button class="btn danger" id="btn-quit">Exit Radial Wheel</button>
+      </div>
+    </section>
+  </main>
+
+  <aside id="preview-pane">
+    <div class="preview-title">Live preview</div>
+    <div id="wheel-preview"></div>
+    <div class="row-line center">
+      <button class="btn primary" id="btn-test">▶ Test the real wheel</button>
+    </div>
+    <div class="hint muted">The preview uses the same renderer as the real overlay. Test pops the actual menu at your mouse.</div>
+  </aside>
+
+  <div id="toasts"></div>
+
+  <div id="icon-modal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">Choose an icon <button id="icon-none" class="btn small">None</button><button id="icon-close" class="btn small">✕</button></div>
+      <div id="icon-grid" class="icon-grid"></div>
+    </div>
+  </div>
+
+  <script type="module" src="settings.js"></script>
+</body>
+</html>

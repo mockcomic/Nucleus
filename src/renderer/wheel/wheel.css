@@ -1,0 +1,41 @@
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+#root { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
+#root.has-hover { cursor: pointer; }
+
+.wheel-svg { display: block; }
+
+.wheel-root {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+@keyframes wheelpop {
+  0%   { transform: scale(0.82); opacity: 0; }
+  60%  { opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+.seg { transition: opacity .12s ease; }
+.seg path { transition: fill .1s ease; }
+.seg text { pointer-events: none; }
+
+.wheel-root.any-hover .seg { opacity: .55; }
+.wheel-root.any-hover .seg.hovered {
+  opacity: 1;
+  transform: translate(var(--tx, 0), var(--ty, 0));
+  transition: transform .12s cubic-bezier(.34,1.56,.64,1), opacity .12s ease;
+}
+
+.hub { transition: fill .1s ease; }
+.hub-icon, .hub-label, .center-label { pointer-events: none; }
