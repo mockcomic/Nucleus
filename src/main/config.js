@@ -4,8 +4,9 @@ const { app } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const EventEmitter = require('events');
+const { themes, themeById, themeBySignature, signature } = require('./themes');
 
-const VERSION = 1;
+const VERSION = 2;
 let idSeq = 0;
 const nid = () => `i${Date.now().toString(36)}${(idSeq++).toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 
@@ -13,6 +14,40 @@ const DEFAULT_COLORS = {
   bg: '#0f1419', ring1: '#1b2733', ring2: '#16202b',
   hover: '#2e7dd1', accent: '#4c9ff0', text: '#e8eef4', center: '#0a0e12'
 };
+const DEFAULT_THEME_ID = 'midnight';
+const MAX_USER_THEMES = 24;
+
+/* Optional persona fields on a palette; malformed entries are dropped, never
+   defaulted (see themes.mjs sanitizePalette for the renderer-side mirror). */
+function cleanPalette(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  for (const k of Object.keys(DEFAULT_COLORS)) if (!HEX.test(String(raw[k] || ''))) return null;
+  const out = {};
+  for (const k of Object.keys(DEFAULT_COLORS)) out[k] = String(raw[k]).toLowerCase();
+  if (raw.mode === 'dark' || raw.mode === 'light') out.mode = raw.mode;
+  for (const k of ['edge', 'stroke', 'shadow', 'sheen']) if (HEX.test(String(raw[k] || ''))) out[k] = String(raw[k]).toLowerCase();
+  if (raw.chrome && typeof raw.chrome === 'object') {
+    const c = {};
+    for (const k of ['panel', 'card', 'line', 'dim', 'btnBg', 'wellHover', 'wellEdit',
+      'wellTabHover', 'codeInk', 'accentDeep', 'danger', 'errBg', 'errInk', 'track',
+      'previewHi', 'previewLo', 'scrollThumb', 'scrollThumbHover', 'sheenColor', 'chromeText', 'chromeEdge'])
+      if (HEX.test(String(raw.chrome[k] || ''))) c[k] = String(raw.chrome[k]).toLowerCase();
+    if (Object.keys(c).length) out.chrome = c;
+  }
+  return out;
+}
+
+function cleanUserTheme(it, takenNames) {
+  it = it && typeof it === 'object' ? it : {};
+  const colors = cleanPalette(it.colors);
+  if (!colors) return null;
+  let name = String(it.name ?? '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 24);
+  if (!name) name = 'Theme';
+  let uniq = name, n = 2;
+  while (takenNames.has(uniq.toLowerCase())) uniq = `${name} (${n++})`.slice(0, 24);
+  takenNames.add(uniq.toLowerCase());
+  return { id: typeof it.id === 'string' && it.id ? it.id : nid(), name, colors };
+}
 
 function defaults() {
   return {
@@ -25,8 +60,11 @@ function defaults() {
     },
     behavior: {
       autostart: true, dismissOnEscape: true, dismissOnRightClick: true,
-      reTriggerToggles: true
+      reTriggerToggles: true,
+      gameMode: { enabled: false, apps: [] }
     },
+    theme: { id: DEFAULT_THEME_ID, customized: false, colors: { ...DEFAULT_COLORS } },
+    userThemes: [],
     rings: {
       1: [
         { id: nid(), label: 'Browser', icon: '\uE774', type: 'url', value: 'https://google.com', color: null },
@@ -62,6 +100,10 @@ function validate(raw) {
   const colorsIn = ap.colors || {};
   const colors = {};
   for (const k of Object.keys(DEFAULT_COLORS)) colors[k] = HEX.test(colorsIn[k] || '') ? colorsIn[k] : DEFAULT_COLORS[k];
+  /* persona fields ride along untouched when valid; the wheel renderer and the
+     chrome derivation own their meaning (mirror: themes.mjs sanitizePalette) */
+  for (const k of ['edge', 'stroke', 'shadow', 'sheen']) if (HEX.test(colorsIn[k] || '')) colors[k] = colorsIn[k];
+  if (colorsIn.mode === 'dark' || colorsIn.mode === 'light') colors.mode = colorsIn.mode;
 
   const cleanItem = (it, i) => {
     it = it && typeof it === 'object' ? it : {};
@@ -71,6 +113,9 @@ function validate(raw) {
       id: typeof it.id === 'string' && it.id ? it.id : nid(),
       label: String(it.label ?? `Item ${i + 1}`).slice(0, 40),
       icon: typeof it.icon === 'string' ? Array.from(it.icon).slice(0, 2).join('') : '',
+      // Dashboard Icons logo slug (see dashboard-icons.js); anything invalid
+      // degrades to '' so the glyph fallback above keeps working.
+      iconImage: require('./dashboard-icons').sanitizeSlug(it.iconImage) || '',
       type,
       value: String(it.value ?? '').slice(0, 2048),
       color: HEX.test(it.color || '') ? it.color : null
@@ -86,6 +131,26 @@ function validate(raw) {
   const bhvIn = src.behavior || {};
   const hotkey = HOTKEY_RE.test(String(src.hotkey ?? '').toLowerCase().trim())
     ? String(src.hotkey).toLowerCase().trim() : base.hotkey;
+
+  /* --- theme system (v2): user gallery + the active theme reference ------- */
+  const takenNames = new Set(themes().map((t) => t.name.toLowerCase()));
+  const userThemes = (Array.isArray(src.userThemes) ? src.userThemes : [])
+    .slice(0, MAX_USER_THEMES)
+    .map((it) => cleanUserTheme(it, takenNames))
+    .filter(Boolean);
+
+  const thIn = src.theme && typeof src.theme === 'object' ? src.theme : {};
+  let themeId = typeof thIn.id === 'string' ? thIn.id : null;
+  let userTheme = userThemes.find((t) => t.id === themeId) || null;
+  if (!userTheme) {
+    if (!themeById(themeId) || themeId === null) themeId = DEFAULT_THEME_ID;
+    userTheme = null;
+  }
+  /* Baseline = the palette the active theme owns. An edited theme carries its
+     own saved baseline; a catalog theme's baseline is the catalog entry. */
+  const baseline = userTheme ? userTheme.colors
+    : cleanPalette(thIn.colors) || (themeById(themeId) && cleanPalette(themeById(themeId).colors))
+    || { ...DEFAULT_COLORS };
 
   return {
     version: VERSION,
@@ -106,8 +171,15 @@ function validate(raw) {
       autostart: bhvIn.autostart !== false,
       dismissOnEscape: bhvIn.dismissOnEscape !== false,
       dismissOnRightClick: bhvIn.dismissOnRightClick !== false,
-      reTriggerToggles: bhvIn.reTriggerToggles !== false
+      reTriggerToggles: bhvIn.reTriggerToggles !== false,
+      gameMode: require('./gamemode').sanitizeGameMode(bhvIn.gameMode)
     },
+    theme: {
+      id: themeId,
+      customized: thIn.customized === true || signature(colors) !== signature(baseline),
+      colors: baseline
+    },
+    userThemes,
     rings: { 1: ring1, 2: ring2 }
   };
 }

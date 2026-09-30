@@ -21,7 +21,11 @@ class TrayManager {
 
   _tip() {
     const cfg = this.getCfg ? this.getCfg() : null;
-    return cfg ? `Radial Wheel — ${cfg.hotkey}` : 'Radial Wheel';
+    let tip = cfg ? `Radial Wheel — ${cfg.hotkey}` : 'Radial Wheel';
+    const game = this.handlers.getGameMode ? this.handlers.getGameMode() : null;
+    if (this.paused) tip += ' — paused';
+    else if (game && game.active) tip += ` — Game mode: paused (${game.reason || 'game'})`;
+    return tip;
   }
 
   update() {
@@ -33,16 +37,19 @@ class TrayManager {
   _rebuildMenu() {
     if (!this.tray) return;
     const cfg = this.getCfg();
-    const menu = Menu.buildFromTemplate([
+    const game = this.handlers.getGameMode ? this.handlers.getGameMode() : null;
+    const template = [
       { label: 'Show wheel', accelerator: undefined, click: () => this.handlers.onShowWheel() },
       { label: `Open Settings  (${hotkeys.parse ? safeDisp(cfg.hotkey) : cfg.hotkey})`, click: () => this.handlers.onOpenSettings() },
       { type: 'separator' },
       { label: 'Reload config from disk', click: () => this.handlers.onReload() },
-      { label: 'Pause hotkey', type: 'checkbox', checked: this.paused, click: (mi) => { this.paused = mi.checked; this.handlers.onPauseToggle(mi.checked); } },
-      { type: 'separator' },
-      { label: 'Quit Radial Wheel', click: () => this.handlers.onQuit() }
-    ]);
-    this.tray.setContextMenu(menu);
+      { label: 'Pause hotkey', type: 'checkbox', checked: this.paused, click: (mi) => { this.paused = mi.checked; this.handlers.onPauseToggle(mi.checked); } }
+    ];
+    // Gaming mode shows itself (and why) but needs no interaction — "Show wheel"
+    // above stays enabled as the deliberate escape hatch.
+    if (game && game.active) template.push({ label: `Game mode: paused (${game.reason || 'game'})`, enabled: false });
+    template.push({ type: 'separator' }, { label: 'Quit Radial Wheel', click: () => this.handlers.onQuit() });
+    this.tray.setContextMenu(Menu.buildFromTemplate(template));
   }
 
   balloon(title, content, type = 'info') {

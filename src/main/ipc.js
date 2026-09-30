@@ -5,6 +5,7 @@ const path = require('path');
 const actions = require('./actions');
 const autostart = require('./autostart');
 const apps = require('./apps');
+const dashboardIcons = require('./dashboard-icons');
 const sys = require('./sys');
 const { supportsVibrancy } = require('./windows');
 
@@ -101,6 +102,16 @@ function registerIpc(deps) {
     if (!r.ok) return { ok: false, error: r.error };
     return { ok: true, verified: r.verified };
   });
+
+  /* ---- dashboard icons (logos for wheel items) ---- */
+  dashboardIcons.configure(path.join(app.getPath('userData'), 'icons', 'dashboard'));
+  const ringItems = (cfg) => [...((cfg && cfg.rings && cfg.rings[1]) || []), ...((cfg && cfg.rings && cfg.rings[2]) || [])];
+  ipcMain.handle('icons:search', (ev, query) => dashboardIcons.searchIcons(query));
+  ipcMain.handle('icons:fetch', (ev, slug) => dashboardIcons.fetchIcon(slug));
+  ipcMain.handle('icons:data-url', (ev, slug) => dashboardIcons.dataUrlFor(slug));
+  // Prime the disk cache so the wheel never has to wait on a download to show a logo.
+  dashboardIcons.warm(ringItems(store.get()).map((it) => it.iconImage));
+  store.on('changed', ({ config }) => dashboardIcons.warm(ringItems(config).map((it) => it.iconImage)));
 
   /* ---- misc ---- */
   ipcMain.handle('dialog:pick-file', async (ev, opts) => {

@@ -58,7 +58,12 @@ Open from the tray (double-click icon → **Open Settings**). Four tabs:
   same renderer as the real wheel.
 - **Hotkey & Behavior** — press-to-record hotkey with instant registration (conflicts
   are reported and the old key stays active), Start-with-Windows toggle,
-  dismiss options.
+  dismiss options, and **Gaming mode**: the wheel turns itself off (hotkey
+  included) while the focused app covers a whole monitor — exclusive or
+  borderless-fullscreen games — or while one of your listed programs
+  (comma-separated exe names, e.g. `fortnite.exe`) has focus. It switches back
+  on when the app closes or you alt-tab away; the tray tooltip and menu say
+  why the hotkey is off, and tray → **Show wheel** still works as an override.
 - **Advanced** — export / import / reset config, open the config folder, action
   type reference, exit.
 
@@ -102,6 +107,13 @@ To launch from source with no console (e.g. a Startup entry during development):
   only blur its own content) — depth comes from shadows + tuned fills.
 - If a global hotkey fails to register at startup (taken by another app), the app
   keeps running, shows a tray balloon, and flags it red in Settings.
+- Gaming mode samples the foreground window every ~1.5 s while enabled (zero cost
+  when off; pause fires after ~3 s, resume is immediate). Fullscreen video players
+  and remote-desktop windows count as "fullscreen apps" too. It reads the
+  foreground process name via Win32 — an admin-elevated game may hide its exe
+  name from a non-elevated app, in which case the app-list match can't fire but
+  fullscreen detection still does. If the Win32 probe is unavailable the wheel
+  simply never pauses (fail-open).
 
 ## Development
 

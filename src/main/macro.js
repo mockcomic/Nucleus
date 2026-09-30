@@ -4,7 +4,7 @@
    If koffi fails to load, `available` stays false and key-based actions report clearly. */
 const IS_WIN = process.platform === 'win32';
 
-let koffi = null, user32 = null;
+let koffi = null, user32 = null, kernel32 = null;
 let available = false, loadError = null;
 let _SendInput = null, _GetAsyncKeyState = null;
 
@@ -24,6 +24,93 @@ try {
 } catch (e) {
   available = false;
   loadError = e && e.message ? e.message : String(e);
+}
+
+/* Foreground-window probe for gaming mode (see gamemode.js). Declared in its own
+   guarded block so a symbol hiccup here never takes SendInput down with it; if
+   anything is missing, probeAvailable stays false and foregroundProbe() returns
+   null — gaming mode then simply never pauses (fail-open, like macro.isDown). */
+let probeAvailable = false;
+let _GetForegroundWindow = null, _GetWindowRect = null, _GetWindowLongW = null,
+    _MonitorFromWindow = null, _GetMonitorInfoW = null, _GetWindowThreadProcessId = null,
+    _OpenProcess = null, _QueryFullProcessImageNameW = null, _CloseHandle = null;
+
+const MONITOR_DEFAULTTONEAREST = 2;
+const GWL_STYLE = -16;
+const PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+
+try {
+  if (available) {
+    kernel32 = koffi.load('kernel32.dll');
+    _GetForegroundWindow = user32.func('void* __stdcall GetForegroundWindow()');
+    _GetWindowRect = user32.func('int32 __stdcall GetWindowRect(void* hWnd, void* lpRect)');
+    _GetWindowLongW = user32.func('int32 __stdcall GetWindowLongW(void* hWnd, int32 nIndex)');
+    _MonitorFromWindow = user32.func('void* __stdcall MonitorFromWindow(void* hWnd, uint32 flags)');
+    _GetMonitorInfoW = user32.func('int32 __stdcall GetMonitorInfoW(void* hMonitor, void* lpmi)');
+    _GetWindowThreadProcessId = user32.func('uint32 __stdcall GetWindowThreadProcessId(void* hWnd, void* lpdwProcessId)');
+    _OpenProcess = kernel32.func('void* __stdcall OpenProcess(uint32 dwDesiredAccess, int32 bInheritHandle, uint32 dwProcessId)');
+    _QueryFullProcessImageNameW = kernel32.func('int32 __stdcall QueryFullProcessImageNameW(void* hProcess, uint32 dwFlags, void* lpExeName, void* lpdwSize)');
+    _CloseHandle = kernel32.func('int32 __stdcall CloseHandle(void* hObject)');
+    probeAvailable = true;
+  }
+} catch (e) {
+  probeAvailable = false;
+}
+
+const readRect = (b, off) => [b.readInt32LE(off), b.readInt32LE(off + 4), b.readInt32LE(off + 8), b.readInt32LE(off + 12)];
+
+/**
+ * Snapshot of the foreground window for gaming-mode detection.
+ * Returns { pid, exe, winRect, monRect, style } — exe is the lowercase process
+ * basename ('' when unreadable), winRect/monRect are [l,t,r,b] — or null
+ * whenever the probe is unavailable or any Win32 call fails (fail-open).
+ */
+function foregroundProbe() {
+  if (!probeAvailable) return null;
+  try {
+    const hwnd = _GetForegroundWindow();
+    if (!hwnd) return null;
+
+    const rectBuf = Buffer.alloc(16);
+    if (!_GetWindowRect(hwnd, rectBuf)) return null;
+    const winRect = readRect(rectBuf, 0);
+
+    const hmon = _MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+    if (!hmon) return null;
+    const mi = Buffer.alloc(40);
+    mi.writeUInt32LE(40, 0); // MONITORINFO.cbSize
+    if (!_GetMonitorInfoW(hmon, mi)) return null;
+    const monRect = readRect(mi, 4); // rcMonitor (offset 4, after cbSize)
+
+    const style = _GetWindowLongW(hwnd, GWL_STYLE) >>> 0;
+
+    const pidBuf = Buffer.alloc(4);
+    _GetWindowThreadProcessId(hwnd, pidBuf);
+    const pid = pidBuf.readUInt32LE(0);
+
+    let exe = '';
+    if (pid) {
+      const h = _OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+      if (h) {
+        try {
+          const nameBuf = Buffer.alloc(1024);          // 512 WCHARs
+          const sizeBuf = Buffer.alloc(4);
+          sizeBuf.writeUInt32LE(512, 0);               // in/out, in characters
+          if (_QueryFullProcessImageNameW(h, 0, nameBuf, sizeBuf)) {
+            const n = sizeBuf.readUInt32LE(0);
+            const full = nameBuf.toString('utf16le', 0, Math.max(0, n) * 2);
+            const slash = Math.max(full.lastIndexOf('\\'), full.lastIndexOf('/'));
+            exe = (slash >= 0 ? full.slice(slash + 1) : full).toLowerCase();
+          }
+        } finally {
+          _CloseHandle(h);
+        }
+      }
+    }
+    return { pid, exe, winRect, monRect, style };
+  } catch {
+    return null;
+  }
 }
 
 const MOD_VK = { ctrl: 0x11, control: 0x11, alt: 0x12, option: 0x12, shift: 0x10, win: 0x5B, super: 0x5B, cmd: 0x5B, command: 0x5B };
@@ -126,4 +213,4 @@ function isDown(vk) {
   return (_GetAsyncKeyState(vk) & 0x8000) !== 0;
 }
 
-module.exports = { available, loadError, sendMacro, sendVk, sendChord, isDown, vkFor };
+module.exports = { available, loadError, probeAvailable, foregroundProbe, sendMacro, sendVk, sendChord, isDown, vkFor };

@@ -10,7 +10,8 @@
     "start": "electron .",
     "start:hidden": "wscript scripts/launch-hidden.vbs",
     "make-icons": "node scripts/make-icons.mjs",
-    "dist": "node scripts/make-icons.mjs && electron-builder"
+    "dist": "node scripts/make-icons.mjs && electron-builder",
+    "test": "node --test tests/*.test.js tests/unit/*.test.js"
   },
   "dependencies": {
     "koffi": "^2.9.2"

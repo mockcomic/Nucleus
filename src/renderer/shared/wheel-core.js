@@ -26,6 +26,15 @@ function svgEl(tag, attrs = {}) {
   return el;
 }
 
+/* opts.iconImages is a slug→dataUrl Map (or plain object) filled by the host
+   renderer; an unset/failed lookup degrades to the glyph icon, never to blank. */
+function iconHrefFor(opts, slug) {
+  if (!slug || !opts || !opts.iconImages) return null;
+  const m = opts.iconImages;
+  const v = typeof m.get === 'function' ? m.get(slug) : m[slug];
+  return typeof v === 'string' && v ? v : null;
+}
+
 function annulusFull(cx, cy, r0, r1) {
   const c = (r, sweep) =>
     `M ${cx - r} ${cy} A ${r} ${r} 0 1 ${sweep} ${cx + r} ${cy} A ${r} ${r} 0 1 ${sweep} ${cx - r} ${cy} Z`;
@@ -44,14 +53,15 @@ export function sectorPath(cx, cy, r0, r1, a0, a1) {
 
 /**
  * Build the wheel into `container`. Returns { cfg, segments, setHover, size }.
- * opts: { preview?:bool, scale?:number }
+ * opts: { preview?:bool, scale?:number, pad?:number }
  */
 export function buildWheel(container, cfg, opts = {}) {
   const scale = opts.scale == null ? 1 : opts.scale;
+  const pad = opts.pad == null ? PAD : opts.pad;
   const s = { ...cfg, appearance: { ...cfg.appearance } };
   s.appearance.innerRadius = cfg.appearance.innerRadius * scale;
   s.appearance.outerRadius = cfg.appearance.outerRadius * scale;
-  const size = s.appearance.outerRadius * 2 + PAD * 2;
+  const size = s.appearance.outerRadius * 2 + pad * 2;
   const cx = size / 2, cy = size / 2;
   const ap = s.appearance;
 
@@ -65,19 +75,28 @@ export function buildWheel(container, cfg, opts = {}) {
   const shadow = svgEl('g', { class: 'shadow-layer', filter: 'url(#rwdrop)' });
   const defs = svgEl('defs');
   const filt = svgEl('filter', { id: 'rwdrop', x: '-40%', y: '-40%', width: '180%', height: '180%' });
-  const feDrop = svgEl('feDropShadow', { dx: '0', dy: '6', stdDeviation: '14', 'flood-color': 'rgba(0,0,0,0.55)' });
+  /* Theme persona (see themes.mjs): light themes carry rgba() values the
+     settings chrome computed; untouched, the machined-midnight defaults. */
+  const persona = {
+    shadow: ap.colors.shadow || 'rgba(0,0,0,0.55)',
+    edge: ap.colors.edge || 'rgba(255,255,255,0.06)',
+    rim: ap.colors.stroke || 'rgba(255,255,255,0.08)',
+    light: ap.colors.sheen || '#ffffff',
+  };
+  const blur = opts.shadowBlur == null ? 14 : opts.shadowBlur;
+  const feDrop = svgEl('feDropShadow', { dx: '0', dy: opts.shadowDy == null ? 6 : opts.shadowDy, stdDeviation: String(blur), 'flood-color': persona.shadow });
   filt.appendChild(feDrop); defs.appendChild(filt);
   /* Machined top-light: one off-center specular wash over the whole dial, and a
      lit crown on the hub — depth from light on solid matter, never from glow. */
   const topGrad = svgEl('radialGradient', { id: 'rw-top', cx: '32%', cy: '16%', r: '95%' });
-  topGrad.appendChild(svgEl('stop', { offset: '0%', 'stop-color': '#fff', 'stop-opacity': '0.06' }));
-  topGrad.appendChild(svgEl('stop', { offset: '55%', 'stop-color': '#fff', 'stop-opacity': '0.015' }));
-  topGrad.appendChild(svgEl('stop', { offset: '100%', 'stop-color': '#fff', 'stop-opacity': '0' }));
+  topGrad.appendChild(svgEl('stop', { offset: '0%', 'stop-color': persona.light, 'stop-opacity': '0.06' }));
+  topGrad.appendChild(svgEl('stop', { offset: '55%', 'stop-color': persona.light, 'stop-opacity': '0.015' }));
+  topGrad.appendChild(svgEl('stop', { offset: '100%', 'stop-color': persona.light, 'stop-opacity': '0' }));
   defs.appendChild(topGrad);
   const hubGrad = svgEl('radialGradient', { id: 'rw-hub', cx: '38%', cy: '26%', r: '90%' });
-  hubGrad.appendChild(svgEl('stop', { offset: '0%', 'stop-color': '#fff', 'stop-opacity': '0.07' }));
-  hubGrad.appendChild(svgEl('stop', { offset: '60%', 'stop-color': '#fff', 'stop-opacity': '0.02' }));
-  hubGrad.appendChild(svgEl('stop', { offset: '100%', 'stop-color': '#fff', 'stop-opacity': '0' }));
+  hubGrad.appendChild(svgEl('stop', { offset: '0%', 'stop-color': persona.light, 'stop-opacity': '0.07' }));
+  hubGrad.appendChild(svgEl('stop', { offset: '60%', 'stop-color': persona.light, 'stop-opacity': '0.02' }));
+  hubGrad.appendChild(svgEl('stop', { offset: '100%', 'stop-color': persona.light, 'stop-opacity': '0' }));
   defs.appendChild(hubGrad);
   svg.insertBefore(defs, root);
 
@@ -98,7 +117,7 @@ export function buildWheel(container, cfg, opts = {}) {
       const path = svgEl('path', {
         d: sectorPath(cx, cy, rg.r0, rg.r1, a0, a1),
         fill: item.color || (rg.ring === 1 ? ap.colors.ring1 : ap.colors.ring2),
-        stroke: 'rgba(255,255,255,0.06)', 'stroke-width': 1,
+        stroke: persona.edge, 'stroke-width': 1,
         'fill-rule': 'evenodd'
       });
       g.appendChild(path);
@@ -110,19 +129,29 @@ export function buildWheel(container, cfg, opts = {}) {
 
       const band = rg.r1 - rg.r0;
       const rm = (rg.r0 + rg.r1) / 2;
-      const showIcon = !!item.icon;
+      const imgHref = iconHrefFor(opts, item.iconImage);
+      const showIcon = !!item.icon || !!imgHref;
       const showLabel = ap.showLabels && !!item.label;
       const iconSize = Math.max(13, Math.min(26, band * 0.30));
 
       if (showIcon) {
         const ir = showLabel ? rm - band * 0.10 : rm;
         const [ix, iy] = degToXY(cx, cy, ir, center);
-        const t = svgEl('text', {
-          x: ix, y: iy, 'text-anchor': 'middle', 'dominant-baseline': 'central',
-          'font-family': ICON_FONT, 'font-size': iconSize, fill: ap.colors.text, class: 'seg-icon'
-        });
-        t.textContent = item.icon;
-        g.appendChild(t);
+        if (imgHref) {
+          // A color logo reads better a touch larger than a mono glyph.
+          const w = Math.max(17, Math.min(34, band * 0.40));
+          g.appendChild(svgEl('image', {
+            href: imgHref, x: ix - w / 2, y: iy - w / 2, width: w, height: w,
+            preserveAspectRatio: 'xMidYMid meet', class: 'seg-img'
+          }));
+        } else {
+          const t = svgEl('text', {
+            x: ix, y: iy, 'text-anchor': 'middle', 'dominant-baseline': 'central',
+            'font-family': ICON_FONT, 'font-size': iconSize, fill: ap.colors.text, class: 'seg-icon'
+          });
+          t.textContent = item.icon;
+          g.appendChild(t);
+        }
       }
       if (showLabel) {
         const lr = showIcon ? rm + band * 0.20 : rm;
@@ -138,7 +167,7 @@ export function buildWheel(container, cfg, opts = {}) {
         g.appendChild(t);
       }
       gRing.appendChild(g);
-      segments.push({ el: g, path, item, ring: rg.ring, r0: rg.r0, r1: rg.r1, center, halfSpan, baseFill: path.getAttribute('fill') });
+      segments.push({ el: g, path, item, imgHref, ring: rg.ring, r0: rg.r0, r1: rg.r1, center, halfSpan, baseFill: path.getAttribute('fill') });
     });
     shadow.appendChild(gRing);
   }
@@ -147,7 +176,7 @@ export function buildWheel(container, cfg, opts = {}) {
   /* Lit-from-above pass over the plates + a machined rim on the outer edge.
      Purely decorative discs — pointer-events stay with the geometry hit-test. */
   root.appendChild(svgEl('circle', { cx, cy, r: ap.outerRadius, fill: 'url(#rw-top)', class: 'top-light' }));
-  root.appendChild(svgEl('circle', { cx, cy, r: ap.outerRadius, fill: 'none', stroke: 'rgba(255,255,255,0.08)', 'stroke-width': 1, class: 'rim' }));
+  root.appendChild(svgEl('circle', { cx, cy, r: ap.outerRadius, fill: 'none', stroke: persona.rim, 'stroke-width': 1, class: 'rim' }));
 
   /* hub */
   const hub = svgEl('circle', {
@@ -160,6 +189,12 @@ export function buildWheel(container, cfg, opts = {}) {
     x: cx, y: cy - 12, 'text-anchor': 'middle', 'dominant-baseline': 'central',
     'font-family': ICON_FONT, 'font-size': Math.min(34, ap.innerRadius * 0.42), fill: ap.colors.text, class: 'hub-icon'
   });
+  /* Hovered segment's dashboard logo (same slot as hubIcon, image wins). */
+  const hubImgSize = Math.max(24, Math.min(44, ap.innerRadius * 0.62));
+  const hubImg = svgEl('image', {
+    x: cx - hubImgSize / 2, y: (cy - 12) - hubImgSize / 2, width: hubImgSize, height: hubImgSize,
+    preserveAspectRatio: 'xMidYMid meet', class: 'hub-img', visibility: 'hidden'
+  });
   const hubLabel = svgEl('text', {
     x: cx, y: cy + Math.min(30, ap.innerRadius * 0.40), 'text-anchor': 'middle', 'dominant-baseline': 'central',
     'font-family': UI_FONT, 'font-size': Math.max(11, ap.fontSize), 'font-weight': 600, 'letter-spacing': '0.4',
@@ -171,7 +206,7 @@ export function buildWheel(container, cfg, opts = {}) {
     fill: ap.colors.text, 'fill-opacity': 0.85, class: 'center-label'
   });
   centerLabel.textContent = ap.centerLabel || '';
-  root.appendChild(hubIcon); root.appendChild(hubLabel); root.appendChild(centerLabel);
+  root.appendChild(hubIcon); root.appendChild(hubImg); root.appendChild(hubLabel); root.appendChild(centerLabel);
 
   const prefersReducedMotion = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
   if (ap.animationMs > 0 && !opts.preview && !prefersReducedMotion) {
@@ -192,11 +227,21 @@ export function buildWheel(container, cfg, opts = {}) {
     if (hovered) {
       hovered.el.classList.add('hovered');
       hovered.path.setAttribute('fill', ap.colors.hover);
-      hubIcon.textContent = hovered.item.icon || '';
+      if (hovered.imgHref) {
+        hubImg.setAttribute('href', hovered.imgHref);
+        hubImg.setAttribute('visibility', 'visible');
+        hubIcon.textContent = '';
+      } else {
+        hubImg.removeAttribute('href');
+        hubImg.setAttribute('visibility', 'hidden');
+        hubIcon.textContent = hovered.item.icon || '';
+      }
       hubLabel.textContent = hovered.item.label || '';
-      centerLabel.setAttribute('fill-opacity', hovered.item.label || hovered.item.icon ? 0 : 0.85);
+      centerLabel.setAttribute('fill-opacity', hovered.item.label || hovered.item.icon || hovered.imgHref ? 0 : 0.85);
     } else {
       hubIcon.textContent = '';
+      hubImg.removeAttribute('href');
+      hubImg.setAttribute('visibility', 'hidden');
       hubLabel.textContent = '';
       centerLabel.setAttribute('fill-opacity', ap.centerLabel ? 0.85 : 0);
     }

@@ -40,7 +40,11 @@
 
     <section class="tab hidden" id="tab-appearance">
       <div class="tab-head"><h2>Appearance</h2></div>
-      <div id="presets" class="preset-row"></div>
+      <div class="card">
+        <div class="card-title">Color themes</div>
+        <div id="presets" class="preset-row" role="group" aria-label="Color themes"></div>
+        <div class="hint muted">Themes restyle the wheel and this window. Pick one to apply, edit any swatch below to customize, or save your palette as a theme.</div>
+      </div>
       <div id="appearance-controls" class="card slider-grid"></div>
       <div class="card">
         <div class="card-title">Colors</div>
@@ -72,6 +76,14 @@
         <label class="chk"><input type="checkbox" id="bh-esc"> Dismiss with Esc</label>
         <label class="chk"><input type="checkbox" id="bh-right"> Right-click dismisses the wheel</label>
         <label class="chk"><input type="checkbox" id="bh-retrigger"> Pressing the hotkey again hides the wheel</label>
+      </div>
+      <div class="card">
+        <div class="card-title">Gaming mode</div>
+        <label class="chk"><input type="checkbox" id="bh-gamemode"> Turn the wheel off while a game or fullscreen app is open</label>
+        <div class="row-line">
+          <input type="text" id="gm-apps" maxlength="500" style="flex:1" placeholder="Always off for these apps — e.g. fortnite.exe, discord.exe" aria-label="Apps that always trigger gaming mode, comma-separated">
+        </div>
+        <div class="hint muted">The wheel switches itself off (hotkey included) while the focused app covers a whole monitor — exclusive or borderless-fullscreen games — or while one of the listed programs has focus. Comma-separated exe names; full paths are fine. The tray tooltip says why the hotkey is off, and tray → Show wheel still works.</div>
       </div>
     </section>
 
@@ -117,6 +129,14 @@
   <div id="icon-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="icon-modal-title">
     <div class="modal-card">
       <div class="modal-head"><span id="icon-modal-title">Choose an icon</span> <button id="icon-none" class="btn small">None</button><button id="icon-close" class="btn small glyph" aria-label="Close">&#xE894;</button></div>
+      <div class="di-row">
+        <input id="di-query" type="text" maxlength="60" placeholder="Search dashboardicons.com…  (name or any term you like)" aria-label="Dashboard Icons search term">
+        <button id="di-go" class="btn small">Search</button>
+        <button id="di-clear-img" class="btn small hidden" title="Remove the photo logo and fall back to the glyph">Remove logo</button>
+      </div>
+      <div id="di-status" class="di-status muted" aria-live="polite"></div>
+      <div id="di-grid" class="icon-grid di-grid hidden"></div>
+      <div class="di-subhead muted">Or pick a system glyph:</div>
       <div id="icon-grid" class="icon-grid"></div>
     </div>
   </div>

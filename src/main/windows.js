@@ -105,7 +105,7 @@ class Overlay {
 
 class SettingsWindow {
   constructor(deps) {
-    this.deps = deps; // { isQuitting, getState, setState }
+    this.deps = deps; // { isQuitting, getState, setState, bgColor? }
     this.win = null;
   }
 
@@ -122,7 +122,7 @@ class SettingsWindow {
       y: typeof st.y === 'number' ? st.y : undefined,
       minWidth: 920, minHeight: 640,
       title: 'Radial Wheel — Settings',
-      backgroundColor: '#0f1419',
+      backgroundColor: (this.deps.bgColor && this.deps.bgColor()) || '#0f1419',
       autoHideMenuBar: true,
       icon: path.join(app.getPath('userData'), 'icons', 'tray-32.png'),
       webPreferences: {

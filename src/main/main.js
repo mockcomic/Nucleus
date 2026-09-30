@@ -4,15 +4,22 @@ const path = require('path');
 const fs = require('fs');
 
 const { ConfigStore, defaults } = require('./config');
-const { HotkeyManager } = require('./hotkeys');
+const { HotkeyManager, parse: parseHotkey } = require('./hotkeys');
 const { Overlay, SettingsWindow } = require('./windows');
 const { TrayManager } = require('./tray');
 const { ensureRuntimeIcons } = require('./icon-gen');
 const { registerIpc } = require('./ipc');
+const { GameModeWatcher } = require('./gamemode');
+const macro = require('./macro');
 const autostart = require('./autostart');
 
 let quitting = false;
-let store, hotkeyMgr, overlay, settingsWin, tray;
+let store, hotkeyMgr, overlay, settingsWin, tray, gameWatcher;
+
+/* Two independent hotkey suppressors compose here: the tray's manual pause and
+   gaming mode. The hotkey lives only while BOTH are clear (see applyHotkeyState). */
+let manualPaused = false;
+let gamePaused = false, gameReason = null;
 
 const isQuitting = () => quitting;
 
@@ -24,6 +31,15 @@ const getState = (k, d) => ({ ...readState() })[k] || d;
 const setState = (k, v) => { const s = readState(); s[k] = v; writeState(s); };
 
 function registerHotkey(spec, opts = {}) {
+  if (!hotkeyActive()) {
+    // Paused (tray or gaming mode): validate the spec so bad combos are still
+    // reported and persisted, but don't (re-)register behind the suppressor's back.
+    try { parseHotkey(spec); } catch (e) { return { ok: false, error: e.message }; }
+    if (opts.persist !== false && spec !== store.get().hotkey) {
+      store.set({ ...JSON.parse(JSON.stringify(store.get())), hotkey: spec });
+    }
+    return { ok: true, accel: null, deferred: true };
+  }
   const res = hotkeyMgr.register(spec, () => toggleWheel());
   store.hotkeyError = res.ok ? null : res.error;
   if (!res.ok) {
@@ -38,6 +54,25 @@ function registerHotkey(spec, opts = {}) {
   return res;
 }
 
+const hotkeyActive = () => !manualPaused && !gamePaused;
+
+/* Single source of truth for whether the global shortcut is registered. */
+function applyHotkeyState() {
+  if (!hotkeyMgr || quitting) return;
+  if (hotkeyActive()) {
+    if (!hotkeyMgr.current) {
+      const res = hotkeyMgr.register(store.get().hotkey, () => toggleWheel());
+      store.hotkeyError = res.ok ? null : res.error;
+      if (!res.ok && tray) tray.balloon('Hotkey could not be registered', res.error, 'error');
+    }
+  } else {
+    hotkeyMgr.unregister();
+    if (overlay) overlay.hide();
+    store.hotkeyError = null; // the hotkey is deliberately off — no stale error
+  }
+  if (tray) tray.update();
+}
+
 function toggleWheel(forceShow) {
   const cfg = store.get();
   if (overlay.isVisible() && cfg.behavior.reTriggerToggles && !forceShow) overlay.hide();
@@ -46,6 +81,7 @@ function toggleWheel(forceShow) {
 
 function quitApp() {
   quitting = true;
+  try { gameWatcher && gameWatcher.stop(); } catch {}
   try { hotkeyMgr && hotkeyMgr.unregister(); } catch {}
   try { tray && tray.destroy(); } catch {}
   try { overlay && overlay.destroy(); } catch {}
@@ -56,11 +92,10 @@ function quitApp() {
 function handleConfigChanged({ config, hotkeyChanged, autostartChanged, reload }) {
   if (hotkeyChanged) {
     hotkeyMgr.unregister();
-    const res = hotkeyMgr.register(config.hotkey, () => toggleWheel());
-    store.hotkeyError = res.ok ? null : res.error;
-    if (!res.ok && tray) tray.balloon('Hotkey could not be registered', res.error, 'error');
+    applyHotkeyState();   // stays unregistered while the tray/game suppressors hold
   }
   if (autostartChanged) autostart.set(config.behavior.autostart);
+  try { gameWatcher && gameWatcher.configure(); } catch { /* never let config break the watcher */ }
   if (tray) tray.update();
   try { settingsWin.send('config:changed', config); } catch { /* settings may be closed */ }
 }
@@ -76,19 +111,33 @@ function bootstrap() {
   hotkeyMgr = new HotkeyManager();
 
   overlay = new Overlay({ getConfig: () => store.get(), isQuitting });
-  settingsWin = new SettingsWindow({ isQuitting, getState, setState });
+  settingsWin = new SettingsWindow({ isQuitting, getState, setState, bgColor: () => store.get().appearance.colors.bg });
 
   tray = new TrayManager(icons, {
     onShowWheel: () => toggleWheel(true),
     onOpenSettings: () => settingsWin.open(),
     onReload: () => { store.reload(); },
-    onPauseToggle: (paused) => {
-      if (paused) hotkeyMgr.unregister();
-      else registerHotkey(store.get().hotkey, { persist: false });
-    },
+    onPauseToggle: (paused) => { manualPaused = paused; applyHotkeyState(); },
+    getGameMode: () => ({ active: gamePaused, reason: gameReason }),
     onQuit: quitApp
   });
   tray.build(() => store.get());
+
+  /* Gaming mode: pause the hotkey while a fullscreen / listed app owns the foreground. */
+  gameWatcher = new GameModeWatcher(() => store.get(), () => macro.foregroundProbe(), { ourPid: process.pid });
+  gameWatcher.on('pause', (reason) => {
+    gamePaused = true;
+    gameReason = reason || 'game';
+    applyHotkeyState();
+    console.log(`[radial-wheel] game mode: paused (${gameReason})`);
+  });
+  gameWatcher.on('resume', () => {
+    gamePaused = false;
+    gameReason = null;
+    applyHotkeyState();
+    console.log('[radial-wheel] game mode: resumed');
+  });
+  gameWatcher.configure();
 
   registerIpc({
     store, hotkeyMgr, overlay, settings: settingsWin, tray,

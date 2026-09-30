@@ -197,7 +197,30 @@ On Windows 11 22H2+ with the OS transparency toggle on, the Settings window is c
 The overlay's ring fills (**Ring Inner**, **Ring Outer**, **Wheel Center**) are user-configurable at runtime and follow the same tonal logic: darker toward the hub, lighter per ring step, 1px white-at-6% edge strokes, hub ring stroked in the accent at 22% opacity.
 
 ### Runtime theme presets
-Five complete color sets ship in Settings → Appearance (`settings.js` `PRESETS`; the source of truth, not duplicated in tokens): **Midnight** (default, blue-black + Pilot Blue), **Ocean** (deep teal + cyan), **Grape** (violet), **Graphite** (near-neutral light-on-dark inversion), **Ember** (warm rust + amber). All follow the same role map: bg, ring1, ring2, hover, accent, text, center.
+The catalog ships in `src/main/themes.mjs` (single source of truth; the main
+process loads the same literal through `themes.js`). Twelve curated themes in
+families — **dark**: Midnight (default, blue-black + Pilot Blue), Ocean (deep
+teal + cyan), Grape (violet), Graphite (light plates, dark chrome), Ember (rust
++ amber), Solar (sienna + gold), Meadow (forest + mint); **light**: Porcelain
+(cool grey plates), Linen (warm cream + terracotta), Paper (white dial, electric
+blue); **high-contrast**: HC Black (black/yellow/white) and HC White. Every
+theme carries the same 7-role map (bg, ring1, ring2, hover, accent, text,
+center) plus persona fields (`mode`, `stroke`, `edge`, `shadow`, `sheen`) and an
+optional hand-tuned `chrome` block. Settings → Appearance renders the gallery
+as mini wheels through the shared `buildWheel` renderer.
+
+**Chrome derivation.** The Settings window skin is *derived* from the active
+palette by `computeChrome` and injected as inline CSS vars on `<html>` with
+`data-mode` (light/dark): the tonal ramp stacks up from `bg` toward `text` in
+dark themes and down toward ink in light themes. Two derivations are sacred and
+not overridable by any theme: the accent-deep pair is deepened until white text
+clears 4.5:1, and `--dim` always clears 4.5:1 on the card step. Hand-tuned
+`chrome` entries may only override surface/well tokens. The five original
+presets keep the incumbent machined-midnight chrome verbatim.
+
+**User themes** persist in `config.json` (`userThemes[]`, max 24) with an
+`appearance.theme` reference `{id, customized, colors}`; editing a swatch flips
+`customized` and the chip shows a modified dot with a one-click Reset.
 
 **The Pilot Blue Rule.** The accent appears only where a user action is being invited, taken, or focused — primary buttons, active tab, focus rings, hover fills, slider outputs. It never decorates inactive content. Its rarity is what makes it read as "live."
 

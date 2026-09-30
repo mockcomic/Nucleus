@@ -4,6 +4,43 @@ const api = window.wheelAPI;
 const rootEl = document.getElementById('root');
 
 let built = null;
+let lastPayload = null;
+
+/* Dashboard Icons logos, memoized across show cycles: slug -> dataUrl (null
+   once resolved as failed so we don't hammer the CDN while offline). */
+const iconCache = new Map();
+const iconPending = new Set();
+
+function itemSlugs(config) {
+  const slugs = new Set();
+  for (const ring of ['1', '2']) {
+    for (const it of (config.rings && config.rings[ring]) || []) {
+      if (it && it.iconImage) slugs.add(it.iconImage);
+    }
+  }
+  return [...slugs];
+}
+
+function ensureIcons(config) {
+  for (const slug of itemSlugs(config)) {
+    if (iconCache.has(slug) || iconPending.has(slug)) continue;
+    iconPending.add(slug);
+    api.iconDataUrl(slug).then((r) => {
+      iconPending.delete(slug);
+      const url = r && r.ok ? r.dataUrl : null;
+      if (iconCache.has(slug)) return;                       // newer info won
+      iconCache.set(slug, url);
+      // Quietly rebuild the overlay once so the freshly-downloaded logo pops in.
+      // preview:true suppresses the re-pop animation — this is a silent refresh.
+      if (built && lastPayload && lastPayload.config === config) {
+        built = buildWheel(rootEl, config, { scale: lastPayload.scale, iconImages: iconCache, preview: true });
+      }
+    }).catch(() => {
+      iconPending.delete(slug);
+      if (!iconCache.has(slug)) iconCache.set(slug, null);
+    });
+  }
+}
 
 function pointToHit(x, y) {
   if (!built) return null;
@@ -19,11 +56,13 @@ function applyHover(hit) {
   rootEl.classList.toggle('has-hover', !!seg || (hit && hit.hub));
 }
 
-api.onShow(({ config, scale, cursorLocal }) => {
-  built = buildWheel(rootEl, config, { scale });
+api.onShow((payload) => {
+  lastPayload = payload;
+  built = buildWheel(rootEl, payload.config, { scale: payload.scale, iconImages: iconCache });
+  ensureIcons(payload.config);
   document.body.style.visibility = 'visible';
   requestAnimationFrame(() => {
-    applyHover(pointToHit(cursorLocal.x, cursorLocal.y));
+    applyHover(pointToHit(payload.cursorLocal.x, payload.cursorLocal.y));
   });
 });
 

@@ -1,4 +1,5 @@
 import { buildWheel } from '../shared/wheel-core.js';
+import { THEMES, themeById, themeBySignature, signature, computeChrome, chromeVarMap, paletteMode } from '../../main/themes.mjs';
 import { ICON_CATALOG } from '../shared/icon-catalog.js';
 
 const api = window.wheelAPI;
@@ -100,6 +101,63 @@ const navEl = document.querySelector('#sidebar nav');
 if (navEl) navEl.setAttribute('role', 'tablist');
 selectTab(tabBtns[0]);
 
+/* ---------------------- dashboard-icons logo resolution ------------------- */
+/* item.iconImage holds a dashboardicons slug; main hands us data: URLs (and
+   caches the bytes on disk). null = resolved-and-failed, so we don't retry
+   every keystroke while offline. */
+const imgCache = new Map();
+const iconPending = new Set();
+const liveIconSpans = [];        // [{span, item, fallback}] — repopulated by renderSegments
+
+function fillIconSpan(span, item, fallback) {
+  const url = item.iconImage ? imgCache.get(item.iconImage) : null;
+  if (url) {
+    span.innerHTML = '';
+    const im = document.createElement('img');
+    im.className = 'seg-ico-img';
+    im.src = url;
+    im.alt = '';
+    span.appendChild(im);
+  } else {
+    span.textContent = fallback;
+  }
+}
+
+function registerIconSpan(span, item, fallback) {
+  liveIconSpans.push({ span, item, fallback });
+  fillIconSpan(span, item, fallback);
+  if (item.iconImage && !imgCache.has(item.iconImage)) requestIconImage(item.iconImage);
+}
+
+function requestIconImage(slug) {
+  if (imgCache.has(slug)) return Promise.resolve(imgCache.get(slug));
+  if (iconPending.has(slug)) return Promise.resolve(null);
+  iconPending.add(slug);
+  return api.iconDataUrl(slug).then((r) => {
+    iconPending.delete(slug);
+    const url = r && r.ok ? r.dataUrl : null;
+    imgCache.set(slug, url);
+    refreshIconSpans();
+    renderPreview();
+    return url;
+  }, () => {
+    iconPending.delete(slug);
+    if (!imgCache.has(slug)) imgCache.set(slug, null);
+    return null;
+  });
+}
+
+function refreshIconSpans() {
+  for (const { span, item, fallback } of liveIconSpans) if (span.isConnected) fillIconSpan(span, item, fallback);
+}
+
+function ensureAllIcons() {
+  if (!cfg) return;
+  for (const ring of ['1', '2']) {
+    for (const it of cfg.rings[ring] || []) if (it.iconImage) requestIconImage(it.iconImage);
+  }
+}
+
 /* ------------------------------- segments --------------------------------- */
 const TYPE_OPTIONS = [
   ['app', 'app — launch program'], ['url', 'url — open link'], ['file', 'file — open file'],
@@ -107,6 +165,7 @@ const TYPE_OPTIONS = [
 ];
 
 function renderSegments() {
+  liveIconSpans.length = 0;
   const host = $('#ring-lists');
   host.innerHTML = '';
   for (const ring of ['1', '2']) {
@@ -116,7 +175,7 @@ function renderSegments() {
     el('span', 'muted', { text: `${cfg.rings[ring].length} segment(s)` }, head);
     const add = el('button', 'btn small', { text: '+ Add' }, head);
     add.onclick = () => {
-      const item = { id: crypto.randomUUID(), label: 'New item', icon: '', type: 'app', value: '', color: null };
+      const item = { id: crypto.randomUUID(), label: 'New item', icon: '', iconImage: '', type: 'app', value: '', color: null };
       cfg.rings[ring].push(item);
       openEditorKey = `${ring}-${cfg.rings[ring].length - 1}`;
       touch();
@@ -147,7 +206,7 @@ function segRow(ring, item, i) {
   el('span', 'g', { text: '\uE70D' }, disc);   // ChevronDown
 
   const icoSpan = el('span', 'seg-ico', {}, main);
-  icoSpan.textContent = item.icon || (item.type === 'sys' ? '\uE713' : '\uE76C');
+  registerIconSpan(icoSpan, item, item.icon || (item.type === 'sys' ? '\uE713' : '\uE76C'));
   el('span', 'seg-name', { text: item.label || '(no name)' }, main);
   el('span', 'seg-type', { text: item.type }, main);
   el('span', 'seg-val', { text: item.type === 'sys' ? sysLabel(item.value) : item.value }, main);
@@ -283,7 +342,7 @@ function segEditor(ring, item) {
   el('label', null, { text: 'Icon' }, f);
   const iconBox = el('div', null, { style: 'display:flex;align-items:center;gap:8px' }, f);
   const iconPrev = el('span', 'seg-ico', {}, iconBox);
-  iconPrev.textContent = item.icon || '—';
+  registerIconSpan(iconPrev, item, item.icon || '—');
   iconPrev.style.color = item.icon ? 'var(--accent)' : 'var(--dim)';
   const pick = el('button', 'btn small', { text: 'Choose…' }, iconBox);
   pick.onclick = () => openIconModal(item, pick);
@@ -406,8 +465,14 @@ let iconModalOpener = null;
 function openIconModal(item, opener) {
   iconModalTarget = item;
   iconModalOpener = opener || null;
+  const q = $('#di-query');
+  // Pre-fill the fetch term from the label — always editable, always re-runnable.
+  q.value = (item.label || '').trim();
+  $('#di-clear-img').classList.toggle('hidden', !item.iconImage);
   iconModal.classList.remove('hidden');
-  $('#icon-close').focus();
+  q.focus();
+  q.select();
+  runDiSearch();                        // fire once with the pre-filled term
 }
 function closeIconModal() {
   iconModal.classList.add('hidden');
@@ -442,6 +507,61 @@ function closeIconModal() {
     }
   });
 })();
+
+/* ---------- Dashboard Icons search (manual term → fetched logo) ---------- */
+let diSeq = 0;
+
+async function runDiSearch() {
+  const q = $('#di-query').value.trim();
+  const grid = $('#di-grid');
+  const status = $('#di-status');
+  const my = ++diSeq;
+  grid.innerHTML = '';
+  if (!q) {
+    status.textContent = 'Type a search term (usually the app name) and press Enter.';
+    grid.classList.add('hidden');
+    return;
+  }
+  status.textContent = 'Searching dashboardicons.com…';
+  grid.classList.remove('hidden');
+  let r = null;
+  try { r = await api.searchIcons(q); } catch { /* surfaced below */ }
+  if (my !== diSeq) return;                     // a newer search won the race
+  if (!r || !r.ok) { status.textContent = 'Search failed — check the connection and retry.'; return; }
+  const results = r.results || [];
+  if (!results.length) { status.textContent = `No icons match “${q}” — try a different term.`; return; }
+  status.textContent = `${results.length} match${results.length > 1 ? 'es' : ''}${r.offline ? ' (cached catalog)' : ''} — click one to use it.`;
+  for (const res of results) {
+    const cell = el('button', 'icon-cell di-cell', { 'aria-label': `Use the ${res.slug} logo` }, grid);
+    const im = el('img', 'di-thumb', { src: res.url, alt: '', loading: 'lazy' }, cell);
+    im.addEventListener('error', () => cell.remove());   // dead CDN link — drop that candidate
+    el('span', 'n', { text: res.slug }, cell);
+    cell.onclick = () => pickDashboardIcon(res);
+  }
+}
+
+async function pickDashboardIcon(res) {
+  if (!iconModalTarget) return;
+  $('#di-status').textContent = `Downloading “${res.slug}”…`;
+  const r = await api.fetchIcon(res.slug);
+  if (!r || !r.ok) { $('#di-status').textContent = (r && r.error) || 'Download failed — try again.'; return; }
+  imgCache.set(res.slug, r.dataUrl);
+  iconModalTarget.iconImage = res.slug;
+  closeIconModal();
+  touch();
+}
+
+$('#di-go').onclick = () => runDiSearch();
+$('#di-query').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); runDiSearch(); }
+});
+$('#di-clear-img').onclick = () => {
+  if (!iconModalTarget) return;
+  iconModalTarget.iconImage = '';
+  closeIconModal();
+  touch();
+  toast('Logo removed — the glyph shows instead');
+};
 
 /* ------------------------------- appearance ------------------------------- */
 const SLIDERS = [
@@ -480,36 +600,163 @@ function renderAppearance() {
     const item = el('label', 'color-item', {}, cg);
     const inp = el('input', null, { type: 'color', value: cfg.appearance.colors[k] }, item);
     el('span', null, { text: lab }, item);
-    inp.addEventListener('input', () => { cfg.appearance.colors[k] = inp.value; renderPreview(); });
-    inp.addEventListener('change', () => { touch(false); renderPresets(); });
+    inp.addEventListener('input', () => { cfg.appearance.colors[k] = inp.value; applyChrome(); renderPreview(); });
+    inp.addEventListener('change', () => { touch(false); renderThemes(); });
   }
 }
 
-function colorsMatch(a, b) {
-  for (const k of Object.keys(b)) if (String(a[k] || '').toLowerCase() !== String(b[k]).toLowerCase()) return false;
-  return true;
+/* --------------------------------- themes ---------------------------------- */
+/* The gallery renders every candidate theme through the SHARED wheel renderer
+   (a chip is literally a small wheel), then re-skins the Settings chrome from
+   the active palette. Curated catalog lives in src/main/themes.mjs. */
+
+function activeTheme() {
+  const id = cfg.theme && cfg.theme.id;
+  if (id) {
+    const user = (cfg.userThemes || []).find((t) => t.id === id);
+    if (user) return { id: user.id, name: user.name, colors: user.colors, user: true };
+    const cat = themeById(id);
+    if (cat) return { id: cat.id, name: cat.name, colors: cat.colors, user: false };
+  }
+  const bySig = themeBySignature(signature(cfg.appearance.colors));
+  return bySig
+    ? { id: bySig.id, name: bySig.name, colors: bySig.colors, user: false }
+    : { id: null, name: 'Custom', colors: cfg.appearance.colors, user: false };
 }
 
-const PRESETS = {
-  Midnight: { bg: '#0f1419', ring1: '#1b2733', ring2: '#16202b', hover: '#2e7dd1', accent: '#4c9ff0', text: '#e8eef4', center: '#0a0e12' },
-  Ocean: { bg: '#08131c', ring1: '#123047', ring2: '#0d2333', hover: '#1899c4', accent: '#33c6e8', text: '#e6f6fb', center: '#061018' },
-  Grape: { bg: '#120b1c', ring1: '#2c1b45', ring2: '#221436', hover: '#7b3fd1', accent: '#a86bff', text: '#f0e8fb', center: '#0b0714' },
-  Graphite: { bg: '#171717', ring1: '#2b2b2b', ring2: '#222222', hover: '#e8e8e8', accent: '#d0d0d0', text: '#111111', center: '#0d0d0d' },
-  Ember: { bg: '#160d0a', ring1: '#3a1e12', ring2: '#2b160d', hover: '#d1652e', accent: '#ff944c', text: '#fbefe8', center: '#0f0805' }
-};
+function isCustomized() {
+  const a = activeTheme();
+  if (!a.id) return false;
+  return signature(cfg.appearance.colors) !== signature(a.colors);
+}
 
-function renderPresets() {
+function applyChrome() {
+  // persona fields (mode/stroke/edge/shadow/sheen) live on the theme palette;
+  // editable swatches never carry them, so merge the active theme's in.
+  const a = activeTheme();
+  const pal = a.id ? Object.assign({}, a.colors, cfg.appearance.colors,
+    { mode: cfg.appearance.colors.mode || a.colors.mode }) : cfg.appearance.colors;
+  const chrome = computeChrome(pal);
+  const root = document.documentElement;
+  root.dataset.mode = paletteMode(pal);
+  root.style.colorScheme = root.dataset.mode;
+  for (const [k, v] of Object.entries(chromeVarMap(chrome))) root.style.setProperty(k, v);
+}
+
+function applyThemeColors(colors, themeId) {
+  cfg.appearance.colors = { ...colors };
+  cfg.theme = { id: themeId, customized: false, colors: { ...colors } };
+  applyChrome();
+  renderAppearance();
+  renderThemes();
+  renderPreview();
+  touch(false);
+}
+
+/* A chip wheel at true pixel size: fixed geometry sized so the SVG lands
+   exactly in the .mini slot (outer*2 + pad*2 = 40), labels off, per-item
+   colors stripped — the theme's plates must show, not segment overrides.
+   The 26px shadow pad and 14px blur are tuned for the full wheel; a 40px
+   chip carries its own miniature pair. */
+const CHIP_SIZE = 40, CHIP_PAD = 5;
+function miniWheel(host, colors) {
+  const ring = (arr, max) => (arr || []).slice(0, max)
+    .map((it) => ({ ...it, color: null, icon: '', iconImage: null }));   // plates only — a fluent glyph at chip scale reads as spikes
+  const outer = CHIP_SIZE / 2 - CHIP_PAD;
+  const mini = {
+    appearance: Object.assign({}, cfg.appearance, {
+      colors, showLabels: false, centerLabel: '', animationMs: 0,
+      innerRadius: Math.round(outer * 0.42), outerRadius: outer,
+      startAngle: cfg.appearance.startAngle,
+    }),
+    rings: {
+      1: ring(cfg.rings && cfg.rings[1], 6),
+      2: ring(cfg.rings && cfg.rings[2], 10),
+    },
+  };
+  buildWheel(host, mini, { preview: true, scale: 1, pad: CHIP_PAD, shadowBlur: 3, shadowDy: 1 });
+}
+
+function renderThemes() {
   const host = $('#presets');
+  if (!host) return;
   host.innerHTML = '';
-  for (const [name, colors] of Object.entries(PRESETS)) {
-    const b = el('button', 'preset', {}, host);
-    const sw = el('span', 'sw', {}, b);
-    for (const k of ['ring1', 'hover', 'accent']) {
-      const i = el('i', null, {}, sw); i.style.background = colors[k];
+  const a = activeTheme(), custom = isCustomized();
+
+  const entries = THEMES.map((t) => ({ key: t.id, name: t.name, colors: t.colors, user: false }))
+    .concat((cfg.userThemes || []).map((t) => ({ key: t.id, name: t.name, colors: t.colors, user: true })));
+
+  for (const t of entries) {
+    const b = el('button', 'preset theme' + (t.user ? ' user' : ''), { type: 'button' }, host);
+    b.setAttribute('aria-pressed', String(!custom && a.id === t.key));
+    const mini = el('span', 'mini', {}, b);
+    miniWheel(mini, t.colors);
+    const lab = el('span', 'theme-name', { text: t.name }, b);
+    if (custom && a.id === t.key) {
+      b.classList.add('active', 'modified');
+      b.setAttribute('aria-pressed', 'true');
+      lab.title = 'Edited — click to restore ' + t.name;
+    } else if (!custom && a.id === t.key) {
+      b.classList.add('active');
     }
-    el('span', null, { text: name }, b);
-    if (colorsMatch(cfg.appearance.colors, colors)) b.classList.add('active');
-    b.onclick = () => { cfg.appearance.colors = { ...colors }; renderAppearance(); renderPresets(); renderPreview(); touch(false); };
+    b.onclick = () => applyThemeColors(t.colors, t.key);
+  }
+
+  if (!entries.length) return;
+  const ops = el('span', 'theme-ops', {}, host);
+
+  const save = el('button', 'btn small', { type: 'button', text: 'Save as theme…' }, ops);
+  save.onclick = () => {
+    const near = themeBySignature(signature(cfg.appearance.colors));
+    const input = el('input', 'theme-name-input', {
+      type: 'text', maxlength: '24', placeholder: near ? near.name + ' copy' : 'My theme',
+      'aria-label': 'New theme name',
+    }, ops);
+    input.value = '';
+    ops.replaceChild(input, save);
+    input.focus();
+    const commit = () => {
+      const raw = input.value.trim() || input.placeholder;
+      const taken = new Set(
+        THEMES.map((t) => t.name.toLowerCase())
+          .concat((cfg.userThemes || []).map((t) => t.name.toLowerCase())));
+      let name = raw.slice(0, 24), n = 2;
+      while (taken.has(name.toLowerCase())) name = (raw + ' (' + n++).slice(0, 24);
+      cfg.userThemes = (cfg.userThemes || []).concat([{
+        id: 'u' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+        name, colors: { ...cfg.appearance.colors },
+      }]);
+      cfg.theme = { id: cfg.userThemes[cfg.userThemes.length - 1].id, customized: false, colors: { ...cfg.appearance.colors } };
+      renderThemes();
+      renderPreview();
+      touch(false);
+      toast('Theme saved: ' + name, false, () => {
+        cfg.userThemes = cfg.userThemes.filter((x) => x.id !== cfg.theme.id);
+        cfg.theme = { id: 'midnight', customized: false, colors: { ...THEMES[0].colors } };
+        cfg.appearance.colors = { ...THEMES[0].colors };
+        applyChrome(); renderAppearance(); renderThemes(); renderPreview(); touch(false);
+      });
+    };
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); commit(); }
+      else if (e.key === 'Escape') { e.preventDefault(); renderThemes(); }
+    });
+    input.addEventListener('blur', () => { if (input.isConnected) commit(); });
+  };
+
+  if (custom && a.id && !a.user) {
+    const reset = el('button', 'btn small', { type: 'button', text: 'Reset colors' }, ops);
+    reset.onclick = () => applyThemeColors(a.colors, a.id);
+  }
+  if (a.id && a.user && activeTheme().user) {
+    const del = el('button', 'btn small danger', { type: 'button', text: 'Delete theme' }, ops);
+    let armed = false;
+    del.onclick = () => {
+      if (!armed) { armed = true; del.textContent = 'Sure?'; del.classList.add('armed'); setTimeout(() => { if (del.isConnected) { armed = false; del.textContent = 'Delete theme'; del.classList.remove('armed'); } }, 2600); return; }
+      cfg.userThemes = (cfg.userThemes || []).filter((x) => x.id !== a.id);
+      applyThemeColors(THEMES[0].colors, THEMES[0].id);   // removing the live theme lands on Midnight
+      toast('Theme deleted: ' + a.name);
+    };
   }
 }
 
@@ -567,6 +814,24 @@ function stopRecording() {
   $('#hk-display').classList.remove('recording');
 }
 
+/* Mirror of gamemode.cleanAppName: comma/newline-separated input -> unique
+   lowercase exe basenames (junk dropped, capped at 64). */
+function parseAppList(text) {
+  const seen = new Set();
+  const out = [];
+  for (let s of String(text || '').split(/[,\n]/)) {
+    s = s.trim().toLowerCase();
+    const slash = Math.max(s.lastIndexOf('/'), s.lastIndexOf('\\'));
+    if (slash >= 0) s = s.slice(slash + 1).trim();
+    s = s.replace(/["']/g, '').trim();
+    if (!s || !/^[\w .\-\u0080-\uffef]{1,64}$/.test(s) || seen.has(s)) continue;
+    seen.add(s);
+    out.push(s);
+    if (out.length >= 64) break;
+  }
+  return out;
+}
+
 function wireBehaviorCheckboxes() {
   const map = {
     'autostart-chk': ['behavior', 'autostart'],
@@ -587,6 +852,23 @@ function wireBehaviorCheckboxes() {
       touch(false);
     };
   }
+  /* Gaming mode: master toggle + comma-separated always-off app list. */
+  if (!cfg.behavior.gameMode) cfg.behavior.gameMode = { enabled: false, apps: [] };
+  const gmOn = $('#bh-gamemode');
+  const gmApps = $('#gm-apps');
+  gmOn.checked = cfg.behavior.gameMode.enabled === true;
+  gmApps.value = (cfg.behavior.gameMode.apps || []).join(', ');
+  gmApps.disabled = !gmOn.checked;
+  gmOn.onchange = () => {
+    cfg.behavior.gameMode.enabled = gmOn.checked;
+    gmApps.disabled = !gmOn.checked;
+    touch(false);
+  };
+  gmApps.onchange = () => {
+    cfg.behavior.gameMode.apps = parseAppList(gmApps.value);
+    gmApps.value = cfg.behavior.gameMode.apps.join(', ');   // reflect normalization
+    touch(false);
+  };
   $('#ap-showlabels').checked = cfg.appearance.showLabels;
   $('#ap-showlabels').onchange = (e) => { cfg.appearance.showLabels = e.target.checked; renderPreview(); touch(false); };
   const cl = $('#ap-centerlabel');
@@ -641,14 +923,16 @@ function renderPreview() {
   const avail = Math.min(host.clientWidth, host.clientHeight) - 20;
   const need = cfg.appearance.outerRadius * 2 + 52;
   const scale = Math.min(1, Math.max(0.3, avail / need));
-  buildWheel(host, cfg, { preview: true, scale });
+  buildWheel(host, cfg, { preview: true, scale, iconImages: imgCache });
 }
 
 /* ---------------------------------- boot ----------------------------------- */
 function renderAll() {
+  ensureAllIcons();
   renderSegments();
   renderAppearance();
-  renderPresets();
+  applyChrome();
+  renderThemes();
   wireBehaviorCheckboxes();
   updateHotkeyChip();
   renderPreview();
