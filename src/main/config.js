@@ -16,6 +16,9 @@ const DEFAULT_COLORS = {
 };
 const DEFAULT_THEME_ID = 'midnight';
 const MAX_USER_THEMES = 24;
+/* Rings are numbered 1..N outward (1 = innermost). One cap, mirrored in the
+   settings renderer's Add-ring button. */
+const MAX_RINGS = 4;
 
 /* Optional persona fields on a palette; malformed entries are dropped, never
    defaulted (see themes.mjs sanitizePalette for the renderer-side mirror). */
@@ -123,10 +126,21 @@ function validate(raw) {
   };
   const cleanRing = (arr) => Array.isArray(arr) ? arr.slice(0, 24).map(cleanItem) : [];
 
-  const rings = (src.rings && typeof src.rings === 'object') ? src.rings : {};
-  let ring1 = cleanRing(Array.isArray(rings[1]) ? rings[1] : []);
-  let ring2 = cleanRing(Array.isArray(rings[2]) ? rings[2] : []);
-  if (!ring1.length && !ring2.length) ring1 = defaults().rings[1];  // never ship an empty wheel
+  /* Rings arrive keyed by numeric strings; normalize to a contiguous 1..N
+     (ascending key order, renumbered, capped at MAX_RINGS, floor of two keys
+     so the UI always has an inner + outer list). Empty rings are legal —
+     the renderer skips them when laying out bands. */
+  const ringsIn = (src.rings && typeof src.rings === 'object') ? src.rings : {};
+  const ringArrays = Object.keys(ringsIn)
+    .map((k) => ({ n: Number(k), arr: ringsIn[k] }))
+    .filter((r) => Number.isInteger(r.n) && r.n >= 1)
+    .sort((a, b) => a.n - b.n)
+    .slice(0, MAX_RINGS)
+    .map((r) => cleanRing(r.arr));
+  const rings = {};
+  const nRings = Math.max(2, ringArrays.length);
+  for (let i = 0; i < nRings; i++) rings[String(i + 1)] = ringArrays[i] || [];
+  if (!ringArrays.some((a) => a.length)) rings['1'] = defaults().rings[1];  // never ship an empty wheel
 
   const bhvIn = src.behavior || {};
   const hotkey = HOTKEY_RE.test(String(src.hotkey ?? '').toLowerCase().trim())
@@ -180,7 +194,7 @@ function validate(raw) {
       colors: baseline
     },
     userThemes,
-    rings: { 1: ring1, 2: ring2 }
+    rings
   };
 }
 
@@ -320,4 +334,4 @@ class ConfigStore extends EventEmitter {
   }
 }
 
-module.exports = { ConfigStore, validate, defaults, VERSION };
+module.exports = { ConfigStore, validate, defaults, VERSION, MAX_RINGS };

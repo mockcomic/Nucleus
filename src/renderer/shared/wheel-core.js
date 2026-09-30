@@ -11,12 +11,34 @@ export function degToXY(cx, cy, r, deg) {
   return [cx + r * Math.cos(a), cy + r * Math.sin(a)];
 }
 
+/* Bands between innerRadius and outerRadius, shared by the non-empty rings in
+   index order (empty rings render nothing and consume no band — an empty ring
+   2 lets ring 1 fill to the outer edge, as it always has). Two live bands keep
+   the Ring split slider's semantics; three or more divide equally. */
 export function ringSpans(cfg) {
   const ap = cfg.appearance;
-  const has2 = (cfg.rings[2] || []).length > 0;
-  const mid = has2 ? ap.innerRadius + (ap.outerRadius - ap.innerRadius) * ap.ringSplit : ap.outerRadius;
-  const out = [{ ring: 1, r0: ap.innerRadius, r1: mid, items: cfg.rings[1] || [] }];
-  if (has2) out.push({ ring: 2, r0: mid, r1: ap.outerRadius, items: cfg.rings[2] || [] });
+  const keys = Object.keys(cfg.rings || {})
+    .map(Number)
+    .filter((n) => Number.isInteger(n) && n >= 1)
+    .sort((a, b) => a - b);
+  const active = keys
+    .map((n) => ({ ring: n, items: cfg.rings[n] || cfg.rings[String(n)] || [] }))
+    .filter((r) => r.items.length);
+  if (!active.length) return [];
+  const span = ap.outerRadius - ap.innerRadius;
+  const out = [];
+  for (let i = 0; i < active.length; i++) {
+    const f0 = active.length === 1 ? 0 : i / active.length;
+    const f1 = active.length === 1 ? 1 : (i + 1) / active.length;
+    active[i].r0 = ap.innerRadius + span * f0;
+    active[i].r1 = ap.innerRadius + span * f1;
+    out.push(active[i]);
+  }
+  if (active.length === 2) {
+    const mid = ap.innerRadius + span * ap.ringSplit;
+    out[0].r1 = mid;
+    out[1].r0 = mid;
+  }
   return out;
 }
 
@@ -116,7 +138,8 @@ export function buildWheel(container, cfg, opts = {}) {
       const g = svgEl('g', { class: 'seg' });
       const path = svgEl('path', {
         d: sectorPath(cx, cy, rg.r0, rg.r1, a0, a1),
-        fill: item.color || (rg.ring === 1 ? ap.colors.ring1 : ap.colors.ring2),
+        /* Plates alternate outward: odd rings the ring1 tint, even rings ring2. */
+        fill: item.color || ap.colors[rg.ring % 2 === 1 ? 'ring1' : 'ring2'],
         stroke: persona.edge, 'stroke-width': 1,
         'fill-rule': 'evenodd'
       });

@@ -48,12 +48,14 @@ display power clipboard_history emoji_picker`.
 
 Open from the tray (double-click icon → **Open Settings**). Four tabs:
 
-- **Segments** — add / edit / reorder / delete items on the inner or outer ring,
+- **Segments** — add / edit / reorder / delete items on any ring, **+ Add ring**
+  grows the wheel outward (up to 4 rings; remove the outermost anytime),
   icon picker (Segoe Fluent glyphs), per-item color, live “try this action” button,
   file browse for apps, and an **installed-programs dropdown** when type is `app`:
   type to search the Start Menu + registry program list, click to fill the target
   (entries launch exactly like double-clicking their Start Menu shortcut; ↻ re-scans).
-- **Appearance** — hub/wheel size, ring split, rotation, gaps, label size, pop
+- **Appearance** — hub/wheel size, ring split (two-ring layouts; three or more
+  rings divide equally), rotation, gaps, label size, pop
   animation, colors + 5 theme presets, center label. Live preview uses the exact
   same renderer as the real wheel.
 - **Hotkey & Behavior** — press-to-record hotkey with instant registration (conflicts

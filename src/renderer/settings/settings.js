@@ -12,6 +12,33 @@ let saveTimer = null;
 let openEditorKey = null;          // "ring-index" of the expanded row
 let iconModalTarget = null;        // item currently picking an icon
 
+/* ------------------------------ ring helpers -------------------------------
+   Rings are keyed 1..N outward in cfg.rings (config.js normalizes to a
+   contiguous range and enforces the same cap). */
+const MAX_RINGS = 4;
+
+function ringKeys(c = cfg) {
+  const ns = Object.keys((c && c.rings) || {})
+    .map(Number)
+    .filter((n) => Number.isInteger(n) && n >= 1)
+    .sort((a, b) => a - b);
+  return (ns.length ? ns : [1, 2]).map(String);
+}
+function ringItems(c = cfg) {
+  return ringKeys(c).flatMap((k) => (c.rings && Array.isArray(c.rings[k]) ? c.rings[k] : []));
+}
+function ringTitle(n, N) {
+  if (N <= 2) return n === '1' ? 'Inner ring' : 'Outer ring';
+  return `Ring ${n}` + (n === '1' ? ' (inner)' : n === String(N) ? ' (outer)' : '');
+}
+/* Compact form for the editor's radio group. */
+function ringRadioLabel(r, keys) {
+  if (keys.length <= 2) return r === '1' ? 'inner' : 'outer';
+  if (r === '1') return 'inner';
+  if (r === keys[keys.length - 1]) return 'outer';
+  return 'ring ' + r;
+}
+
 function el(tag, cls, attrs = {}, parent = null) {
   const e = document.createElement(tag);
   if (cls) e.className = cls;
@@ -182,9 +209,7 @@ function refreshIconSpans() {
 
 function ensureAllIcons() {
   if (!cfg) return;
-  for (const ring of ['1', '2']) {
-    for (const it of cfg.rings[ring] || []) if (it.iconImage) requestIconImage(it.iconImage);
-  }
+  for (const it of ringItems()) if (it.iconImage) requestIconImage(it.iconImage);
 }
 
 /* ------------------------------- segments --------------------------------- */
@@ -197,10 +222,13 @@ function renderSegments() {
   liveIconSpans.length = 0;
   const host = $('#ring-lists');
   host.innerHTML = '';
-  for (const ring of ['1', '2']) {
+  const keys = ringKeys();
+  const N = keys.length;
+  for (const ring of keys) {
+    if (!cfg.rings[ring]) cfg.rings[ring] = [];
     const sec = el('div', 'ring-sec', {}, host);
     const head = el('div', 'ring-head', {}, sec);
-    el('h3', null, { text: ring === '1' ? 'Inner ring' : 'Outer ring' }, head);
+    el('h3', null, { text: ringTitle(ring, N) }, head);
     el('span', 'muted', { text: `${cfg.rings[ring].length} segment(s)` }, head);
     const add = el('button', 'btn small', { text: '+ Add' }, head);
     add.onclick = () => {
@@ -213,13 +241,56 @@ function renderSegments() {
       const lbl = document.querySelector('.seg-edit input');
       if (lbl) { lbl.focus(); lbl.select(); }
     };
+    if (ring === keys[N - 1] && N >= 3) {
+      const rm = el('button', 'btn small glyph', { text: '\uE75D', title: 'Remove this ring', 'aria-label': 'Remove ' + ringTitle(ring, N) }, head);
+      rm.onclick = () => removeRing(ring);
+    }
     if (!cfg.rings[ring].length) {
-      el('div', 'empty-hint muted', { text: ring === '1' ? 'Empty — the wheel will use the outer ring only.' : 'Empty — no outer ring.' }, sec);
+      el('div', 'empty-hint muted', { text: 'Empty — this ring won\u2019t render.' }, sec);
       continue;
     }
     const list = el('div', 'seg-list', {}, sec);
     cfg.rings[ring].forEach((item, i) => list.appendChild(segRow(ring, item, i)));
   }
+  if (N < MAX_RINGS) {
+    const addRing = el('button', 'btn', { text: '+ Add ring', title: `Add ring ${N + 1} (outermost)` }, host);
+    addRing.style.marginTop = '4px';
+    addRing.onclick = () => {
+      cfg.rings[String(N + 1)] = [];
+      touch();
+      toast(`Ring ${N + 1} added — its segments sit outside the current outer ring`, false, () => {
+        if ((cfg.rings[String(N + 1)] || []).length) return;   // in use — keep it
+        delete cfg.rings[String(N + 1)];
+        touch();
+      });
+    };
+  } else {
+    el('div', 'empty-hint muted', { text: `Ring limit reached (${MAX_RINGS}).` }, host);
+  }
+}
+
+/* Remove the outermost ring: items migrate inward if the neighbour can take
+   them (the 24-per-ring cap holds); removal undo restores ring + items. */
+function removeRing(ring) {
+  const items = cfg.rings[ring] || [];
+  const inner = cfg.rings[String(Number(ring) - 1)];
+  if (items.length && inner.length + items.length > 24) {
+    toast(`Can\u2019t fold ${items.length} segments into the ring below (max 24) — move or delete some first`, true);
+    return;
+  }
+  delete cfg.rings[ring];
+  inner.push(...items);
+  if (openEditorKey && openEditorKey.startsWith(ring + '-')) openEditorKey = null;
+  touch();
+  const moved = items.slice();
+  toast(`Removed ${ringTitle(ring, ringKeys().length + 1)}`, false, () => {
+    for (const it of moved) {
+      const k = inner.indexOf(it);
+      if (k >= 0) inner.splice(k, 1);        // pull the migrated items back
+    }
+    cfg.rings[ring] = moved;                  // and re-raise the ring
+    touch();
+  });
 }
 
 const GUARDED_TYPES = new Set(['command', 'macro', 'sys']);
@@ -307,7 +378,7 @@ function segRow(ring, item, i) {
     runBtn.title = 'Try this action now';
   }
   mini('\uE75D', 'Delete segment', () => {   // Trash (E894 stays reserved for clear/close)
-    if (cfg.rings['1'].length + cfg.rings['2'].length <= 1) {
+    if (ringItems().length <= 1) {
       toast('The wheel needs at least one segment', true);
       return;
     }
@@ -419,18 +490,25 @@ function segEditor(ring, item) {
   const chkAuto = el('input', null, { type: 'checkbox' }, colorBox);
   chkAuto.checked = !item.color;
   el('span', 'muted', { text: 'auto' }, colorBox).style.fontSize = '12px';
-  const colIn = el('input', null, { type: 'color', value: item.color || cfg.appearance.colors[ring === '1' ? 'ring1' : 'ring2'] }, colorBox);
+  const colIn = el('input', null, { type: 'color', value: item.color || cfg.appearance.colors[Number(ring) % 2 === 1 ? 'ring1' : 'ring2'] }, colorBox);
   chkAuto.addEventListener('change', () => { item.color = chkAuto.checked ? null : colIn.value; touch(false); });
   colIn.addEventListener('input', () => { if (!chkAuto.checked) { item.color = colIn.value; touch(false); } });
 
   el('label', null, { text: 'Ring' }, f);
-  const ringBox = el('div', null, { style: 'display:flex;gap:12px;align-items:center' }, f);
-  for (const r of ['1', '2']) {
+  const ringBox = el('div', null, { style: 'display:flex;gap:12px;align-items:center;flex-wrap:wrap' }, f);
+  const allKeys = ringKeys();
+  for (const r of allKeys) {
     const lb = el('label', 'chk', {}, ringBox);
     const rb = el('input', null, { type: 'radio', name: 'ringpick-' + item.id }, lb);
     rb.checked = String(ring) === r;
     rb.addEventListener('change', () => {
       if (rb.checked && String(ring) !== r) {
+        if (cfg.rings[r].length >= 24) {   // config.js cleanRing cap
+          const cur = ringBox.querySelector(`input[value="${ring}"]`);
+          if (cur) cur.checked = true;
+          toast(`Ring ${r} holds at most 24 segments`, true);
+          return;
+        }
         const from = cfg.rings[ring];
         const idx = from.indexOf(item);
         from.splice(idx, 1);
@@ -439,18 +517,21 @@ function segEditor(ring, item) {
         touch();
         // Inverse-op undo — returns the item to its old ring and position;
         // later edits made after the move survive.
-        toast(`Moved “${item.label || '(no name)'}” to the ${r === '1' ? 'inner' : 'outer'} ring`, false, () => {
+        const t = ringRadioLabel(r, allKeys);
+        const dest = (t === 'inner' || t === 'outer') ? `the ${t} ring` : t;
+        toast(`Moved “${item.label || '(no name)'}” to ${dest}`, false, () => {
           const cur = cfg.rings[r];
           const k = cur.indexOf(item);
           if (k < 0) return;                        // moved on — inverse op is a no-op
           cur.splice(k, 1);
-          const back = cfg.rings[ring];
+          const back = cfg.rings[ring] || (cfg.rings[ring] = []);
           back.splice(Math.min(idx, back.length), 0, item);
           touch();
         });
       }
     });
-    lb.appendChild(document.createTextNode(r === '1' ? 'inner' : 'outer'));
+    rb.value = r;
+    lb.appendChild(document.createTextNode(ringRadioLabel(r, allKeys)));
   }
   const dup = el('button', 'btn small', { type: 'button', text: 'Duplicate', title: 'Copy this segment into the next position' }, ringBox);
   dup.onclick = (e) => {
@@ -559,9 +640,8 @@ let iconModalOpener = null;
    cfg while the modal is up, and a write through the stale ref would vanish. */
 function modalTarget() {
   if (!iconModalTarget) return null;
-  for (const ring of ['1', '2'])
-    for (const it of cfg.rings[ring] || [])
-      if (it.id === iconModalTarget.id) return it;
+  for (const it of ringItems())
+    if (it.id === iconModalTarget.id) return it;
   return iconModalTarget;
 }
 
@@ -812,10 +892,9 @@ function miniWheel(host, colors) {
       innerRadius: Math.round(outer * 0.42), outerRadius: outer,
       startAngle: cfg.appearance.startAngle,
     }),
-    rings: {
-      1: ring(cfg.rings && cfg.rings[1], 6),
-      2: ring(cfg.rings && cfg.rings[2], 10),
-    },
+    rings: Object.fromEntries(
+      ringKeys().map((k, i) => [k, ring(cfg.rings && cfg.rings[k], i === 0 ? 6 : 10)])
+    ),
   };
   buildWheel(host, mini, { preview: true, scale: 1, pad: CHIP_PAD, shadowBlur: 3, shadowDy: 1 });
 }

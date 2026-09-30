@@ -106,7 +106,8 @@ function registerIpc(deps) {
 
   /* ---- dashboard icons (logos for wheel items) ---- */
   dashboardIcons.configure(path.join(app.getPath('userData'), 'icons', 'dashboard'));
-  const ringItems = (cfg) => [...((cfg && cfg.rings && cfg.rings[1]) || []), ...((cfg && cfg.rings && cfg.rings[2]) || [])];
+  const ringItems = (cfg) => (cfg && cfg.rings ? Object.values(cfg.rings) : [])
+    .flatMap((a) => Array.isArray(a) ? a : []);
   ipcMain.handle('icons:search', (ev, query) => dashboardIcons.searchIcons(query));
   ipcMain.handle('icons:fetch', (ev, slug) => dashboardIcons.fetchIcon(slug));
   ipcMain.handle('icons:data-url', (ev, slug) => dashboardIcons.dataUrlFor(slug));

@@ -13,8 +13,8 @@ const iconPending = new Set();
 
 function itemSlugs(config) {
   const slugs = new Set();
-  for (const ring of ['1', '2']) {
-    for (const it of (config.rings && config.rings[ring]) || []) {
+  for (const arr of (config && config.rings ? Object.values(config.rings) : [])) {
+    for (const it of Array.isArray(arr) ? arr : []) {
       if (it && it.iconImage) slugs.add(it.iconImage);
     }
   }
