@@ -21,7 +21,7 @@ html, body {
 }
 
 @keyframes wheelpop {
-  0%   { transform: scale(0.82); opacity: 0; }
+  0%   { transform: scale(0.86); opacity: 0; }
   60%  { opacity: 1; }
   100% { transform: scale(1); opacity: 1; }
 }
@@ -36,12 +36,17 @@ html, body {
   transform: translate(var(--tx, 0), var(--ty, 0));
   transition: transform .12s cubic-bezier(.34,1.56,.64,1), opacity .12s ease;
 }
+/* The lifted plate catches the light: its icon brightens a notch, no glow. */
+.wheel-root.any-hover .seg.hovered .seg-icon { filter: brightness(1.18); transition: filter .12s ease; }
 
 .hub { transition: fill .1s ease; }
 .hub-icon, .hub-label, .center-label { pointer-events: none; }
 
+/* Machined top-light, rim, and hub crown are decorative — never intercept the pointer. */
+.top-light, .rim, .hub-top { pointer-events: none; }
+
 /* reduced motion: state changes land instantly; hover fill + hub report keep the affordance */
 @media (prefers-reduced-motion: reduce) {
-  .seg, .seg path, .hub { transition: none; }
+  .seg, .seg path, .hub, .seg.hovered .seg-icon { transition: none; }
   .wheel-root.any-hover .seg.hovered { transition: none; transform: none; }
 }

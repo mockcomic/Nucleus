@@ -6,6 +6,7 @@ const actions = require('./actions');
 const autostart = require('./autostart');
 const apps = require('./apps');
 const sys = require('./sys');
+const { supportsVibrancy } = require('./windows');
 
 /**
  * deps = { store, hotkeyMgr, overlay, settings, tray, getState, setState,
@@ -127,6 +128,7 @@ function registerIpc(deps) {
   ipcMain.handle('sys:catalog', () => sys.CATALOG);
   ipcMain.handle('apps:list', (ev, force) => apps.listApps(!!force));
   ipcMain.handle('app:version', () => app.getVersion());
+  ipcMain.handle('env:get', () => ({ vibrant: supportsVibrancy() }));
   ipcMain.on('settings:close', () => settings.close());
   ipcMain.on('app:quit', () => deps.quitApp());
 }

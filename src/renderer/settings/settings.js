@@ -125,7 +125,8 @@ function renderSegments() {
       el('div', 'empty-hint muted', { text: ring === '1' ? 'Empty — the wheel will use the outer ring only.' : 'Empty — no outer ring.' }, sec);
       continue;
     }
-    cfg.rings[ring].forEach((item, i) => sec.appendChild(segRow(ring, item, i)));
+    const list = el('div', 'seg-list', {}, sec);
+    cfg.rings[ring].forEach((item, i) => list.appendChild(segRow(ring, item, i)));
   }
 }
 
@@ -464,8 +465,11 @@ function renderAppearance() {
     const out = el('output', null, { text: String(cfg.appearance[key]) }, lab);
     out.setAttribute('for', id);
     const r = el('input', null, { type: 'range', min, max, step, value: cfg.appearance[key], id }, row);
+    // Apple-style filled track: Chromium ranges have no fill pseudo, so pin a --fill stop.
+    const fill = () => r.style.setProperty('--fill', ((+r.value - min) / (max - min) * 100) + '%');
+    fill();
     // Only the preview needs the new value — never rerender the segment rows per drag frame.
-    r.addEventListener('input', () => { cfg.appearance[key] = parseFloat(r.value); out.textContent = r.value; renderPreview(); });
+    r.addEventListener('input', () => { cfg.appearance[key] = parseFloat(r.value); out.textContent = r.value; fill(); renderPreview(); });
     r.addEventListener('change', () => touch(false));
   }
 
@@ -477,8 +481,13 @@ function renderAppearance() {
     const inp = el('input', null, { type: 'color', value: cfg.appearance.colors[k] }, item);
     el('span', null, { text: lab }, item);
     inp.addEventListener('input', () => { cfg.appearance.colors[k] = inp.value; renderPreview(); });
-    inp.addEventListener('change', () => touch(false));
+    inp.addEventListener('change', () => { touch(false); renderPresets(); });
   }
+}
+
+function colorsMatch(a, b) {
+  for (const k of Object.keys(b)) if (String(a[k] || '').toLowerCase() !== String(b[k]).toLowerCase()) return false;
+  return true;
 }
 
 const PRESETS = {
@@ -499,7 +508,8 @@ function renderPresets() {
       const i = el('i', null, {}, sw); i.style.background = colors[k];
     }
     el('span', null, { text: name }, b);
-    b.onclick = () => { cfg.appearance.colors = { ...colors }; renderAppearance(); renderPreview(); touch(false); };
+    if (colorsMatch(cfg.appearance.colors, colors)) b.classList.add('active');
+    b.onclick = () => { cfg.appearance.colors = { ...colors }; renderAppearance(); renderPresets(); renderPreview(); touch(false); };
   }
 }
 
@@ -645,6 +655,7 @@ function renderAll() {
 }
 
 async function boot() {
+  api.env?.().then((e) => { if (e && e.vibrant) document.documentElement.dataset.vibrant = '1'; });
   const r = await api.getConfig();
   cfg = r.config;
   sysCatalogCache = await api.sysCatalog();

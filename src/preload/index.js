@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('wheelAPI', {
   openConfigFolder: () => ipcRenderer.invoke('config:open-folder'),
   sysCatalog: () => ipcRenderer.invoke('sys:catalog'),
   appVersion: () => ipcRenderer.invoke('app:version'),
+  env: () => ipcRenderer.invoke('env:get'),
   closeSettings: () => ipcRenderer.send('settings:close'),
   requestQuit: () => ipcRenderer.send('app:quit'),
   onConfigChanged: (cb) => ipcRenderer.on('config:changed', (_e, cfg) => cb(cfg))

@@ -66,7 +66,20 @@ export function buildWheel(container, cfg, opts = {}) {
   const defs = svgEl('defs');
   const filt = svgEl('filter', { id: 'rwdrop', x: '-40%', y: '-40%', width: '180%', height: '180%' });
   const feDrop = svgEl('feDropShadow', { dx: '0', dy: '6', stdDeviation: '14', 'flood-color': 'rgba(0,0,0,0.55)' });
-  filt.appendChild(feDrop); defs.appendChild(filt); svg.insertBefore(defs, root);
+  filt.appendChild(feDrop); defs.appendChild(filt);
+  /* Machined top-light: one off-center specular wash over the whole dial, and a
+     lit crown on the hub — depth from light on solid matter, never from glow. */
+  const topGrad = svgEl('radialGradient', { id: 'rw-top', cx: '32%', cy: '16%', r: '95%' });
+  topGrad.appendChild(svgEl('stop', { offset: '0%', 'stop-color': '#fff', 'stop-opacity': '0.06' }));
+  topGrad.appendChild(svgEl('stop', { offset: '55%', 'stop-color': '#fff', 'stop-opacity': '0.015' }));
+  topGrad.appendChild(svgEl('stop', { offset: '100%', 'stop-color': '#fff', 'stop-opacity': '0' }));
+  defs.appendChild(topGrad);
+  const hubGrad = svgEl('radialGradient', { id: 'rw-hub', cx: '38%', cy: '26%', r: '90%' });
+  hubGrad.appendChild(svgEl('stop', { offset: '0%', 'stop-color': '#fff', 'stop-opacity': '0.07' }));
+  hubGrad.appendChild(svgEl('stop', { offset: '60%', 'stop-color': '#fff', 'stop-opacity': '0.02' }));
+  hubGrad.appendChild(svgEl('stop', { offset: '100%', 'stop-color': '#fff', 'stop-opacity': '0' }));
+  defs.appendChild(hubGrad);
+  svg.insertBefore(defs, root);
 
   const segments = [];
   const gap = Math.min(ap.gapDeg, 10);
@@ -131,24 +144,30 @@ export function buildWheel(container, cfg, opts = {}) {
   }
   root.appendChild(shadow);
 
+  /* Lit-from-above pass over the plates + a machined rim on the outer edge.
+     Purely decorative discs — pointer-events stay with the geometry hit-test. */
+  root.appendChild(svgEl('circle', { cx, cy, r: ap.outerRadius, fill: 'url(#rw-top)', class: 'top-light' }));
+  root.appendChild(svgEl('circle', { cx, cy, r: ap.outerRadius, fill: 'none', stroke: 'rgba(255,255,255,0.08)', 'stroke-width': 1, class: 'rim' }));
+
   /* hub */
   const hub = svgEl('circle', {
     cx, cy, r: ap.innerRadius, fill: ap.colors.center,
     stroke: ap.colors.accent, 'stroke-opacity': 0.22, 'stroke-width': 1.5, class: 'hub'
   });
   root.appendChild(hub);
+  root.appendChild(svgEl('circle', { cx, cy, r: ap.innerRadius, fill: 'url(#rw-hub)', class: 'hub-top' }));
   const hubIcon = svgEl('text', {
     x: cx, y: cy - 12, 'text-anchor': 'middle', 'dominant-baseline': 'central',
     'font-family': ICON_FONT, 'font-size': Math.min(34, ap.innerRadius * 0.42), fill: ap.colors.text, class: 'hub-icon'
   });
   const hubLabel = svgEl('text', {
     x: cx, y: cy + Math.min(30, ap.innerRadius * 0.40), 'text-anchor': 'middle', 'dominant-baseline': 'central',
-    'font-family': UI_FONT, 'font-size': Math.max(11, ap.fontSize), 'font-weight': 600,
+    'font-family': UI_FONT, 'font-size': Math.max(11, ap.fontSize), 'font-weight': 600, 'letter-spacing': '0.4',
     fill: ap.colors.text, class: 'hub-label'
   });
   const centerLabel = svgEl('text', {
     x: cx, y: cy, 'text-anchor': 'middle', 'dominant-baseline': 'central',
-    'font-family': UI_FONT, 'font-size': Math.max(12, ap.fontSize), 'font-weight': 600,
+    'font-family': UI_FONT, 'font-size': Math.max(12, ap.fontSize), 'font-weight': 600, 'letter-spacing': '0.8',
     fill: ap.colors.text, 'fill-opacity': 0.85, class: 'center-label'
   });
   centerLabel.textContent = ap.centerLabel || '';

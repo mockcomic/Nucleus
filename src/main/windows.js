@@ -2,10 +2,31 @@
 /* Overlay (the wheel) + Settings window lifecycle. The overlay is created once at
    startup, kept hidden, then moved to the cursor and shown on demand for <100ms popups. */
 const { app, BrowserWindow, screen } = require('electron');
+const os = require('os');
 const path = require('path');
+const { execFileSync } = require('child_process');
 
 const PRELOAD = path.join(__dirname, '..', 'preload', 'index.js');
 const WHEEL_PAD = 26; // room for drop-shadow + hover lift
+
+/* Settings-window vibrancy gate: DWM acrylic needs Windows 11 22H2 (build 22621)
+   with the OS "transparency effects" toggle on. Fail-soft — any doubt (old OS,
+   reg read failure, exotic environment) lands on the solid opaque look. */
+let _vibrant = null;
+function supportsVibrancy() {
+  if (_vibrant != null) return _vibrant;
+  _vibrant = (() => {
+    try {
+      const build = parseInt(String(os.release()).split('.')[2], 10);
+      if (!Number.isFinite(build) || build < 22621) return false;
+      const out = execFileSync('reg',
+        ['query', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize', '/v', 'EnableTransparency'],
+        { encoding: 'utf8', windowsHide: true, timeout: 2000 });
+      return /EnableTransparency\s+REG_DWORD\s+0x1\b/i.test(out);
+    } catch { return false; }
+  })();
+  return _vibrant;
+}
 
 class Overlay {
   constructor(deps) {
@@ -93,7 +114,9 @@ class SettingsWindow {
       this.win.show(); this.win.focus(); return this.win;
     }
     const st = this.deps.getState('settings', { width: 1120, height: 760 });
-    this.win = new BrowserWindow({
+    const vibrant = supportsVibrancy();
+    this.vibrant = vibrant;
+    const opts = {
       width: st.width, height: st.height,
       x: typeof st.x === 'number' ? st.x : undefined,
       y: typeof st.y === 'number' ? st.y : undefined,
@@ -106,7 +129,21 @@ class SettingsWindow {
         preload: PRELOAD, contextIsolation: true, nodeIntegration: false,
         sandbox: false, devTools: !app.isPackaged
       }
-    });
+    };
+    if (vibrant) {
+      // DWM paints acrylic behind the client area; the page keeps only the
+      // sidebar/preview bay translucent (see settings.css html[data-vibrant]).
+      // Opaque page layers (cards, modals, dropdowns, toasts) stay as they are.
+      opts.backgroundColor = '#00000000';
+      opts.backgroundMaterial = 'acrylic';
+      opts.show = false;   // avoid a bare-backdrop flash before the page paints
+    }
+    this.win = new BrowserWindow(opts);
+    if (vibrant) {
+      this.win.once('ready-to-show', () => {
+        if (this.win && !this.win.isDestroyed()) this.win.show();
+      });
+    }
     this.win.loadFile(path.join(__dirname, '..', 'renderer', 'settings', 'index.html'));
     const persist = () => {
       if (!this.win || this.win.isDestroyed()) return;
@@ -132,4 +169,4 @@ class SettingsWindow {
   destroy() { if (this.win && !this.win.isDestroyed()) this.win.destroy(); this.win = null; }
 }
 
-module.exports = { Overlay, SettingsWindow };
+module.exports = { Overlay, SettingsWindow, supportsVibrancy };
