@@ -14,8 +14,8 @@ const ORIGINALS = new Set(['midnight', 'ocean', 'grape', 'graphite', 'ember']);
    hub report carry the hovered readout); original hover fills only need the
    3:1 large-text floor, and ring fills are exempt for these ids alone. */
 
-test('catalog has twelve themes with unique ids and names', () => {
-  assert.equal(THEMES.length, 12);
+test('catalog has fourteen themes with unique ids and names', () => {
+  assert.equal(THEMES.length, 14);
   const ids = new Set(), names = new Set();
   for (const t of THEMES) {
     assert.ok(!ids.has(t.id), 'dup id ' + t.id);
@@ -84,7 +84,7 @@ test('the machined-midnight chrome survives verbatim for the incumbent look', ()
 });
 
 test('light themes get a downward ramp (bg no darker than panel, card below, field sunk)', () => {
-  for (const id of ['porcelain', 'linen', 'paper', 'hc-white']) {
+  for (const id of ['porcelain', 'linen', 'paper', 'hc-white', 'aqua']) {
     const c = computeChrome(themeById(id).colors);
     assert.ok(relLum(c.bg) >= relLum(c.panel), id + ' bg>=panel');
     assert.ok(relLum(c.panel) >= relLum(c.card), id + ' panel>=card');

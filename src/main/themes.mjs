@@ -171,6 +171,15 @@ export function computeChrome(pal) {
   out.sheen = `linear-gradient(180deg, ${out.lightOverlay}, rgba(0,0,0,0) 45%)`;
   out.sheenQuiet = `linear-gradient(180deg, rgba(${parseHex(out.sheenColor).join(',')},${light ? 0.05 : 0.022}), rgba(0,0,0,0) 60%)`;
   if (pal.chrome) for (const k of Object.keys(CHROME_VARS)) if (isHex(pal.chrome[k])) out[k] = pal.chrome[k];
+  /* The preview well exists to hold the wheel — a plate one value step from
+     the well vanishes into it (the machined #17202a well sat a single digit
+     from Ocean/Midnight's ring2). In dark themes, sink the well toward black
+     regardless of hand-tuned values; the hue rides on bg, so the theme's tint
+     survives while the plates gain guaranteed separation. */
+  if (!light) {
+    out.previewHi = mix(bg, '#000000', 0.32);
+    out.previewLo = mix(bg, '#000000', 0.68);
+  }
   /* chromeText is the chrome's ink — it may differ from the wheel's plate ink
      (Graphite: dark text on light plates, light text in a dark window) */
   out.text = out.chromeText || text;
@@ -360,6 +369,37 @@ export const THEMES = [
       accent: '#5fd39a', text: '#e6f6ec', center: '#04110b',
       mode: 'dark', stroke: '#9fdcb8',
       chrome: { ...DARK_CHROME, track: '#1c4433', previewHi: '#10281e', previewLo: '#061209' },
+    },
+  },
+  /* Apple-inspired pair. Aqua: iOS light mode — white plates on the
+     grouped-background grey, System Blue accent, Apple's marketing ink.
+     dim/codeInk hand-set to iOS secondaryLabel / link blue; both clear the
+     AA floors on the derived card (the purity gate re-verifies). */
+  {
+    id: 'aqua', name: 'Aqua',
+    colors: {
+      bg: '#f2f2f7', ring1: '#ffffff', ring2: '#e9e9eb', hover: '#a8ccf5',
+      accent: '#007aff', text: '#1d1d1f', center: '#fbfbfd',
+      mode: 'light', stroke: '#1c1c1e',
+      chrome: { dim: '#3c3c43', codeInk: '#0066cc' },
+    },
+  },
+  /* Space Gray: iOS dark mode — neutral elevated greys (no blue tint, so
+     DARK_CHROME is replaced wholesale by the neutral set) under dark-mode
+     System Blue. hover sits at the AA-safe deep blue; preview wells are
+     force-sunk by computeChrome, never hand-set here. */
+  {
+    id: 'space-gray', name: 'Space Gray',
+    colors: {
+      bg: '#1a1a1c', ring1: '#2c2c2e', ring2: '#232325', hover: '#0a66c2',
+      accent: '#0a84ff', text: '#f5f5f7', center: '#0f0f10',
+      mode: 'dark',
+      chrome: {
+        panel: '#1c1c1e', card: '#242426', line: '#3a3a3c', dim: '#98989d',
+        btnBg: '#2c2c2e', wellHover: '#333335', wellEdit: '#1f1f21', wellTabHover: '#2a2a2c',
+        codeInk: '#6cb6ff', danger: '#ff453a', errBg: '#3a1d1d', errInk: '#ffb3b3',
+        track: '#3a3a3c', scrollThumb: '#3a3a3c', sheenColor: '#ffffff',
+      },
     },
   },
 ];

@@ -56,7 +56,7 @@ Open from the tray (double-click icon → **Open Settings**). Four tabs:
   (entries launch exactly like double-clicking their Start Menu shortcut; ↻ re-scans).
 - **Appearance** — hub/wheel size, ring split (two-ring layouts; three or more
   rings divide equally), rotation, gaps, label size, pop
-  animation, colors + 5 theme presets, center label. Live preview uses the exact
+  animation, colors + 14 theme presets, center label. Live preview uses the exact
   same renderer as the real wheel.
 - **Hotkey & Behavior** — press-to-record hotkey with instant registration (conflicts
   are reported and the old key stays active), Start-with-Windows toggle,

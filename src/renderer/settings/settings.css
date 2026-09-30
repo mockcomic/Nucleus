@@ -16,7 +16,7 @@
   --ring-accent: rgba(76,159,240,.16);               /* focus halo */
   --ring-active: rgba(76,159,240,.25);                /* active-chip inner ring */
   --on-accent: #fff;                                  /* text on accent-deep fills */
-  --preview-hi: #17202a; --preview-lo: #0b1015;       /* live-preview well */
+  --preview-hi: #0a1016; --preview-lo: #050809;       /* live-preview well — sunk below the plates */
   --scroll-thumb: rgba(255,255,255,.14); --scroll-thumb-hover: rgba(255,255,255,.22);
   --sheen: linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,0) 45%);   /* lit from above */
   --sheen-quiet: linear-gradient(180deg, rgba(255,255,255,.022), rgba(255,255,255,0) 60%);

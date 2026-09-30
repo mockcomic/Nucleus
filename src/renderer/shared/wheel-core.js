@@ -77,7 +77,17 @@ export function sectorPath(cx, cy, r0, r1, a0, a1) {
  * Build the wheel into `container`. Returns { cfg, segments, setHover, size }.
  * opts: { preview?:bool, scale?:number, pad?:number }
  */
+/* Def ids must be unique PER WHEEL, not per document: the settings page hosts
+   thirteen wheels at once (preview + twelve theme chips). With a shared id,
+   url(#rwdrop) resolves to the first one in document order — a chip inside the
+   collapsed Appearance tab — and Chromium then skips painting the preview's
+   entire shadow layer (all plates, icons, labels), making the live preview
+   look frozen whenever the theme gallery was built first. */
+let _wheelSeq = 0;
+
 export function buildWheel(container, cfg, opts = {}) {
+  const uid = 'rw' + (++_wheelSeq);
+  const dropId = uid + '-drop', topId = uid + '-top', hubId = uid + '-hub';
   const scale = opts.scale == null ? 1 : opts.scale;
   const pad = opts.pad == null ? PAD : opts.pad;
   const s = { ...cfg, appearance: { ...cfg.appearance } };
@@ -94,9 +104,9 @@ export function buildWheel(container, cfg, opts = {}) {
   const root = svgEl('g', { class: 'wheel-root' });
   svg.appendChild(root);
 
-  const shadow = svgEl('g', { class: 'shadow-layer', filter: 'url(#rwdrop)' });
+  const shadow = svgEl('g', { class: 'shadow-layer', filter: `url(#${dropId})` });
   const defs = svgEl('defs');
-  const filt = svgEl('filter', { id: 'rwdrop', x: '-40%', y: '-40%', width: '180%', height: '180%' });
+  const filt = svgEl('filter', { id: dropId, x: '-40%', y: '-40%', width: '180%', height: '180%' });
   /* Theme persona (see themes.mjs): light themes carry rgba() values the
      settings chrome computed; untouched, the machined-midnight defaults. */
   const persona = {
@@ -110,12 +120,12 @@ export function buildWheel(container, cfg, opts = {}) {
   filt.appendChild(feDrop); defs.appendChild(filt);
   /* Machined top-light: one off-center specular wash over the whole dial, and a
      lit crown on the hub — depth from light on solid matter, never from glow. */
-  const topGrad = svgEl('radialGradient', { id: 'rw-top', cx: '32%', cy: '16%', r: '95%' });
+  const topGrad = svgEl('radialGradient', { id: topId, cx: '32%', cy: '16%', r: '95%' });
   topGrad.appendChild(svgEl('stop', { offset: '0%', 'stop-color': persona.light, 'stop-opacity': '0.06' }));
   topGrad.appendChild(svgEl('stop', { offset: '55%', 'stop-color': persona.light, 'stop-opacity': '0.015' }));
   topGrad.appendChild(svgEl('stop', { offset: '100%', 'stop-color': persona.light, 'stop-opacity': '0' }));
   defs.appendChild(topGrad);
-  const hubGrad = svgEl('radialGradient', { id: 'rw-hub', cx: '38%', cy: '26%', r: '90%' });
+  const hubGrad = svgEl('radialGradient', { id: hubId, cx: '38%', cy: '26%', r: '90%' });
   hubGrad.appendChild(svgEl('stop', { offset: '0%', 'stop-color': persona.light, 'stop-opacity': '0.07' }));
   hubGrad.appendChild(svgEl('stop', { offset: '60%', 'stop-color': persona.light, 'stop-opacity': '0.02' }));
   hubGrad.appendChild(svgEl('stop', { offset: '100%', 'stop-color': persona.light, 'stop-opacity': '0' }));
@@ -154,7 +164,7 @@ export function buildWheel(container, cfg, opts = {}) {
       const rm = (rg.r0 + rg.r1) / 2;
       const imgHref = iconHrefFor(opts, item.iconImage);
       const showIcon = !!item.icon || !!imgHref;
-      const showLabel = ap.showLabels && !!item.label;
+      const showLabel = ap.showLabels && !!item.label && !item.hideLabel;
       const iconSize = Math.max(13, Math.min(26, band * 0.30));
 
       if (showIcon) {
@@ -198,7 +208,7 @@ export function buildWheel(container, cfg, opts = {}) {
 
   /* Lit-from-above pass over the plates + a machined rim on the outer edge.
      Purely decorative discs — pointer-events stay with the geometry hit-test. */
-  root.appendChild(svgEl('circle', { cx, cy, r: ap.outerRadius, fill: 'url(#rw-top)', class: 'top-light' }));
+  root.appendChild(svgEl('circle', { cx, cy, r: ap.outerRadius, fill: `url(#${topId})`, class: 'top-light' }));
   root.appendChild(svgEl('circle', { cx, cy, r: ap.outerRadius, fill: 'none', stroke: persona.rim, 'stroke-width': 1, class: 'rim' }));
 
   /* hub */
@@ -207,7 +217,7 @@ export function buildWheel(container, cfg, opts = {}) {
     stroke: ap.colors.accent, 'stroke-opacity': 0.22, 'stroke-width': 1.5, class: 'hub'
   });
   root.appendChild(hub);
-  root.appendChild(svgEl('circle', { cx, cy, r: ap.innerRadius, fill: 'url(#rw-hub)', class: 'hub-top' }));
+  root.appendChild(svgEl('circle', { cx, cy, r: ap.innerRadius, fill: `url(#${hubId})`, class: 'hub-top' }));
   const hubIcon = svgEl('text', {
     x: cx, y: cy - 12, 'text-anchor': 'middle', 'dominant-baseline': 'central',
     'font-family': ICON_FONT, 'font-size': Math.min(34, ap.innerRadius * 0.42), fill: ap.colors.text, class: 'hub-icon'

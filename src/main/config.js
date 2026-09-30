@@ -121,7 +121,10 @@ function validate(raw) {
       iconImage: require('./dashboard-icons').sanitizeSlug(it.iconImage) || '',
       type,
       value: String(it.value ?? '').slice(0, 2048),
-      color: HEX.test(it.color || '') ? it.color : null
+      color: HEX.test(it.color || '') ? it.color : null,
+      // Per-segment icon-only override; the global appearance.showLabels
+      // toggle still wins when labels are off for everyone.
+      hideLabel: !!it.hideLabel
     };
   };
   const cleanRing = (arr) => Array.isArray(arr) ? arr.slice(0, 24).map(cleanItem) : [];

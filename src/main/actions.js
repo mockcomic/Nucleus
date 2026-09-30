@@ -13,6 +13,28 @@ function spawnDetached(cmd, args) {
 }
 
 /**
+ * Run a cmd.exe command line, fire-and-forget but honest about immediate
+ * failure: a bad command (typo, bad syntax) makes cmd exit non-zero almost
+ * at once — reject with that code so the preview toast reports it instead of
+ * claiming success. A command still running past the grace window counts as
+ * launched (the child stays alive; it is detached + unref'd).
+ */
+function runShellCommand(value) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(value, { detached: true, stdio: 'ignore', windowsHide: true, shell: true });
+    child.unref();
+    let settled = false;
+    const done = (fn, arg) => { if (settled) return; settled = true; clearTimeout(timer); fn(arg); };
+    const timer = setTimeout(() => done(resolve), 2000);
+    child.once('error', (e) => done(reject, new Error(`command failed: ${e.message}`)));
+    child.once('close', (code) => {
+      if (code === 0 || code === null) done(resolve);
+      else done(reject, new Error(`command exited with code ${code}`));
+    });
+  });
+}
+
+/**
  * Execute one configured item. Throws Error with a user-readable message on failure.
  * ctx: { quit?: () => void }
  */
@@ -68,9 +90,29 @@ async function executeAction(item, ctx = {}) {
     }
     case 'command': {
       if (!value) throw new Error('no command configured');
-      const child = spawn(value, { detached: true, stdio: 'ignore', windowsHide: true, shell: true });
-      child.unref();
-      child.on('error', (e) => { throw new Error(`command failed: ${e.message}`); });
+      // A value that is actually a script file needs double-click semantics, not
+      // a raw cmd /c of the path — cmd's quote handling breaks paths with spaces.
+      const script = value.replace(/^"(.+)"$/g, '$1');
+      let exists = false;
+      try { exists = fs.existsSync(script); } catch {}
+      if (exists && /\.(bat|cmd)$/i.test(script)) {
+        const child = spawn('cmd.exe', ['/d', '/s', '/c', 'start', '""', script],
+          { detached: true, stdio: 'ignore', windowsHide: true });
+        child.unref();
+        return;
+      }
+      if (exists && /\.ps1$/i.test(script)) {
+        // Same `start ""` route as the batch files: powershell.exe spawned
+        // directly with detached:true silently never runs (verified on real
+        // machines); through cmd's ShellExecute it launches reliably.
+        const child = spawn('cmd.exe',
+          ['/d', '/s', '/c', 'start', '""', 'powershell.exe',
+            '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script],
+          { detached: true, stdio: 'ignore', windowsHide: true });
+        child.unref();
+        return;
+      }
+      await runShellCommand(value);
       return;
     }
     case 'macro': {

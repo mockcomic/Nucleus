@@ -121,7 +121,7 @@ function registerIpc(deps) {
       title: opts.title || 'Choose a file',
       properties: ['openFile'],
       filters: opts.extensions && opts.extensions.length
-        ? [{ name: 'Programs', extensions: opts.extensions }, { name: 'All files', extensions: ['*'] }]
+        ? [{ name: opts.filterName || 'Programs', extensions: opts.extensions }, { name: 'All files', extensions: ['*'] }]
         : undefined
     });
     return r.canceled ? null : r.filePaths[0];

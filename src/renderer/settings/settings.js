@@ -215,8 +215,19 @@ function ensureAllIcons() {
 /* ------------------------------- segments --------------------------------- */
 const TYPE_OPTIONS = [
   ['app', 'app — launch program'], ['url', 'url — open link'], ['file', 'file — open file'],
-  ['command', 'command — shell'], ['macro', 'macro — keystrokes'], ['sys', 'sys — Windows action']
+  ['command', 'command — shell command / script'], ['macro', 'macro — keystrokes'], ['sys', 'sys — Windows action']
 ];
+
+/* What goes in the value box, per type — a single "Target" label asked the user
+   to guess; each type now names its own parameter. */
+const TARGET_LABELS = { app: 'Program', url: 'Link', file: 'File', command: 'Command', macro: 'Keys', sys: 'Action' };
+
+/* Browse… dialogs per type (title + file filters passed to the main process). */
+const BROWSE_OPTS = {
+  app: { title: 'Choose a program', extensions: ['exe', 'lnk', 'bat', 'cmd', 'msc'] },
+  file: { title: 'Choose a file' },
+  command: { title: 'Choose a script to run', filterName: 'Scripts & programs', extensions: ['bat', 'cmd', 'ps1', 'exe'] }
+};
 
 function renderSegments() {
   liveIconSpans.length = 0;
@@ -438,21 +449,40 @@ function segEditor(ring, item) {
   };
 
   el('label', null, { text: 'Label', for: uid + '-label' }, f);
-  const inLabel = bind(el('input', null, { type: 'text', maxlength: '40', value: item.label, id: uid + '-label' }, f), (e) => item.label = e.value);
-  f.appendChild(inLabel);
+  const labelBox = el('div', null, { style: 'display:flex;align-items:center;gap:12px;min-width:0' }, f);
+  const inLabel = bind(el('input', null, { type: 'text', maxlength: '40', value: item.label, id: uid + '-label' }), (e) => item.label = e.value);
+  inLabel.style.flex = '1';
+  inLabel.style.minWidth = '0';
+  labelBox.appendChild(inLabel);
+  const hideLb = el('label', 'chk', { title: 'Show this segment as icon only — hides its label on the wheel' }, labelBox);
+  const chkHide = el('input', null, { type: 'checkbox', 'aria-label': 'Hide label on wheel' }, hideLb);
+  el('span', null, { text: 'Hide label' }, hideLb);
+  chkHide.checked = !!item.hideLabel;
+  chkHide.addEventListener('change', () => { item.hideLabel = chkHide.checked; touch(false); });
 
   el('label', null, { text: 'Type', for: uid + '-type' }, f);
   const selType = el('select', null, { id: uid + '-type' }, f);
   for (const [v, t] of TYPE_OPTIONS) el('option', null, { value: v, text: t }, selType);
   selType.value = item.type;
   selType.addEventListener('change', () => {
+    const oldType = item.type;
     item.type = selType.value;
+    // Each type owns a disjoint value namespace — carrying an old one over
+    // left the parameter box showing a sys catalog id as "Keys" (and an
+    // unknown id parked in the Action select at selectedIndex -1).
+    if (item.type === 'sys') {
+      if (!(sysCatalogCache || []).some((c) => c.id === item.value)) {
+        item.value = (sysCatalogCache && sysCatalogCache[0] && sysCatalogCache[0].id) || '';
+      }
+    } else if (oldType === 'sys') {
+      item.value = '';
+    }
     touch();                                     // rebuilds the editor for the new type
     const ed = document.querySelector('.seg-edit');
     ed?.querySelector('select')?.focus();        // keep the keyboard in the editor
   });
 
-  const labTarget = el('label', null, { text: item.type === 'macro' ? 'Keys' : 'Target' }, f);
+  const labTarget = el('label', null, { text: TARGET_LABELS[item.type] || 'Target' }, f);
   if (item.type === 'sys') {
     const sel = el('select', null, { id: uid + '-target' }, f);
     labTarget.setAttribute('for', uid + '-target');
@@ -464,13 +494,22 @@ function segEditor(ring, item) {
     const inV = bind(el('input', null, { type: 'text', value: item.value, placeholder: valueHint(item.type), id: uid + '-target' }), (e) => item.value = e.value);
     labTarget.setAttribute('for', uid + '-target');
     rowv.appendChild(inV);
-    if (item.type === 'app' || item.type === 'file') {
+    const browseOpts = BROWSE_OPTS[item.type];
+    if (browseOpts) {
       const b = el('button', 'btn small', { text: 'Browse…' }, rowv);
       b.onclick = async (ev) => {
         ev.stopPropagation();
-        const p = await api.pickFile(item.type === 'app' ? { extensions: ['exe', 'lnk', 'bat', 'cmd', 'msc'] } : {});
+        const p = await api.pickFile(browseOpts);
         if (p) { item.value = p; touch(); }
       };
+    }
+    if (item.type === 'command') {
+      // Say what the box takes — cmd.exe syntax vs. a picked script file.
+      const hint = el('div', 'hint', {
+        html: 'Type it exactly as in <b>Command Prompt</b>, or use Browse… to pick a <code>.bat</code> / <code>.cmd</code> / <code>.ps1</code> file — the chosen path runs like a double-click.'
+      }, f);
+      hint.style.gridColumn = '1 / -1';
+      hint.style.marginTop = '-2px';
     }
     if (item.type === 'app') appCombo(item, inV, f);
   }
@@ -627,7 +666,7 @@ function valueHint(type) {
   return {
     app: 'notepad.exe  or  C:\\Path\\to\\app.exe "arg"',
     url: 'https://…', file: 'C:\\Path\\to\\file.pdf',
-    command: 'taskkill /f /im foo.exe', macro: 'ctrl+c, wait=0.2, ctrl+v'
+    command: 'taskkill /f /im foo.exe   or   C:\\Scripts\\cleanup.bat', macro: 'ctrl+c, wait=0.2, ctrl+v'
   }[type] || '';
 }
 
