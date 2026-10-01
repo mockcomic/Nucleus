@@ -1,0 +1,200 @@
+'use strict';
+/* Welcome (FTU) window controller. Four steps, live hotkey recording through
+   the existing hotkey:set IPC, and a real-wheel test through overlay:show —
+   every exit path calls welcome:done so the first-run guide never haunts
+   anyone twice, while tray → "Show welcome…" remains the replay door.
+   The chrome (window skin) is derived from the ACTIVE THEME, mirroring
+   settings.js applyChrome so both windows always look like the same product. */
+import { computeChrome, chromeVarMap, paletteMode, themeById, themeBySignature, signature }
+  from '../../main/themes.mjs';
+import { keyEventToSpec, formatSpec, nextStep } from './welcome-core.mjs';
+
+const api = window.welcomeAPI;
+const $ = (id) => document.getElementById(id);
+const STEPS = ['step-0', 'step-1', 'step-2', 'step-3'];
+const LAST = STEPS.length - 1;
+
+let cfg = null;      // last full config we saw
+let info = null;     // welcome:info payload
+let step = 0;
+let recording = false;
+
+/* ── chrome: same merge settings.js does (theme palette + live swatches) ── */
+function activeTheme(c) {
+  const id = c.theme && c.theme.id;
+  if (id) {
+    const user = (c.userThemes || []).find((t) => t.id === id);
+    if (user) return { id: user.id, colors: user.colors };
+    const cat = themeById(id);
+    if (cat) return { id: cat.id, colors: cat.colors };
+  }
+  const bySig = themeBySignature(signature(c.appearance.colors));
+  return bySig ? { id: bySig.id, colors: bySig.colors } : { id: null, colors: c.appearance.colors };
+}
+
+function applyChrome() {
+  if (!cfg) return;
+  const a = activeTheme(cfg);
+  const pal = a.id
+    ? Object.assign({}, a.colors, cfg.appearance.colors,
+      { mode: cfg.appearance.colors.mode || a.colors.mode })
+    : cfg.appearance.colors;
+  const root = document.documentElement;
+  root.dataset.mode = paletteMode(pal);
+  root.style.colorScheme = root.dataset.mode;
+  for (const [k, v] of Object.entries(chromeVarMap(computeChrome(pal)))) root.style.setProperty(k, v);
+}
+
+/* ── hotkey display ── */
+function setHotkeyChips(spec) {
+  $('hk-hero').textContent = formatSpec(spec);
+  $('hk-display').textContent = formatSpec(spec);
+}
+function setHotkeyError(msg) {
+  const e = $('hk-error');
+  e.textContent = msg || '';
+  e.classList.toggle('hidden', !msg);
+}
+function setStatus(msg, kind) {
+  const s = $('hk-status');
+  s.textContent = msg || '';
+  s.className = 'status muted' + (kind ? ' ' + kind : '');
+}
+
+/* ── recorder ── */
+function startCapture() {
+  recording = true;
+  $('rec-btn').textContent = 'Listening…';
+  $('hk-display').classList.add('recording');
+  setHotkeyError(null);
+  setStatus('Press a combo — Ctrl / Alt / Shift / Win + any key. Esc cancels.', '');
+}
+function stopCapture() {
+  recording = false;
+  $('rec-btn').textContent = 'Change…';
+  $('hk-display').classList.remove('recording');
+}
+
+async function commitSpec(spec) {
+  stopCapture();
+  const res = await api.setHotkey(spec);   // registers + persists + restores old on failure, main-side
+  if (res && res.ok) {
+    if (cfg) cfg.hotkey = spec;
+    setHotkeyChips(spec);
+    setHotkeyError(null);
+    setStatus('Registered — press it now, then hit “Try the wheel”.', 'ok');
+  } else {
+    setStatus('', '');
+    setHotkeyError((res && res.error) || 'Could not register that combo — your old hotkey is still active.');
+  }
+}
+
+/* ── steps ── */
+function render() {
+  STEPS.forEach((id, i) => $(id).classList.toggle('hidden', i !== step));
+  $('back-btn').disabled = step === 0;
+  $('next-btn').classList.toggle('hidden', step === LAST);
+  for (const d of $('dots').children) {
+    const i = Number(d.dataset.i);
+    d.setAttribute('aria-selected', String(i === step));
+    d.tabIndex = i === step ? 0 : -1;
+  }
+  const focusTarget = step === LAST ? $('go-settings') : $('next-btn');
+  if (focusTarget) focusTarget.focus();
+}
+function go(next) {
+  step = nextStep(next, step, STEPS.length);
+  render();
+}
+
+/* ── keyboard ── */
+window.addEventListener('keydown', async (e) => {
+  if (recording) {
+    e.preventDefault(); e.stopPropagation();
+    if (e.key === 'Escape') { stopCapture(); setStatus('', ''); return; }
+    const spec = keyEventToSpec(e);
+    if (!spec) {
+      const bare = /^(control|alt|shift|meta|os)$/i.test(e.key);
+      setStatus(bare ? '…plus a key.' : 'That key can\u2019t start a combo — try letters, digits, F-keys.', '');
+      return;
+    }
+    await commitSpec(spec);
+    return;
+  }
+  if (e.key === 'Escape') { api.finish(false); return; }
+  // Enter finishes on the last step, unless a button has focus (it handles its own Enter)
+  if (e.key === 'Enter' && step === LAST && !(document.activeElement instanceof HTMLButtonElement)) {
+    api.finish(true);
+  }
+}, true);
+
+/* ── wiring ── */
+function buildDots() {
+  const dots = $('dots');
+  STEPS.forEach((_, i) => {
+    const d = document.createElement('button');
+    d.className = 'dot'; d.dataset.i = String(i);
+    d.setAttribute('role', 'tab');
+    d.setAttribute('aria-label', `Step ${i + 1} of ${STEPS.length}`);
+    d.addEventListener('click', () => go(i - step));
+    dots.appendChild(d);
+  });
+}
+
+/* Arrow keys move through the step dots like the settings tablist does.
+   render() hands focus to the primary button after any step change — we take
+   it back to the newly selected dot so the user can keep walking. */
+$('dots').addEventListener('keydown', (e) => {
+  const t = e.target;
+  if (!t.classList || !t.classList.contains('dot')) return;
+  const i = Number(t.dataset.i);
+  if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); go(i + 1 - step); }
+  else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); go(i - 1 - step); }
+  else return;
+  const kids = $('dots').children;
+  if (kids[step]) kids[step].focus();
+});
+
+$('rec-btn').addEventListener('click', () => { recording ? stopCapture() : startCapture(); });
+$('test-btn').addEventListener('click', () => api.testWheel());
+$('back-btn').addEventListener('click', () => go(-1));
+$('next-btn').addEventListener('click', () => go(1));
+$('go-settings').addEventListener('click', () => api.finish(true));
+$('go-done').addEventListener('click', () => api.finish(false));
+$('tb-close').addEventListener('click', () => api.finish(false));
+
+/* Tray → “Show welcome…” reuses this page without reloading it, so main asks us
+   to walk back before showing — a finished guide must not replay on step 4. */
+if (api.onReset) api.onReset(() => {
+  stopCapture();
+  setHotkeyError(null);
+  setStatus('', '');
+  step = 0;
+  render();
+  if (cfg) setHotkeyChips(cfg.hotkey);
+});
+
+api.onConfigChanged((payload) => {
+  if (!payload || !payload.config) return;
+  cfg = payload.config;
+  applyChrome();
+  if (!recording) setHotkeyChips(cfg.hotkey);
+});
+
+/* ── boot ── */
+(async function init() {
+  buildDots();
+  const [g, i] = await Promise.all([api.getConfig(), api.info()]);
+  cfg = g.config;
+  info = i;
+  applyChrome();
+  setHotkeyChips(info.hotkey);
+  $('ver').textContent = 'v' + info.version;
+  if (info.importedFrom) {
+    const n = $('import-note');
+    n.textContent = 'Your segments were imported from an older Radial Wheel config — open Settings → Segments to see what came over.';
+    n.classList.remove('hidden');
+  }
+  if (info.hotkeyError) setHotkeyError(info.hotkeyError);
+  render();
+})();

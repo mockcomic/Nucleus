@@ -59,7 +59,7 @@ input { caret-color: var(--accent); }
 
 /* sidebar */
 #sidebar { background: var(--panel); border-right: 1px solid var(--line); display: flex; flex-direction: column; padding: 18px 12px; }
-.brand { font-size: 17px; font-weight: 700; letter-spacing: .3px; display: flex; align-items: center; gap: 9px; padding: 4px 10px 18px; }
+.brand { font-size: 17px; font-weight: 700; letter-spacing: .3px; display: flex; align-items: center; gap: 8px; padding: 4px 10px 18px; }
 .brand-dot { width: 14px; height: 14px; border-radius: 50%; background: radial-gradient(circle at 35% 35%, var(--accent), var(--accent-dim)); box-shadow: 0 0 10px var(--accent); }
 nav { display: flex; flex-direction: column; gap: 4px; }
 .tab-btn { text-align: left; background: transparent; color: var(--dim); border: 0; padding: 10px 12px; border-radius: 8px; font-size: 14px; font-weight: 500; cursor: pointer; transition: background .12s var(--ease-out), color .12s var(--ease-out); }
@@ -85,7 +85,7 @@ nav { display: flex; flex-direction: column; gap: 4px; }
 .row-card { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
 .lbl-grow { display: flex; align-items: center; gap: 8px; flex: 1; color: var(--dim); }
 
-.chk { display: flex; align-items: center; gap: 9px; padding: 5px 0; cursor: pointer; color: var(--text); }
+.chk { display: flex; align-items: center; gap: 8px; padding: 5px 0; cursor: pointer; color: var(--text); }
 
 /* Apple-style switch — the input keeps native semantics; only its skin changes */
 input[type=checkbox] {
@@ -141,16 +141,19 @@ input[type=range]:focus-visible::-webkit-slider-thumb { outline: 2px solid var(-
 .btn.danger { color: var(--danger); }
 .btn.danger:hover { border-color: var(--danger); }
 .btn.small { padding: 3px 9px; font-size: 12px; }
-.btn.mini { padding: 2px 7px; font-size: 12px; border-radius: 6px; }
+.btn.mini { padding: 2px 7px; font-size: 12px; border-radius: 6px; position: relative; }
+/* Machined density stays — but the hit area silently grows to ~34px tall:
+   pseudo-insets eat only the row's free padding, never a neighbor's. */
+.btn.mini::after { content: ''; position: absolute; inset: -6px -2px; }
 .btn.armed { color: var(--danger); border-color: var(--danger); }
-.seg-actions .act-sep { width: 1px; height: 14px; background: var(--line); margin: 0 5px; flex: none; }
+.seg-actions .act-sep { width: 1px; height: 14px; background: var(--line); margin: 0 4px; flex: none; }
 .btn.mini.act-del:hover { border-color: var(--danger); color: var(--danger); }   /* destructive hover, distinct from Try's accent hover */
 .seg-disc { align-self: center; }
 .seg-disc[aria-expanded='true'] .g { transform: rotate(180deg); }
 .seg-disc .g { transition: transform .14s var(--ease-out); }
 
 /* autosave status (sidebar foot) */
-.save-state { font-size: 11.5px; color: var(--dim); min-height: 16px; padding: 0 10px 4px; }
+.save-state { font-size: 11px; color: var(--dim); min-height: 16px; padding: 0 10px 4px; }
 .save-state.err { color: var(--danger); }
 
 /* corrupt-config banner */
@@ -197,7 +200,7 @@ input[type=range]:focus-visible::-webkit-slider-thumb { outline: 2px solid var(-
 .sw { display: inline-flex; gap: 2px; }
 .sw i { width: 10px; height: 10px; border-radius: 4px; display: inline-block; }
 .color-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
-.color-item { display: flex; align-items: center; gap: 9px; font-size: 12.5px; color: var(--dim); }
+.color-item { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--dim); }
 
 /* behavior */
 .hk-chip { background: var(--field); border: 1px solid var(--accent-dim); color: var(--text); font-weight: 600; padding: 8px 14px; border-radius: 8px; letter-spacing: .4px; box-shadow: var(--well-inset); }

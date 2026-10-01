@@ -16,11 +16,13 @@ npm start            # launches tray-resident Radial Wheel
 ```
 
 Default hotkey: **Ctrl + Alt + Space** (change it in Settings → Hotkey).
-First launch opens the Settings window and registers autostart (per-user Startup entry);
-both are changeable anytime.
+First launch opens the **Welcome guide** — four steps: what the wheel is, re-record your
+hotkey (with a live "try the wheel" test), what to know, hand-off to Settings — and
+registers autostart (per-user Startup entry); both are changeable anytime. Replay the
+guide anytime from tray → **Show welcome…**.
 
 - The app lives in the system tray — no taskbar entry, no console.
-- Tray menu: Show wheel · Open Settings · Reload config · Pause hotkey · Quit.
+- Tray menu: Show wheel · Open Settings · Show welcome… · Reload config · Pause hotkey · Quit.
 - Second launch (or double-clicking the tray icon) focuses Settings instead of duplicating.
 
 ## Using the wheel
@@ -33,7 +35,7 @@ both are changeable anytime.
 ### Action types
 | type | `value` example | note |
 |---|---|---|
-| `app` | `notepad.exe`, `C:\\Tools\\foo.exe --flag`, or pick from the installed-programs dropdown | program / Start Menu shortcut (dropdown or Browse…) |
+| `app` | `notepad.exe`, `C:\\Tools\\foo.exe --flag`, or pick from the installed-programs dropdown | program / Start Menu shortcut (dropdown or Browse…). The **Arguments** box (`args`) passes launch parameters — quote values that contain spaces |
 | `url` | `https://gmail.com` | default browser |
 | `file` | `C:\\Docs\\notes.md` | opens with its registered handler |
 | `command` | `taskkill /f /im foo.exe` | detached shell command |
@@ -129,7 +131,7 @@ archive/        the original Python prototype + its config
 
 ## Manual test checklist
 
-1. `npm start` → tray icon appears, no console/taskbar window; first-run opens Settings.
+1. `npm start` → tray icon appears, no console/taskbar window; first-run opens the Welcome guide (replay via tray → Show welcome…; seen-state in `state.json`).
 2. Ctrl+Alt+Space over any window/monitor → wheel pops centered on the cursor with animation.
 3. Launch: Browser (url), Notes (app), Screenshot (sys), Lock (sys, then sign back in).
 4. Add a macro item `type:hello world`, open Notepad, fire it — text appears.

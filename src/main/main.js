@@ -6,6 +6,7 @@ const fs = require('fs');
 const { ConfigStore, defaults } = require('./config');
 const { HotkeyManager, parse: parseHotkey } = require('./hotkeys');
 const { Overlay, SettingsWindow } = require('./windows');
+const { WelcomeWindow } = require('./welcome');
 const { TrayManager } = require('./tray');
 const { ensureRuntimeIcons } = require('./icon-gen');
 const { registerIpc } = require('./ipc');
@@ -14,7 +15,7 @@ const macro = require('./macro');
 const autostart = require('./autostart');
 
 let quitting = false;
-let store, hotkeyMgr, overlay, settingsWin, tray, gameWatcher;
+let store, hotkeyMgr, overlay, settingsWin, welcome, tray, gameWatcher;
 
 /* Two independent hotkey suppressors compose here: the tray's manual pause and
    gaming mode. The hotkey lives only while BOTH are clear (see applyHotkeyState). */
@@ -86,6 +87,7 @@ function quitApp() {
   try { tray && tray.destroy(); } catch {}
   try { overlay && overlay.destroy(); } catch {}
   try { settingsWin && settingsWin.destroy(); } catch {}
+  try { welcome && welcome.destroy(); } catch {}
   app.quit();
 }
 
@@ -118,10 +120,12 @@ function bootstrap() {
 
   overlay = new Overlay({ getConfig: () => store.get(), isQuitting });
   settingsWin = new SettingsWindow({ isQuitting, getState, setState, bgColor: () => store.get().appearance.colors.bg });
+  welcome = new WelcomeWindow({ getConfig: () => store.get(), isQuitting });
 
   tray = new TrayManager(icons, {
     onShowWheel: () => toggleWheel(true),
     onOpenSettings: () => settingsWin.open(),
+    onShowWelcome: () => welcome.open(),
     onReload: () => { store.reload(); },
     onPauseToggle: (paused) => { manualPaused = paused; applyHotkeyState(); },
     getGameMode: () => ({ active: gamePaused, reason: gameReason }),
@@ -146,7 +150,7 @@ function bootstrap() {
   gameWatcher.configure();
 
   registerIpc({
-    store, hotkeyMgr, overlay, settings: settingsWin, tray,
+    store, hotkeyMgr, overlay, settings: settingsWin, welcome, tray,
     getState, setState, registerHotkey, toggleWheel, quitApp, isQuitting
   });
 
@@ -164,8 +168,13 @@ function bootstrap() {
       tray.balloon('Radial Wheel is running',
         `Press ${store.get().hotkey.replace(/\+/g, ' + ')} anywhere to open the wheel${store.importedFrom ? ' (settings imported from your old config)' : ''}.`);
     }
-    settingsWin.open(); // first run: show the user how to customize
+    /* (Settings no longer auto-opens on first run — the FTU welcome window
+       below hands off to it when the user is ready.) */
   }
+
+  /* FTU: shown once per user via the state.json flag — an upgrade over an
+     existing config sees it exactly once too. Replays: tray → "Show welcome…". */
+  if (!getState('ftuSeen', false)) welcome.open();
 
   if (process.argv.includes('--show-wheel')) setTimeout(() => toggleWheel(true), 400);
 

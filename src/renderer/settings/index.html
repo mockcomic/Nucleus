@@ -70,7 +70,7 @@
         <div class="card-title">Summon hotkey</div>
         <div id="hk-error" class="err hidden"></div>
         <div class="row-line">
-          <div id="hk-display" class="hk-chip">Ctrl + Alt + Space</div>
+          <div id="hk-display" class="hk-chip" aria-live="polite">Ctrl + Alt + Space</div>
           <button id="recorder-btn" class="btn">Change…</button>
         </div>
         <div class="hint muted">Click “Change…”, then press any modifier combination (Ctrl/Alt/Shift/Win + key). It registers instantly — if the combo is taken by another app you'll be told and the old hotkey stays active.</div>
@@ -88,8 +88,9 @@
       <div class="card">
         <div class="card-title">Gaming mode</div>
         <label class="chk"><input type="checkbox" id="bh-gamemode"> Turn the wheel off while a game or fullscreen app is open</label>
+        <label class="hint muted" for="gm-apps" style="display:block;margin:8px 0 0">Apps that always keep the wheel off</label>
         <div class="row-line">
-          <input type="text" id="gm-apps" maxlength="500" style="flex:1" placeholder="Always off for these apps — e.g. fortnite.exe, discord.exe" aria-label="Apps that always trigger gaming mode, comma-separated">
+          <input type="text" id="gm-apps" maxlength="500" style="flex:1" placeholder="e.g. fortnite.exe, discord.exe" aria-label="Apps that always trigger gaming mode, comma-separated">
         </div>
         <div class="hint muted">The wheel switches itself off (hotkey included) while the focused app covers a whole monitor — exclusive or borderless-fullscreen games — or while one of the listed programs has focus. Comma-separated exe names; full paths are fine. The tray tooltip says why the hotkey is off, and tray → Show wheel still works.</div>
       </div>
@@ -110,7 +111,7 @@
       <div class="card">
         <div class="card-title">Action types</div>
         <ul class="type-help">
-          <li><b>app</b> — launch a program or open a file (paths or shell names like <code>notepad.exe</code>)</li>
+          <li><b>app</b> — launch a program or open a file (paths or shell names like <code>notepad.exe</code>), with an optional <b>Arguments</b> box for launch parameters such as <code>--flag "C:\path with space"</code></li>
           <li><b>url</b> — open a link in your default browser</li>
           <li><b>command</b> — run a shell command (<code>cmd.exe</code> syntax — type it) or a <code>.bat</code> / <code>.cmd</code> / <code>.ps1</code> script (type the path or use Browse…)</li>
           <li><b>macro</b> — synthesize keystrokes: <code>ctrl+c, wait=0.2, ctrl+v</code> · <code>type:hello world</code></li>

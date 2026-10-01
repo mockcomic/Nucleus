@@ -324,7 +324,7 @@ function segRow(ring, item, i) {
   registerIconSpan(icoSpan, item, item.icon || (item.type === 'sys' ? '\uE713' : '\uE76C'));
   el('span', 'seg-name', { text: item.label || '(no name)' }, main);
   el('span', 'seg-type', { text: item.type }, main);
-  el('span', 'seg-val', { text: item.type === 'sys' ? sysLabel(item.value) : item.value }, main);
+  el('span', 'seg-val', { text: rowValueText(item) }, main);
 
   const acts = el('div', 'seg-actions', {}, main);
   const mini = (glyph, label, fn, cls = '', tip = label) => {
@@ -423,8 +423,32 @@ function segRow(ring, item, i) {
 }
 
 function sysLabel(id) {
-  const c = (sysCatalogCache || []).find((x) => x.id === id);
+  const c = sysEntry(id);
   return c ? c.label : id;
+}
+
+function sysEntry(id) {
+  return (sysCatalogCache || []).find((x) => x.id === id) || null;
+}
+
+/* Row caption: the File Explorer action additionally shows the picked folder's
+   leaf name, so a wheel with several Explorer segments stays readable. */
+function sysDisplayText(item) {
+  const label = sysLabel(item.value);
+  if (item.value === 'explorer' && item.dir) {
+    const leaf = String(item.dir).replace(/[\\/]+$/, '').split(/[\\/]/).pop();
+    if (leaf) return `${label} — ${leaf}`;
+  }
+  return label;
+}
+
+/* Collapsed-row caption for every type: the sys display text, or the target
+   plus (for app items) the launch parameters, so a set Arguments box is
+   visible without opening the editor. */
+function rowValueText(item) {
+  if (item.type === 'sys') return sysDisplayText(item);
+  if (item.type === 'app' && String(item.args || '').trim()) return item.value + '  ' + String(item.args).trim();
+  return item.value;
 }
 
 let sysCatalogCache = null;
@@ -445,7 +469,7 @@ function segEditor(ring, item) {
     const name = row.querySelector('.seg-name');
     if (name) name.textContent = item.label || '(no name)';
     const val = row.querySelector('.seg-val');
-    if (val) val.textContent = item.type === 'sys' ? sysLabel(item.value) : item.value;
+    if (val) val.textContent = rowValueText(item);
   };
 
   el('label', null, { text: 'Label', for: uid + '-label' }, f);
@@ -476,6 +500,9 @@ function segEditor(ring, item) {
       }
     } else if (oldType === 'sys') {
       item.value = '';
+      item.dir = '';                                 // the folder slot is sys-only
+    } else if (oldType === 'app') {
+      item.args = '';                                // the arguments slot is app-only
     }
     touch();                                     // rebuilds the editor for the new type
     const ed = document.querySelector('.seg-edit');
@@ -488,7 +515,38 @@ function segEditor(ring, item) {
     labTarget.setAttribute('for', uid + '-target');
     for (const c of (sysCatalogCache || [])) el('option', null, { value: c.id, text: `${c.group} — ${c.label}` }, sel);
     sel.value = item.value;
-    sel.addEventListener('change', () => { item.value = sel.value; syncRowText(); touch(false); });
+    sel.addEventListener('change', () => {
+      const wasDir = !!(sysEntry(item.value) || {}).hasDir;
+      item.value = sel.value;
+      const isDir = !!(sysEntry(item.value) || {}).hasDir;
+      if (!isDir) item.dir = '';                     // folder slot belongs to explorer only
+      syncRowText();
+      // The Folder field appears/vanishes with the action — rebuild the editor
+      // (touch()) so it stays in sync; otherwise save without a rerender.
+      if (isDir !== wasDir) touch(); else touch(false);
+    });
+    if ((sysEntry(item.value) || {}).hasDir) {
+      el('label', null, { text: 'Folder', for: uid + '-dir' }, f);
+      const rowd = el('div', null, { style: 'display:flex;gap:6px;grid-column:span 2' }, f);
+      const inD = bind(el('input', null, {
+        type: 'text', value: item.dir || '', id: uid + '-dir',
+        placeholder: 'Leave empty for the default (Quick access)'
+      }), (e) => item.dir = e.value);
+      inD.style.flex = '1';
+      inD.style.minWidth = '0';
+      rowd.appendChild(inD);
+      const bd = el('button', 'btn small', { text: 'Browse…' }, rowd);
+      bd.onclick = async (ev) => {
+        ev.stopPropagation();
+        const p = await api.pickFile({ title: 'Choose a folder', directory: true });
+        if (p) { item.dir = p; syncRowText(); touch(); }
+      };
+      const hint = el('div', 'hint', {
+        text: 'The folder File Explorer opens in. Empty opens the default view.'
+      }, f);
+      hint.style.gridColumn = '1 / -1';
+      hint.style.marginTop = '-2px';
+    }
   } else {
     const rowv = el('div', null, { style: 'display:flex;gap:6px;grid-column:span 2' }, f);
     const inV = bind(el('input', null, { type: 'text', value: item.value, placeholder: valueHint(item.type), id: uid + '-target' }), (e) => item.value = e.value);
@@ -502,6 +560,23 @@ function segEditor(ring, item) {
         const p = await api.pickFile(browseOpts);
         if (p) { item.value = p; touch(); }
       };
+    }
+    if (item.type === 'app') {
+      el('label', null, { text: 'Arguments', for: uid + '-args' }, f);
+      const rowa = el('div', null, { style: 'display:flex;gap:6px;grid-column:span 2' }, f);
+      const inA = bind(el('input', null, {
+        type: 'text', value: item.args || '', maxlength: '2048',
+        placeholder: valueHint('args'), id: uid + '-args',
+        'aria-label': 'Launch parameters passed to the program'
+      }), (e) => item.args = e.value);
+      inA.style.flex = '1';
+      inA.style.minWidth = '0';
+      rowa.appendChild(inA);
+      const hintA = el('div', 'hint', {
+        text: 'Passed to the program when it starts — quote parameters that contain spaces.'
+      }, f);
+      hintA.style.gridColumn = '1 / -1';
+      hintA.style.marginTop = '-2px';
     }
     if (item.type === 'command') {
       // Say what the box takes — cmd.exe syntax vs. a picked script file.
@@ -664,7 +739,8 @@ function appCombo(item, inV, f) {
 
 function valueHint(type) {
   return {
-    app: 'notepad.exe  or  C:\\Path\\to\\app.exe "arg"',
+    app: 'notepad.exe  or  C:\\Path\\to\\app.exe',
+    args: '--flag  "C:\\path with space"',
     url: 'https://…', file: 'C:\\Path\\to\\file.pdf',
     command: 'taskkill /f /im foo.exe   or   C:\\Scripts\\cleanup.bat', macro: 'ctrl+c, wait=0.2, ctrl+v'
   }[type] || '';
@@ -1002,7 +1078,12 @@ function renderThemes() {
       if (e.key === 'Enter') { e.preventDefault(); commit(); }
       else if (e.key === 'Escape') { e.preventDefault(); renderThemes(); }
     });
-    input.addEventListener('blur', () => { if (input.isConnected) commit(); });
+    // A stray click elsewhere must NOT mint a theme named after the
+    // placeholder — blur commits only real text; empty blur reverts (like Esc).
+    input.addEventListener('blur', () => {
+      if (!input.isConnected) return;
+      if (input.value.trim()) commit(); else renderThemes();
+    });
   };
 
   if (custom && a.id && !a.user) {

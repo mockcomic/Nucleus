@@ -41,6 +41,7 @@ class TrayManager {
     const template = [
       { label: 'Show wheel', accelerator: undefined, click: () => this.handlers.onShowWheel() },
       { label: `Open Settings  (${hotkeys.parse ? safeDisp(cfg.hotkey) : cfg.hotkey})`, click: () => this.handlers.onOpenSettings() },
+      { label: 'Show welcome…', click: () => this.handlers.onShowWelcome() },
       { type: 'separator' },
       { label: 'Reload config from disk', click: () => this.handlers.onReload() },
       { label: 'Pause hotkey', type: 'checkbox', checked: this.paused, click: (mi) => { this.paused = mi.checked; this.handlers.onPauseToggle(mi.checked); } }

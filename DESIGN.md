@@ -91,6 +91,10 @@ spacing:
   lg: "12px"
   xl: "16px"
   xxl: "22px"
+  gutter: "14px"
+  rail-pad: "18px"
+  page-pad-y: "28px"
+  page-pad-x: "32px"
 components:
   button-primary:
     backgroundColor: "{colors.accent-deep}"

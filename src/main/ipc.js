@@ -10,11 +10,11 @@ const sys = require('./sys');
 const { supportsVibrancy } = require('./windows');
 
 /**
- * deps = { store, hotkeyMgr, overlay, settings, tray, getState, setState,
+ * deps = { store, hotkeyMgr, overlay, settings, welcome, tray, getState, setState,
  *          registerHotkey, toggleWheel, quitApp, isQuitting }
  */
 function registerIpc(deps) {
-  const { store, overlay, settings, tray } = deps;
+  const { store, overlay, settings, welcome, tray } = deps;
 
   const broadcast = (channel, payload) => settings.send(channel, payload);
 
@@ -117,10 +117,19 @@ function registerIpc(deps) {
 
   /* ---- misc ---- */
   ipcMain.handle('dialog:pick-file', async (ev, opts) => {
+    // opts.directory: folder picker (the sys explorer action's start folder);
+    // file filters are meaningless there, so they are skipped.
+    if (opts && opts.directory) {
+      const r = await dialog.showOpenDialog(settings.win, {
+        title: opts.title || 'Choose a folder',
+        properties: ['openDirectory', 'createDirectory']
+      });
+      return r.canceled ? null : r.filePaths[0];
+    }
     const r = await dialog.showOpenDialog(settings.win, {
-      title: opts.title || 'Choose a file',
+      title: (opts && opts.title) || 'Choose a file',
       properties: ['openFile'],
-      filters: opts.extensions && opts.extensions.length
+      filters: opts && opts.extensions && opts.extensions.length
         ? [{ name: opts.filterName || 'Programs', extensions: opts.extensions }, { name: 'All files', extensions: ['*'] }]
         : undefined
     });
@@ -137,6 +146,27 @@ function registerIpc(deps) {
   });
 
   ipcMain.handle('overlay:show', () => { deps.toggleWheel(true); return { ok: true }; });
+
+  /* ---- welcome (FTU) ---- */
+  ipcMain.handle('welcome:info', () => {
+    const cfg = store.get();
+    const rings = cfg.rings || {};
+    const hasWheel = Object.values(rings).some((a) => Array.isArray(a) && a.length);
+    return {
+      hotkey: cfg.hotkey,
+      hotkeyError: store.hotkeyError || null,
+      version: app.getVersion(),
+      importedFrom: store.importedFrom || null,
+      hasWheel
+    };
+  });
+  ipcMain.on('welcome:done', (_e, openSettings) => {
+    // Every exit path lands here — so this handler owns all three consequences:
+    // put the guide away, remember it was seen, hand off to Settings on request.
+    welcome.close();
+    deps.setState('ftuSeen', true);   // UI state, not config — rides in state.json
+    if (openSettings) settings.open();
+  });
 
   ipcMain.handle('sys:catalog', () => sys.CATALOG);
   ipcMain.handle('apps:list', (ev, force) => apps.listApps(!!force));

@@ -21,7 +21,9 @@ const CATALOG = [
   { id: 'volume_up', label: 'Volume up', icon: '\uE995', group: 'Audio' },
   { id: 'volume_down', label: 'Volume down', icon: '\uE993', group: 'Audio' },
   { id: 'sound', label: 'Sound settings', icon: '\uE767', group: 'Audio' },
-  { id: 'explorer', label: 'File Explorer', icon: '\uE8B7', group: 'Files' },
+  /* hasDir: the action accepts an optional folder in the item's `dir` field
+     (surfaced as a Folder input + Browse… in the settings editor). */
+  { id: 'explorer', label: 'File Explorer', icon: '\uE8B7', group: 'Files', hasDir: true },
   { id: 'recycle_bin', label: 'Recycle Bin', icon: '\uE74D', group: 'Files' },
   { id: 'settings', label: 'Windows Settings', icon: '\uE713', group: 'Settings' },
   { id: 'wifi', label: 'Wi-Fi settings', icon: '\uE701', group: 'Settings' },
@@ -42,7 +44,7 @@ function spawnDetached(cmd, args) {
   child.on('error', (e) => { throw new Error(`failed to start ${cmd}: ${e.message}`); });
 }
 
-async function run(id, ctx = {}) {
+async function run(id, ctx = {}, opts = {}) {
   const key = ALIAS[String(id || '').toLowerCase()] || String(id || '').toLowerCase();
   switch (key) {
     case 'lock': spawnDetached('rundll32.exe', ['user32.dll,LockWorkStation']); return;
@@ -55,7 +57,8 @@ async function run(id, ctx = {}) {
     case 'volume_up': return macro.sendVk(0xAF);
     case 'volume_down': return macro.sendVk(0xAE);
     case 'task_manager': spawnDetached('taskmgr.exe', []); return;
-    case 'explorer': spawnDetached('explorer.exe', []); return;
+    // A user-picked folder opens directly; empty dir keeps the default view.
+    case 'explorer': spawnDetached('explorer.exe', opts.dir ? [opts.dir] : []); return;
     case 'recycle_bin': {
       const err = await shell.openPath('shell:RecycleBinFolder');
       if (err) throw new Error(err);

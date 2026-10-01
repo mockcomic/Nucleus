@@ -121,10 +121,17 @@ function validate(raw) {
       iconImage: require('./dashboard-icons').sanitizeSlug(it.iconImage) || '',
       type,
       value: String(it.value ?? '').slice(0, 2048),
+      // Launch parameters for `app` items (the Settings "Arguments" box),
+      // tokenized by src/main/args.js at launch. Kept only for `app` so a
+      // stale string can't ride across a type switch.
+      args: type === 'app' ? String(it.args ?? '').slice(0, 2048) : '',
       color: HEX.test(it.color || '') ? it.color : null,
       // Per-segment icon-only override; the global appearance.showLabels
       // toggle still wins when labels are off for everyone.
-      hideLabel: !!it.hideLabel
+      hideLabel: !!it.hideLabel,
+      // Optional parameter slot; currently only the sys `explorer` action
+      // consumes it (the folder Explorer opens in). Inert on other types.
+      dir: typeof it.dir === 'string' ? it.dir.trim().slice(0, 2048) : ''
     };
   };
   const cleanRing = (arr) => Array.isArray(arr) ? arr.slice(0, 24).map(cleanItem) : [];

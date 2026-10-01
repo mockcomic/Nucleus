@@ -5,7 +5,12 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-const CFG = path.join(process.env.APPDATA, 'Radial Wheel', 'config.json');
+// Which profile to inject into: the running app must be reading this file.
+// Default is the real app profile; set RADIAL_WHEEL_CONFIG to point at an
+// isolated dev profile (e.g. .dev-userdata/config.json for start:agent runs).
+const CFG = process.env.RADIAL_WHEEL_CONFIG
+  ? path.resolve(process.env.RADIAL_WHEEL_CONFIG)
+  : path.join(process.env.APPDATA, 'Radial Wheel', 'config.json');
 const PROOF = path.join(__dirname, '..', '.cache', 'click-proof.txt');
 
 if (process.argv[2] === 'prepare') {

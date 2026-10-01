@@ -51,6 +51,9 @@ function applyHover(hit) {
   if (!built) return;
   const seg = hit && hit.seg ? hit.seg : null;
   built.setHover(seg);
+  // keep the keyboard cursor glued to what the pointer shows — Enter fires
+  // the hovered segment; moving off it clears the selection too.
+  selIdx = seg ? built.segments.indexOf(seg) : -1;
   const rootG = document.querySelector('.wheel-root');
   if (rootG) rootG.classList.toggle('any-hover', !!seg);
   rootEl.classList.toggle('has-hover', !!seg || (hit && hit.hub));
@@ -59,6 +62,11 @@ function applyHover(hit) {
 api.onShow((payload) => {
   lastPayload = payload;
   built = buildWheel(rootEl, payload.config, { scale: payload.scale, iconImages: iconCache });
+  selIdx = -1;
+  // Decorative to AT: the SVG (plates, glyph text) is aria-hidden; the visually
+  // hidden live region below announces the keyboard selection instead.
+  const svg = rootEl.querySelector('svg');
+  if (svg) svg.setAttribute('aria-hidden', 'true');
   ensureIcons(payload.config);
   document.body.style.visibility = 'visible';
   requestAnimationFrame(() => {
@@ -81,6 +89,61 @@ window.addEventListener('contextmenu', (e) => {
   e.preventDefault();
   const bh = lastPayload && lastPayload.config && lastPayload.config.behavior;
   if (!bh || bh.dismissOnRightClick !== false) api.dismiss();
+});
+
+/* ── Keyboard control ───────────────────────────────────────────────────────
+   The overlay already takes focus on summon (windows.js showAtCursor calls
+   win.focus()), so a plain keydown listener suffices. The hasFocus() guard is
+   the fail-soft: if an exclusive-fullscreen app refuses to yield focus,
+   arrows stay inert and the pointer path works exactly as before.
+   ←/↑ walk backwards through the shared renderer's segment order (ring by
+   ring, index by index), →/↓ forwards; the selection IS the hover visual —
+   setHover + any-hover reuse the spring, sibling dim, and hub report, so no
+   new styling vocabulary enters the overlay. Enter/Space fires the selection
+   through the same ipc click path (main hides the overlay + executes);
+   Esc-dismiss stays main-side in before-input-event (windows.js), which is
+   what honors behavior.dismissOnEscape. */
+let selIdx = -1;
+let liveEl = null;
+
+function ensureLive() {
+  if (!liveEl) {
+    liveEl = document.createElement('span');
+    liveEl.setAttribute('aria-live', 'polite');
+    liveEl.style.cssText = 'position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap';
+    document.body.appendChild(liveEl);
+  }
+  return liveEl;
+}
+
+function selectSeg(i) {
+  if (!built) return;
+  const segs = built.segments;
+  if (!segs.length) return;
+  selIdx = ((i % segs.length) + segs.length) % segs.length;
+  const seg = segs[selIdx];
+  built.setHover(seg);
+  const rootG = document.querySelector('.wheel-root');
+  if (rootG) rootG.classList.add('any-hover');
+  rootEl.classList.add('has-hover');
+  ensureLive().textContent = (seg.item.label || seg.item.type || 'Segment') + ' \u2014 ring ' + seg.ring;
+}
+
+window.addEventListener('keydown', (e) => {
+  if (!built || !document.hasFocus()) return;
+  const segs = built.segments;
+  if (!segs.length) return;
+  if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+    e.preventDefault();
+    selectSeg(selIdx < 0 ? 0 : selIdx + 1);
+  } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    selectSeg(selIdx < 0 ? segs.length - 1 : selIdx - 1);
+  } else if ((e.key === 'Enter' || e.key === ' ') && selIdx >= 0) {
+    e.preventDefault();
+    const seg = segs[selIdx];
+    if (seg) api.clickSegment(seg.item);
+  }
 });
 
 // never show a stale frame between pops

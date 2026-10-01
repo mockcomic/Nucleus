@@ -32,3 +32,14 @@ contextBridge.exposeInMainWorld('wheelAPI', {
   onConfigChanged: (cb) => ipcRenderer.on('config:changed', (_e, cfg) => cb(cfg))
 
 });
+
+/* First-time-use welcome surface */
+contextBridge.exposeInMainWorld('welcomeAPI', {
+  getConfig: () => ipcRenderer.invoke('config:get'),
+  info: () => ipcRenderer.invoke('welcome:info'),
+  setHotkey: (spec) => ipcRenderer.invoke('hotkey:set', spec),
+  testWheel: () => ipcRenderer.invoke('overlay:show'),
+  finish: (openSettings) => ipcRenderer.send('welcome:done', !!openSettings),
+  onConfigChanged: (cb) => ipcRenderer.on('config:changed', (_e, payload) => cb(payload)),
+  onReset: (cb) => ipcRenderer.on('welcome:reset', () => cb())
+});

@@ -5,6 +5,7 @@ const { shell } = require('electron');
 const { spawn } = require('child_process');
 const macro = require('./macro');
 const sys = require('./sys');
+const { splitArgs } = require('./args');
 
 function spawnDetached(cmd, args) {
   const child = spawn(cmd, args, { detached: true, stdio: 'ignore', windowsHide: true, shell: false });
@@ -60,12 +61,15 @@ async function executeAction(item, ctx = {}) {
     case 'app': {
       if (!value) throw new Error('no program configured');
       const target = value.replace(/^"|"$/g, '');
+      const rawArgs = String(item.args || '').trim();
+      const tokens = splitArgs(rawArgs);
       let exists = false;
       try { exists = fs.existsSync(target); } catch {}
-      if (exists && /\.(lnk|bat|cmd)$/i.test(target)) {
-        // Start-Menu shortcuts and batch files need ShellExecute semantics:
-        // cmd's `start ""` resolves them exactly like a double-click.
-        const child = spawn('cmd.exe', ['/d', '/s', '/c', 'start', '""', target],
+      if (exists && (tokens.length || /\.(lnk|bat|cmd)$/i.test(target))) {
+        // Start-Menu shortcuts, batch files, and any program taking launch
+        // parameters need ShellExecute semantics: cmd's `start ""` resolves
+        // them exactly like a double-click and forwards the arguments.
+        const child = spawn('cmd.exe', ['/d', '/s', '/c', 'start', '""', target, ...tokens],
           { detached: true, stdio: 'ignore', windowsHide: true });
         child.unref();
         child.on('error', (e) => { throw new Error(`could not launch '${target}': ${e.message}`); });
@@ -78,12 +82,15 @@ async function executeAction(item, ctx = {}) {
       }
       const cmd = target.match(/^([^\s]+\.exe(?:\.com)?|"[^"]+")\s*(.*)$/i);
       if (cmd) {
-        const child = spawnDetached(cmd[1], cmd[2] ? [cmd[2]] : []);
+        const exe = cmd[1].replace(/^"|"$/g, '');
+        const child = spawnDetached(exe, tokens.concat(splitArgs(cmd[2] || '')));
         child.on('error', () => { throw new Error(`could not launch '${value}'`); });
         return;
       }
-      // last resort: shell resolution (e.g. "notepad", "ms-...", store links)
-      const child = spawn(target, { detached: true, stdio: 'ignore', windowsHide: true, shell: true });
+      // last resort: shell resolution (e.g. "notepad", "ms-...", store links) —
+      // the raw args string rides along so cmd.exe still sees the quotes as typed.
+      const child = spawn(tokens.length ? target + ' ' + rawArgs : target,
+        { detached: true, stdio: 'ignore', windowsHide: true, shell: true });
       child.unref();
       child.on('error', () => { throw new Error(`could not launch '${value}'`); });
       return;
@@ -120,7 +127,7 @@ async function executeAction(item, ctx = {}) {
       return;
     }
     case 'sys': {
-      await sys.run(value, ctx);
+      await sys.run(value, ctx, { dir: String(item.dir || '').trim() });
       return;
     }
     default:

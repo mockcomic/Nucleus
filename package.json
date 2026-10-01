@@ -8,6 +8,7 @@
   "license": "MIT",
   "scripts": {
     "start": "electron .",
+    "start:agent": "node scripts/start-agent.js",
     "start:hidden": "wscript scripts/launch-hidden.vbs",
     "make-icons": "node scripts/make-icons.mjs",
     "dist": "node scripts/make-icons.mjs && electron-builder",
