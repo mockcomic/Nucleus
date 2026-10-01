@@ -44,6 +44,39 @@ test('unknown type coerced to app still keeps its args', () => {
   assert.equal(it.args, '--keep');
 });
 
+/* --------------------- behaviour: mouse click-through policy ---------------- */
+const bhv = (raw) => validate(raw).behavior;
+
+test('mouseClickThrough defaults to false (swallow the click)', () => {
+  assert.equal(bhv({}).mouseClickThrough, false);
+  assert.equal(bhv({ behavior: {} }).mouseClickThrough, false);
+});
+
+test('mouseClickThrough is only true for a real true', () => {
+  assert.equal(bhv({ behavior: { mouseClickThrough: true } }).mouseClickThrough, true);
+  for (const junk of ['yes', 1, {}, [], 'true']) {
+    assert.equal(bhv({ behavior: { mouseClickThrough: junk } }).mouseClickThrough, false, String(junk));
+  }
+  assert.equal(bhv({ behavior: { mouseClickThrough: false } }).mouseClickThrough, false);
+});
+
+/* --------------------------------- hotkey ---------------------------------- */
+test('validate keeps mouse-button specs as written', () => {
+  for (const spec of ['mmiddle', 'mback', 'mfwd', 'ctrl+mmiddle', 'ctrl+alt+mmiddle', 'ctrl+alt+shift+win+mfwd']) {
+    assert.equal(validate({ hotkey: spec }).hotkey, spec, spec);
+  }
+});
+
+test('validate lowercases/trims the spec and falls back on shape-invalid values', () => {
+  assert.equal(validate({ hotkey: '  Ctrl+Alt+MMiddle ' }).hotkey, 'ctrl+alt+mmiddle');
+  assert.equal(validate({ hotkey: 'not a hotkey!!' }).hotkey, 'ctrl+alt+space');   // '!' fails HOTKEY_RE
+  assert.equal(validate({ hotkey: 'a'.repeat(60) }).hotkey, 'ctrl+alt+space');     // >40 chars
+  assert.equal(validate({ hotkey: null }).hotkey, 'ctrl+alt+space');
+  // HOTKEY_RE is a shape gate only; token GRAMMAR is enforced at registration by
+  // hotkeys.parse, which surfaces the message in Settings and keeps the old hotkey.
+  assert.equal(validate({ hotkey: 42 }).hotkey, '42');
+});
+
 /* ------------------------- regression: fields intact ----------------------- */
 test('validate round-trips the rest of the item shape alongside args', () => {
   const it = clean({ type: 'app', value: 'notepad.exe', args: 'C:\\a.txt', dir: 'C:\\ghost' });

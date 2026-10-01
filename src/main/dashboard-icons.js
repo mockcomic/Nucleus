@@ -140,6 +140,20 @@ function cachedDataUrl(slug) {
   return null;
 }
 
+/* Existence-only probe: warm() must not pay the read+base64 cost of
+   cachedDataUrl just to decide whether to fetch (that ran for EVERY cached
+   icon, up to ICON_MAX_BYTES each, on every single config change). */
+function iconOnDisk(slug) {
+  if (!cacheDir) return false;
+  for (const kind of ['svg', 'png']) {
+    try {
+      const st = fs.statSync(iconPath(slug, kind));
+      if (st.size > 0 && st.size <= ICON_MAX_BYTES) return true;
+    } catch { /* miss */ }
+  }
+  return false;
+}
+
 function writeCache(slug, kind, buf) {
   if (!cacheDir) return;
   try {
@@ -148,7 +162,31 @@ function writeCache(slug, kind, buf) {
     const tmp = p + '.tmp';
     fs.writeFileSync(tmp, buf);
     fs.renameSync(tmp, p);
+    pruneCache();
   } catch { /* cache is an optimization; the dataUrl still works without it */ }
+}
+
+/* LRU-ish cap on the whole icon dir (per-file caps alone let it grow with
+   every distinct slug ever fetched). Oldest-mtime files go first. */
+const CACHE_TOTAL_MAX = 48 * 1024 * 1024;
+function pruneCache() {
+  if (!cacheDir) return;
+  let total = 0;
+  const files = [];
+  for (const name of fs.readdirSync(cacheDir)) {
+    if (name.endsWith('.tmp')) { try { fs.unlinkSync(path.join(cacheDir, name)); } catch {} continue; }
+    try {
+      const st = fs.statSync(path.join(cacheDir, name));
+      if (!st.isFile()) continue;
+      total += st.size;
+      files.push({ name, size: st.size, mtime: st.mtimeMs });
+    } catch { /* vanished */ }
+  }
+  files.sort((a, b) => a.mtime - b.mtime);
+  for (const f of files) {
+    if (total <= CACHE_TOTAL_MAX) break;
+    try { fs.unlinkSync(path.join(cacheDir, f.name)); total -= f.size; } catch { /* in flight */ }
+  }
 }
 
 function dataUrl(kind, buf) {
@@ -175,7 +213,13 @@ let metaMem = null;                        // { at, data }
 function readDiskMeta() {
   const p = metaPath();
   if (!p) return null;
-  try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return null; }
+  try {
+    // The network path caps the metadata payload; the disk path must too, or
+    // one corrupted/huge local file gets JSON.parsed on every load.
+    const st = fs.statSync(p);
+    if (st.size > METADATA_MAX_BYTES) return null;
+    return JSON.parse(fs.readFileSync(p, 'utf8'));
+  } catch { return null; }
 }
 
 async function loadMetadata() {
@@ -286,7 +330,7 @@ async function searchIcons(query) {
 function warm(slugs) {
   for (const s of slugs || []) {
     const slug = sanitizeSlug(s);
-    if (slug && !cachedDataUrl(slug)) dataUrlFor(slug).catch(() => { /* the overlay falls back to the glyph */ });
+    if (slug && !iconOnDisk(slug)) dataUrlFor(slug).catch(() => { /* the overlay falls back to the glyph */ });
   }
 }
 

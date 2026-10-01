@@ -6,9 +6,13 @@ const rootEl = document.getElementById('root');
 let built = null;
 let lastPayload = null;
 
-/* Dashboard Icons logos, memoized across show cycles: slug -> dataUrl (null
-   once resolved as failed so we don't hammer the CDN while offline). */
+/* Dashboard Icons logos, memoized across show cycles: slug -> dataUrl.
+   Failures are NOT cached forever — a 60 s cooldown (iconFailedAt) lets the
+   wheel recover its logos when connectivity returns, without hammering the
+   CDN while offline. */
 const iconCache = new Map();
+const iconFailedAt = new Map();
+const ICON_FAIL_TTL = 60000;
 const iconPending = new Set();
 
 function itemSlugs(config) {
@@ -23,27 +27,43 @@ function itemSlugs(config) {
 
 function ensureIcons(config) {
   for (const slug of itemSlugs(config)) {
-    if (iconCache.has(slug) || iconPending.has(slug)) continue;
+    if (iconCache.get(slug) || iconPending.has(slug)) continue;
+    const at = iconFailedAt.get(slug) || 0;
+    if (at && Date.now() - at < ICON_FAIL_TTL) continue;              // fresh failure — cooldown
     iconPending.add(slug);
     api.iconDataUrl(slug).then((r) => {
       iconPending.delete(slug);
       const url = r && r.ok ? r.dataUrl : null;
-      if (iconCache.has(slug)) return;                       // newer info won
-      iconCache.set(slug, url);
+      if (url) iconCache.set(slug, url);
+      else iconFailedAt.set(slug, Date.now());
+      if (!url || iconCache.get(slug) !== url) return;                // newer info won
       // Quietly rebuild the overlay once so the freshly-downloaded logo pops in.
       // preview:true suppresses the re-pop animation — this is a silent refresh.
       if (built && lastPayload && lastPayload.config === config) {
+        const hoveredSeg = selIdx >= 0 ? built.segments[selIdx] : null;
+        const hoveredItem = hoveredSeg && hoveredSeg.item;
         built = buildWheel(rootEl, config, { scale: lastPayload.scale, iconImages: iconCache, preview: true });
+        const restored = hoveredItem && built.segments.find((s) => s.item === hoveredItem || (s.item.id || '') === (hoveredItem.id || ''));
+        if (restored) applyHover({ seg: restored });                  // don't pop hover/hub-report state
       }
     }).catch(() => {
       iconPending.delete(slug);
-      if (!iconCache.has(slug)) iconCache.set(slug, null);
+      iconFailedAt.set(slug, Date.now());
     });
   }
 }
 
 function pointToHit(x, y) {
   if (!built) return null;
+  // Hit-test in the SVG's own box, not the window's: main sizes the window
+  // from a SCALED pad while buildWheel pads with the unscaled constant, so on
+  // scale<1 displays the centered SVG is offset by a few px (settings preview
+  // has always done exactly this rect subtraction).
+  const svg = rootEl.querySelector('svg');
+  if (svg) {
+    const rect = svg.getBoundingClientRect();
+    x -= rect.left; y -= rect.top;
+  }
   return built.hitTest(x, y);
 }
 

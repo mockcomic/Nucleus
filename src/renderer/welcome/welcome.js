@@ -7,7 +7,7 @@
    settings.js applyChrome so both windows always look like the same product. */
 import { computeChrome, chromeVarMap, paletteMode, themeById, themeBySignature, signature }
   from '../../main/themes.mjs';
-import { keyEventToSpec, formatSpec, nextStep } from './welcome-core.mjs';
+import { keyEventToSpec, mouseEventToSpec, formatSpec, nextStep } from './welcome-core.mjs';
 
 const api = window.welcomeAPI;
 const $ = (id) => document.getElementById(id);
@@ -67,7 +67,7 @@ function startCapture() {
   $('rec-btn').textContent = 'Listening…';
   $('hk-display').classList.add('recording');
   setHotkeyError(null);
-  setStatus('Press a combo — Ctrl / Alt / Shift / Win + any key. Esc cancels.', '');
+  setStatus('Press a combo — Ctrl / Alt / Shift / Win + any key — or click Middle / Back / Forward on the mouse. Esc cancels.', '');
 }
 function stopCapture() {
   recording = false;
@@ -126,6 +126,25 @@ window.addEventListener('keydown', async (e) => {
   if (e.key === 'Enter' && step === LAST && !(document.activeElement instanceof HTMLButtonElement)) {
     api.finish(true);
   }
+}, true);
+
+/* ── mouse ──
+   Middle / Back / Forward (alone or with modifiers) while listening. Left and
+   right presses are ignored, so the "Change…" button still cancels. */
+window.addEventListener('mousedown', async (e) => {
+  if (!recording) return;
+  const t = e.target;
+  if (t && t.closest && t.closest('#rec-btn')) return;
+  e.preventDefault(); e.stopPropagation();
+  if (e.button === 0 || e.button === 2) return;
+  const spec = mouseEventToSpec(e);
+  if (!spec) { setStatus('Use the Middle, Back or Forward button.', ''); return; }
+  await commitSpec(spec);
+}, true);
+
+window.addEventListener('contextmenu', (e) => {
+  if (!recording) return;
+  e.preventDefault(); e.stopPropagation();
 }, true);
 
 /* ── wiring ── */

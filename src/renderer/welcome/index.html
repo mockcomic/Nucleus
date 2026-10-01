@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:">
   <title>Radial Wheel — Welcome</title>
   <link rel="stylesheet" href="welcome.css">
 </head>
@@ -26,7 +27,7 @@
 
     <section class="step hidden" id="step-1" aria-labelledby="s1-h">
       <h2 id="s1-h">Make the hotkey yours</h2>
-      <p class="hint">The default works for most people. If it clashes with another app, or you just like a different chord — record a new one. Ctrl / Alt / Shift / Win plus any key.</p>
+      <p class="hint">The default works for most people. If it clashes with another app, or you just like a different chord — record a new one. Ctrl / Alt / Shift / Win plus any key — or make a mouse button do it: Middle, Back or Forward, on its own or with modifiers.</p>
       <div id="hk-error" class="err hidden" role="alert"></div>
       <div class="row-line">
         <div id="hk-display" class="hk-chip" aria-live="polite">…</div>

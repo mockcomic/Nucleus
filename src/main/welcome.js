@@ -45,7 +45,7 @@ class WelcomeWindow {
       icon: path.join(app.getPath('userData'), 'icons', 'tray-32.png'),
       webPreferences: {
         preload: PRELOAD, contextIsolation: true, nodeIntegration: false,
-        sandbox: false, devTools: !app.isPackaged
+        sandbox: true, devTools: !app.isPackaged
       }
     });
     this.win.setMenuBarVisibility(false);

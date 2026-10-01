@@ -7,6 +7,11 @@ class TrayManager {
   constructor(icons, handlers) {
     this.handlers = handlers;
     this.image = nativeImage.createFromPath(icons.tray32);
+    if (this.image.isEmpty()) {
+      // A blank tray icon is the only visible symptom of a missing/corrupt
+      // PNG under userData — make noise in the log, and stay functional.
+      console.warn('[radial-wheel] tray icon missing or empty:', icons && icons.tray32);
+    }
     this.tray = null;
     this.paused = false;
   }
@@ -21,7 +26,8 @@ class TrayManager {
 
   _tip() {
     const cfg = this.getCfg ? this.getCfg() : null;
-    let tip = cfg ? `Radial Wheel — ${cfg.hotkey}` : 'Radial Wheel';
+    // safeDisp() renders mouse triggers too: "Middle click", not "mmiddle".
+    let tip = cfg ? `Radial Wheel — ${safeDisp(cfg.hotkey)}` : 'Radial Wheel';
     const game = this.handlers.getGameMode ? this.handlers.getGameMode() : null;
     if (this.paused) tip += ' — paused';
     else if (game && game.active) tip += ` — Game mode: paused (${game.reason || 'game'})`;

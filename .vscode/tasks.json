@@ -1,0 +1,28 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "npm: start",
+      "type": "shell",
+      "command": "npm run start",
+      "options": {
+        "env": {
+          // ELECTRON_RUN_AS_NODE leaks in from the parent process (VS Code /
+          // launcher env) and makes electron.exe behave as plain node,
+          // crashing main.js at requestSingleInstanceLock. Null removes it.
+          "ELECTRON_RUN_AS_NODE": null
+        }
+      },
+      "isBackground": true,
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      },
+      "problemMatcher": []
+    }
+  ]
+}

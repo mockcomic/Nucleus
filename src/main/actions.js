@@ -7,10 +7,21 @@ const macro = require('./macro');
 const sys = require('./sys');
 const { splitArgs } = require('./args');
 
-function spawnDetached(cmd, args) {
-  const child = spawn(cmd, args, { detached: true, stdio: 'ignore', windowsHide: true, shell: false });
-  child.unref();
-  return child;
+/* Fire-and-forget launch that still surfaces STARTUP failures: 'error'
+   (ENOENT, AV block, …) fires asynchronously, after executeAction would
+   otherwise have resolved — throwing from that handler is an uncaughtException
+   that kills the resident app. Resolve on 'spawn' (or a 1.5 s grace window),
+   reject on 'error'; every caller awaits executeAction and shows the error. */
+function launchDetached(cmd, args, label = cmd, opts = {}) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const done = (fn, arg) => { if (settled) return; settled = true; clearTimeout(timer); fn(arg); };
+    const child = spawn(cmd, args, { detached: true, stdio: 'ignore', windowsHide: true, shell: false, ...opts });
+    child.unref();
+    const timer = setTimeout(() => done(resolve), 1500);
+    child.once('error', (e) => done(reject, new Error(`could not launch '${label}': ${e.message}`)));
+    child.once('spawn', () => done(resolve));
+  });
 }
 
 /**
@@ -69,11 +80,7 @@ async function executeAction(item, ctx = {}) {
         // Start-Menu shortcuts, batch files, and any program taking launch
         // parameters need ShellExecute semantics: cmd's `start ""` resolves
         // them exactly like a double-click and forwards the arguments.
-        const child = spawn('cmd.exe', ['/d', '/s', '/c', 'start', '""', target, ...tokens],
-          { detached: true, stdio: 'ignore', windowsHide: true });
-        child.unref();
-        child.on('error', (e) => { throw new Error(`could not launch '${target}': ${e.message}`); });
-        return;
+        return launchDetached('cmd.exe', ['/d', '/s', '/c', 'start', '""', target, ...tokens], target);
       }
       if (exists) {
         const err = await shell.openPath(target);
@@ -83,17 +90,11 @@ async function executeAction(item, ctx = {}) {
       const cmd = target.match(/^([^\s]+\.exe(?:\.com)?|"[^"]+")\s*(.*)$/i);
       if (cmd) {
         const exe = cmd[1].replace(/^"|"$/g, '');
-        const child = spawnDetached(exe, tokens.concat(splitArgs(cmd[2] || '')));
-        child.on('error', () => { throw new Error(`could not launch '${value}'`); });
-        return;
+        return launchDetached(exe, tokens.concat(splitArgs(cmd[2] || '')), value);
       }
       // last resort: shell resolution (e.g. "notepad", "ms-...", store links) —
       // the raw args string rides along so cmd.exe still sees the quotes as typed.
-      const child = spawn(tokens.length ? target + ' ' + rawArgs : target,
-        { detached: true, stdio: 'ignore', windowsHide: true, shell: true });
-      child.unref();
-      child.on('error', () => { throw new Error(`could not launch '${value}'`); });
-      return;
+      return launchDetached(tokens.length ? target + ' ' + rawArgs : target, [], value, { shell: true });
     }
     case 'command': {
       if (!value) throw new Error('no command configured');

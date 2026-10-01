@@ -11,7 +11,10 @@ let _SendInput = null, _GetAsyncKeyState = null;
 const INPUT_KEYBOARD = 1;
 const KEYEVENTF_KEYUP = 0x0002;
 const KEYEVENTF_UNICODE = 0x0004;
-const X64_INPUT_SIZE = 40; // DWORD type + pad + KEYBDINPUT{wVk,wScan,dwFlags,time} + align + ULONG_PTR extra
+// sizeof(INPUT): 40 on x64/arm64, 28 on ia32 (ULONG_PTR shrinks the union).
+// Electron 44 ships no ia32 Windows build, but keying the size off the arch
+// keeps the FFI boundary honest if that ever changes.
+const X64_INPUT_SIZE = process.arch === 'ia32' ? 28 : 40;
 
 try {
   if (IS_WIN) {
@@ -130,7 +133,7 @@ function vkFor(token) {
   const t = String(token).trim().toLowerCase();
   if (MOD_VK[t] !== undefined) return MOD_VK[t];
   if (NAME_VK[t] !== undefined) return NAME_VK[t];
-  if (/^f([1-9]|1[0-2])$/.test(t)) return 0x70 + (parseInt(t.slice(1), 10) - 1);
+  if (/^f([1-9]|1[0-9]|2[0-4])$/.test(t)) return 0x70 + (parseInt(t.slice(1), 10) - 1); // F1-F24 (0x70-0x87), same range hotkeys.js accepts
   if (t.length === 1) {
     const c = t.toUpperCase();
     if (/^[A-Z0-9]$/.test(c)) return c.charCodeAt(0);
@@ -167,38 +170,77 @@ async function keyEvent(vk, flags, scan = 0) {
   await sleep(12);
 }
 
-/** Press+release one virtual key. */
+/** Press+release one virtual key. The release is attempted whenever the press
+ *  actually reached the OS (a keyup for an unpressed VK is a harmless no-op). */
 async function sendVk(vk) {
   needInput();
-  await keyEvent(vk, 0);
-  await keyEvent(vk, KEYEVENTF_KEYUP);
+  let down = false;
+  try {
+    await keyEvent(vk, 0);
+    down = true;
+  } finally {
+    if (down) { try { await keyEvent(vk, KEYEVENTF_KEYUP); } catch { /* best effort */ } }
+  }
 }
 
-/** Chord: press left-to-right, release in reverse. tokens like ['ctrl','alt','del']. */
+/** Chord: press left-to-right, release in reverse. tokens like ['ctrl','alt','del'].
+ *  The release pass runs in `finally`: a mid-chord SendInput failure (0/n,
+ *  low-level hook, desktop switch) must never leave Ctrl/Alt/Win stuck down
+ *  system-wide. vkFor() throws during mapping, BEFORE anything is injected. */
 async function sendChord(tokens) {
   needInput();
   const vks = tokens.map(vkFor);
-  for (const vk of vks) await keyEvent(vk, 0);
-  for (let i = vks.length - 1; i >= 0; i--) await keyEvent(vks[i], KEYEVENTF_KEYUP);
+  const pressed = [];
+  try {
+    for (const vk of vks) { await keyEvent(vk, 0); pressed.push(vk); }
+  } finally {
+    for (let i = pressed.length - 1; i >= 0; i--) {
+      try { await keyEvent(pressed[i], KEYEVENTF_KEYUP); } catch { /* best effort release */ }
+    }
+  }
 }
 
 /**
  * Macro runner. Syntax (same as the original engine):
  *   "ctrl+c, wait=0.2, ctrl+v"  — comma-separated steps, '+' for chords
- *   "type:hello world"          — literal typing via KEYEVENTF_UNICODE
+ *   "type:hello world"          — literal typing via KEYEVENTF_UNICODE.
+ *     A `type:` step CONSUMES THE REST OF THE SPEC verbatim, commas included
+ *     (there is no unambiguous way to end literal text mid-string, so type:
+ *     steps must come last). Naively splitting on ',' would corrupt this:
+ *     `"type:a,b"` used to type "a" and then INJECT a stray B keypress.
  */
+function splitSteps(text) {
+  const first = /(^|,)\s*(type:)/i.exec(text);
+  if (!first) return text.split(',');
+  const afterComma = first.index + first[1].length;
+  const lead = /^\s*/.exec(text.slice(afterComma));
+  const typeStart = afterComma + lead[0].length;
+  const before = text.slice(0, first.index);
+  return (before ? before.split(',') : []).concat(text.slice(typeStart));
+}
+
 async function sendMacro(spec) {
   needInput();
-  for (const rawStep of String(spec || '').split(',')) {
+  for (const rawStep of splitSteps(String(spec || '').trim())) {
     const step = rawStep.trim();
     if (!step) continue;
     const wm = step.match(/^wait\s*=\s*([0-9.]+)$/i);
-    if (wm) { await sleep(Math.min(5, parseFloat(wm[1]) || 0.2) * 1000); continue; }
+    if (wm) {
+      const secs = parseFloat(wm[1]);
+      // wait=0 means "no pause" — the old `|| 0.2` turned it into 200 ms.
+      await sleep(Math.min(5, Number.isNaN(secs) ? 0.2 : Math.max(0, secs)) * 1000);
+      continue;
+    }
     if (/^type:/i.test(step)) {
-      for (const ch of step.slice(5)) {
-        sendInputs([keyBuffer(0, ch.charCodeAt(0), KEYEVENTF_UNICODE)]);
+      const text = step.slice(5);
+      // Iterate UTF-16 CODE UNITS, not code points: KEYEVENTF_UNICODE takes
+      // one word per event, so a surrogate pair needs both halves (for…of +
+      // charCodeAt(0) used to send only the lone high surrogate).
+      for (let ci = 0; ci < text.length; ci++) {
+        const u = text.charCodeAt(ci);
+        sendInputs([keyBuffer(0, u, KEYEVENTF_UNICODE)]);
         await sleep(8);
-        sendInputs([keyBuffer(0, ch.charCodeAt(0), KEYEVENTF_UNICODE | KEYEVENTF_KEYUP)]);
+        sendInputs([keyBuffer(0, u, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP)]);
         await sleep(8);
       }
       continue;
@@ -213,4 +255,28 @@ function isDown(vk) {
   return (_GetAsyncKeyState(vk) & 0x8000) !== 0;
 }
 
-module.exports = { available, loadError, probeAvailable, foregroundProbe, sendMacro, sendVk, sendChord, isDown, vkFor };
+/* ---------------- global FFI surface for other main-process modules -------
+   macro.js stays the single place koffi is loaded (see .dsh/skills/win32-koffi):
+   one guarded load, one failure mode. Consumers (mousehook.js) declare their own
+   __stdcall prototypes through these thin passthroughs rather than requiring
+   koffi themselves, so a broken install degrades identically everywhere:
+   `available` false plus a human `loadError`, and every call throwing through
+   needInput() instead of crashing at require-time. */
+const ffi = {
+  get available() { return available; },
+  get loadError() { return loadError; },
+  /** Declare a user32 symbol. The '__stdcall' convention is MANDATORY in spec. */
+  declareUser32(spec) { needInput(); return user32.func(spec); },
+  /** Declare a callback signature, e.g. 'int64 __stdcall Name(int, uintptr, intptr)'. */
+  proto(spec) { needInput(); return koffi.proto(spec); },
+  /** Function-pointer type for a declared proto (what SetWindowsHookEx expects). */
+  pointer(type) { needInput(); return koffi.pointer(type); },
+  /** Pin a JS function as a native callback; the caller keeps the handle alive. */
+  register(fn, type) { needInput(); return koffi.register(fn, type); },
+  unregister(handle) { try { if (handle) koffi.unregister(handle); } catch { /* best-effort */ } },
+  /** Read one field from a native struct addressed by an LPARAM-style address. */
+  decode(addr, offset, type) { needInput(); return koffi.decode(addr, offset, type); }
+};
+
+// _splitSteps is exported purely for node:test (pure function, no FFI needed).
+module.exports = { available, loadError, probeAvailable, foregroundProbe, sendMacro, sendVk, sendChord, isDown, vkFor, _splitSteps: splitSteps, ffi };

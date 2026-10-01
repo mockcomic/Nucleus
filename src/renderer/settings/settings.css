@@ -103,6 +103,10 @@ input[type=checkbox]:checked { background: var(--accent); border-color: var(--ac
 input[type=checkbox]:checked::after { transform: translateX(12px); }
 input[type=checkbox]:hover { border-color: var(--accent-dim); }
 input[type=checkbox]:disabled { opacity: .45; cursor: default; }
+/* Whole-row dimming for an option that only applies to some configs (e.g. the
+   mouse click-through toggle while the trigger is a keyboard combo). */
+label.chk.dim { opacity: .45; }
+label.chk.dim input[type=checkbox] { opacity: 1; }
 
 input[type=text], input[type=number], select {
   background: var(--field); color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 7px 9px; font-size: 13px;

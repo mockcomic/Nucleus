@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:">
   <title>Radial Wheel — Settings</title>
   <link rel="stylesheet" href="settings.css">
 </head>
@@ -73,7 +74,7 @@
           <div id="hk-display" class="hk-chip" aria-live="polite">Ctrl + Alt + Space</div>
           <button id="recorder-btn" class="btn">Change…</button>
         </div>
-        <div class="hint muted">Click “Change…”, then press any modifier combination (Ctrl/Alt/Shift/Win + key). It registers instantly — if the combo is taken by another app you'll be told and the old hotkey stays active.</div>
+        <div class="hint muted">Click “Change…”, then press any modifier combination (Ctrl/Alt/Shift/Win + key) — or click the <b>Middle</b>, <b>Back</b> or <b>Forward</b> mouse button, with or without a modifier. It registers instantly — if the combo is taken by another app you'll be told and the old hotkey stays active.</div>
       </div>
       <div class="card">
         <div class="card-title">Startup</div>
@@ -84,6 +85,8 @@
         <label class="chk"><input type="checkbox" id="bh-esc"> Dismiss with Esc</label>
         <label class="chk"><input type="checkbox" id="bh-right"> Right-click dismisses the wheel</label>
         <label class="chk"><input type="checkbox" id="bh-retrigger"> Pressing the hotkey again hides the wheel</label>
+        <label class="chk"><input type="checkbox" id="bh-mouse-through"> Let the mouse button through to the app under the cursor</label>
+        <div class="hint muted">Only applies when the shortcut's main key is a mouse button: Middle, Back or Forward. Off (the default) means the wheel treats it like a real hotkey and the app never sees the click — so Middle click stops pasting while it is your summon button. Turn it on if you want both.</div>
       </div>
       <div class="card">
         <div class="card-title">Gaming mode</div>

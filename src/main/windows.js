@@ -44,10 +44,12 @@ class Overlay {
       backgroundColor: '#00000000', useContentSize: true,
       webPreferences: {
         preload: PRELOAD, contextIsolation: true, nodeIntegration: false,
-        sandbox: false, devTools: !app.isPackaged
+        sandbox: true, devTools: !app.isPackaged
       }
     });
     this.win.setAlwaysOnTop(true, 'screen-saver');
+    this._loaded = false;
+    this.win.webContents.on('did-finish-load', () => { this._loaded = true; });
     this.win.loadFile(path.join(__dirname, '..', 'renderer', 'wheel', 'index.html'));
     this.win.on('close', (e) => {
       if (!this.deps.isQuitting()) { e.preventDefault(); this.hide(); }
@@ -90,11 +92,18 @@ class Overlay {
     y = Math.min(Math.max(y, disp.bounds.y), disp.bounds.y + Math.max(0, disp.bounds.height - s));
 
     win.setBounds({ x, y, width: s, height: s }, false);
-    win.webContents.send('overlay:show', {
+    const payload = {
       config: JSON.parse(JSON.stringify(cfg)),
       scale,
       cursorLocal: { x: cur.x - x, y: cur.y - y }
-    });
+    };
+    const send = () => { if (!win.isDestroyed()) win.webContents.send('overlay:show', payload); };
+    // If the pre-warm load hasn't finished (first summon right after launch,
+    // or --show-wheel at 400 ms), queue the payload instead of firing it into
+    // a page whose onShow listener does not exist yet — otherwise the send is
+    // silently dropped and an empty (transparent) window shows.
+    if (this._loaded) send();
+    else win.webContents.once('did-finish-load', send);
     win.show();
     win.focus();
     this._shownAt = Date.now();
@@ -131,7 +140,7 @@ class SettingsWindow {
       icon: path.join(app.getPath('userData'), 'icons', 'tray-32.png'),
       webPreferences: {
         preload: PRELOAD, contextIsolation: true, nodeIntegration: false,
-        sandbox: false, devTools: !app.isPackaged
+        sandbox: true, devTools: !app.isPackaged
       }
     };
     if (vibrant) {

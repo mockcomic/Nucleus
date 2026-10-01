@@ -45,6 +45,26 @@ export function keyEventToSpec(e) {
   return [...MOD_ORDER.filter((m) => mods.includes(m)), token].join('+');
 }
 
+/* Mouse buttons as the trigger's main key, keyed by MouseEvent.button:
+   1 = Middle, 3 = Back, 4 = Forward. Left (0) and right (2) are deliberately
+   not recordable — mirrors MOUSE_KEYS in src/main/hotkeys.js. A mouse main key
+   needs NO keyboard modifier (`mmiddle` alone is legal), unlike a key. */
+const MOUSE_BUTTONS = { 1: 'mmiddle', 3: 'mback', 4: 'mfwd' };
+
+/** mouseEventToSpec({button, ctrlKey, altKey, shiftKey, metaKey}) -> "ctrl+mmiddle" | null
+ *  null means "not a recordable button" — the caller keeps listening. */
+export function mouseEventToSpec(e) {
+  if (!e || typeof e.button !== 'number') return null;
+  const token = MOUSE_BUTTONS[e.button];
+  if (!token) return null;
+  const mods = [];
+  if (e.ctrlKey) mods.push('ctrl');
+  if (e.altKey) mods.push('alt');
+  if (e.shiftKey) mods.push('shift');
+  if (e.metaKey) mods.push('win');
+  return [...MOD_ORDER.filter((m) => mods.includes(m)), token].join('+');
+}
+
 /* Display form for the keycap: "ctrl+alt+space" -> "Ctrl + Alt + Space".
    (hotkeys.js renders Win as "Super"; the FTU says "Win" — that's what the
    key is labelled on the keyboard.) */
@@ -56,7 +76,8 @@ const DISPLAY = {
   home: 'Home', end: 'End', pgup: 'Page Up', pageup: 'Page Up', pgdn: 'Page Down', pagedown: 'Page Down',
   left: '←', right: '→', up: '↑', down: '↓',
   minus: '-', equal: '=', comma: ',', period: '.', slash: '/',
-  backslash: '\\', semicolon: ';', quote: "'", backquote: '`'
+  backslash: '\\', semicolon: ';', quote: "'", backquote: '`',
+  mmiddle: 'Middle click', mback: 'Back button', mfwd: 'Forward button'
 };
 
 export function formatSpec(spec) {

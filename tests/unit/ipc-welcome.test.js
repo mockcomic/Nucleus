@@ -77,7 +77,9 @@ function makeDeps() {
 function fire(channel, ...args) {
   const fn = on.get(channel);
   assert.ok(fn, `no ipcMain.on listener registered for ${channel}`);
-  fn({ sender: {} }, ...args);
+  // Privileged channels now answer only their own window's frame (ipc.js
+  // sender-frame gate) — the fake event has to look like the welcome page.
+  fn({ sender: {}, senderFrame: { url: 'file:///app/src/renderer/welcome/index.html' } }, ...args);
 }
 
 /* ----------------------------- welcome:done ----------------------------- */

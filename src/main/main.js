@@ -12,6 +12,7 @@ const { ensureRuntimeIcons } = require('./icon-gen');
 const { registerIpc } = require('./ipc');
 const { GameModeWatcher } = require('./gamemode');
 const macro = require('./macro');
+const mousehook = require('./mousehook');
 const autostart = require('./autostart');
 
 let quitting = false;
@@ -41,13 +42,18 @@ function registerHotkey(spec, opts = {}) {
     }
     return { ok: true, accel: null, deferred: true };
   }
-  const res = hotkeyMgr.register(spec, () => toggleWheel());
+  const res = hotkeyMgr.register(spec, () => toggleWheel(), hotkeyOpts());
   store.hotkeyError = res.ok ? null : res.error;
   if (!res.ok) {
     if (tray) tray.balloon('Hotkey could not be registered', res.error, 'error');
-    // restore previous registration so the user isn't left without a hotkey
+    // restore previous registration so the user isn't left without a hotkey —
+    // and clear the error once the OLD hotkey is confirmed live, otherwise
+    // Settings keeps claiming "already taken" for a hotkey that works.
     const prev = store.get().hotkey;
-    if (prev && prev !== spec) hotkeyMgr.register(prev, () => toggleWheel());
+    if (prev && prev !== spec) {
+      const back = hotkeyMgr.register(prev, () => toggleWheel(), hotkeyOpts());
+      store.hotkeyError = back.ok ? null : back.error;
+    }
   }
   if (res.ok && opts.persist !== false && spec !== store.get().hotkey) {
     store.set({ ...JSON.parse(JSON.stringify(store.get())), hotkey: spec });
@@ -57,17 +63,34 @@ function registerHotkey(spec, opts = {}) {
 
 const hotkeyActive = () => !manualPaused && !gamePaused;
 
+/* Per-registration options from the LIVE config. A mouse-button trigger either
+   swallows its own press (default, so Middle click doesn't also paste) or hands
+   it to the app under the cursor — behavior.mouseClickThrough. Keyboard specs
+   ignore it, so this stays cheap and total. */
+const hotkeyOpts = () => {
+  const bh = (store && store.get().behavior) || {};
+  return { clickThrough: bh.mouseClickThrough === true };
+};
+
 /* Single source of truth for whether the global shortcut is registered. */
 function applyHotkeyState() {
   if (!hotkeyMgr || quitting) return;
   if (hotkeyActive()) {
     if (!hotkeyMgr.current) {
-      const res = hotkeyMgr.register(store.get().hotkey, () => toggleWheel());
+      const res = hotkeyMgr.register(store.get().hotkey, () => toggleWheel(), hotkeyOpts());
       store.hotkeyError = res.ok ? null : res.error;
+      // Only the mouse path gets a line: it is a live system hook, and "is it
+      // actually installed right now?" is the first question when a button
+      // trigger misbehaves. Keyboard registration is already covered by the
+      // tray tooltip and the startup marker.
+      if (res.mouse) console.log(`[radial-wheel] mouse trigger '${store.get().hotkey}' ${res.ok ? (mousehook.active() ? 'hook armed' : 'registered but hook NOT armed') : 'FAILED: ' + res.error}`);
       if (!res.ok && tray) tray.balloon('Hotkey could not be registered', res.error, 'error');
     }
   } else {
+    const wasMouse = !!(hotkeyMgr.current && hotkeyMgr.current.mouse);
+    const wasArmed = mousehook.active();
     hotkeyMgr.unregister();
+    if (wasMouse && wasArmed) console.log('[radial-wheel] mouse hook released (hotkey paused)');
     if (overlay) overlay.hide();
     store.hotkeyError = null; // the hotkey is deliberately off — no stale error
   }
@@ -84,6 +107,10 @@ function quitApp() {
   quitting = true;
   try { gameWatcher && gameWatcher.stop(); } catch {}
   try { hotkeyMgr && hotkeyMgr.unregister(); } catch {}
+  /* Release the low-level mouse hook AND the pinned native callback: a hook
+     alive past the process would keep swallowing clicks (hotkeyMgr.unregister
+     unhooks; this also frees the koffi callback handle). */
+  try { mousehook.shutdown(); } catch {}
   try { tray && tray.destroy(); } catch {}
   try { overlay && overlay.destroy(); } catch {}
   try { settingsWin && settingsWin.destroy(); } catch {}
@@ -105,6 +132,9 @@ function handleConfigChanged({ config, rev, hotkeyChanged, autostartChanged, rel
   // Only reload() (tray reload / config.json watch) is an external change.
   if (reload) {
     try { settingsWin.send('config:changed', { config: JSON.parse(JSON.stringify(config)), rev }); } catch { /* settings may be closed */ }
+    // The (hidden, reused) welcome window listens too — its hotkey chip would
+    // otherwise show the boot-time hotkey forever after a later change.
+    try { welcome.send('config:changed', { config: JSON.parse(JSON.stringify(config)), rev }); } catch { /* welcome may be closed */ }
   }
 }
 
@@ -112,7 +142,15 @@ function bootstrap() {
   nativeTheme.themeSource = 'dark';
   Menu.setApplicationMenu(null);
 
-  const icons = ensureRuntimeIcons(path.join(app.getPath('userData'), 'icons'));
+  let icons;
+  try {
+    icons = ensureRuntimeIcons(path.join(app.getPath('userData'), 'icons'));
+  } catch (err) {
+    // Unwritable userData must not abort bootstrap — a windowless,
+    // hotkey-less resident process is far worse than a tray-less one.
+    console.error('[radial-wheel] runtime icon prep failed:', (err && err.message) || err);
+    icons = null;
+  }
 
   store = new ConfigStore();
   const init = store.init();
@@ -122,16 +160,21 @@ function bootstrap() {
   settingsWin = new SettingsWindow({ isQuitting, getState, setState, bgColor: () => store.get().appearance.colors.bg });
   welcome = new WelcomeWindow({ getConfig: () => store.get(), isQuitting });
 
-  tray = new TrayManager(icons, {
-    onShowWheel: () => toggleWheel(true),
-    onOpenSettings: () => settingsWin.open(),
-    onShowWelcome: () => welcome.open(),
-    onReload: () => { store.reload(); },
-    onPauseToggle: (paused) => { manualPaused = paused; applyHotkeyState(); },
-    getGameMode: () => ({ active: gamePaused, reason: gameReason }),
-    onQuit: quitApp
-  });
-  tray.build(() => store.get());
+  if (icons) {
+    tray = new TrayManager(icons, {
+      onShowWheel: () => toggleWheel(true),
+      onOpenSettings: () => settingsWin.open(),
+      onShowWelcome: () => welcome.open(),
+      onReload: () => { store.reload(); },
+      onPauseToggle: (paused) => { manualPaused = paused; applyHotkeyState(); },
+      getGameMode: () => ({ active: gamePaused, reason: gameReason }),
+      onQuit: quitApp
+    });
+    tray.build(() => store.get());
+  } else {
+    tray = null;
+    console.error('[radial-wheel] continuing WITHOUT a tray icon — nothing writable under ' + app.getPath('userData') + '?');
+  }
 
   /* Gaming mode: pause the hotkey while a fullscreen / listed app owns the foreground. */
   gameWatcher = new GameModeWatcher(() => store.get(), () => macro.foregroundProbe(), { ourPid: process.pid });
@@ -156,7 +199,7 @@ function bootstrap() {
 
   store.on('changed', handleConfigChanged);
 
-  const res = hotkeyMgr.register(store.get().hotkey, () => toggleWheel());
+  const res = hotkeyMgr.register(store.get().hotkey, () => toggleWheel(), hotkeyOpts());
   store.hotkeyError = res.ok ? null : res.error;
   if (!res.ok && tray) tray.balloon('Hotkey could not be registered', res.error, 'error');
 
@@ -165,8 +208,9 @@ function bootstrap() {
   if (init.createdNew) {
     autostart.set(store.get().behavior.autostart);
     if (tray) {
+      // display() renders mouse triggers too: "Middle click", not "mmiddle".
       tray.balloon('Radial Wheel is running',
-        `Press ${store.get().hotkey.replace(/\+/g, ' + ')} anywhere to open the wheel${store.importedFrom ? ' (settings imported from your old config)' : ''}.`);
+        `Press ${HotkeyManager.display(store.get().hotkey)} anywhere to open the wheel${store.importedFrom ? ' (settings imported from your old config)' : ''}.`);
     }
     /* (Settings no longer auto-opens on first run — the FTU welcome window
        below hands off to it when the user is ready.) */
@@ -179,9 +223,26 @@ function bootstrap() {
   if (process.argv.includes('--show-wheel')) setTimeout(() => toggleWheel(true), 400);
 
   console.log(`[radial-wheel] ready — hotkey '${store.get().hotkey}' ${res.ok ? 'registered' : 'FAILED: ' + res.error}` +
+    (res.mouse ? ` [mouse hook ${mousehook.active() ? 'armed' : 'NOT ARMED'}]` : '') +
     (store.importedFrom ? ` (imported ${store.importedFrom})` : '') +
     (store.broken ? ' (config.json was corrupt — defaults in use, see config.json.bad)' : '') +
     (init.createdNew ? ' (first run)' : ''));
+
+  /* Dev-only verification aid: `--mouse-hook-probe` logs the low-level hook's
+     counters whenever they change — calls (every event handed to the proc),
+     seen (events matching our button), fired, swallowed, injectedIgnored.
+     "calls rises but seen stays 0" means the button never reaches the hook
+     (vendor driver remap, or another app's hook swallowed it first).
+     Never enabled in a packaged build. */
+  if (process.argv.includes('--mouse-hook-probe') && !app.isPackaged) {
+    let last = '', samples = 0;
+    const t = setInterval(() => {
+      if (!mousehook.active()) { clearInterval(t); return; }
+      const s = JSON.stringify(mousehook.getStats());
+      if (s !== last) { last = s; console.log(`[radial-wheel] mouse hook ${s}`); }
+      if (++samples > 3600) clearInterval(t);          // an hour of headroom
+    }, 400);
+  }
 }
 
 /* ------------------------------ app lifecycle ------------------------------ */
@@ -189,6 +250,24 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.setAppUserModelId('local.radialwheel');
+
+  /* Tray-resident launcher: never hostage to a usable GPU process. A locked
+     or corrupt GPUPersistentCache (e.g. squatting handles left by an orphan
+     of an earlier badly-killed instance) makes Chromium abort the whole
+     browser with "GPU process isn't usable. Goodbye." (STATUS_BREAKPOINT) —
+     an invisible death: no window, no tray, process gone in seconds. This
+     app's only UI is DOM compositing that software raster handles fine. */
+  app.disableHardwareAcceleration();
+
+  /* Last-resort net for an always-resident tray app: a stray async throw must
+     never take the launcher down. Individual sites still handle their own
+     errors; this only turns a process death into a loud log + balloon. */
+  const survives = (where) => (err) => {
+    console.error(`[radial-wheel] ${where}:`, (err && (err.stack || err.message)) || err);
+    try { tray && tray.balloon('Radial Wheel recovered from an internal error', String((err && err.message) || err), 'error'); } catch { /* best effort */ }
+  };
+  process.on('uncaughtException', survives('uncaughtException'));
+  process.on('unhandledRejection', survives('unhandledRejection'));
 
   app.on('second-instance', (ev, argv) => {
     if (argv.includes('--show-wheel')) toggleWheel(true);

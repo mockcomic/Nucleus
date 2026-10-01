@@ -148,8 +148,11 @@ function ensureRuntimeIcons(dir) {
   fs.mkdirSync(dir, { recursive: true });
   const p16 = path.join(dir, 'tray-16.png');
   const p32 = path.join(dir, 'tray-32.png');
-  if (!fs.existsSync(p32)) fs.writeFileSync(p32, drawTray(32));
-  if (!fs.existsSync(p16)) fs.writeFileSync(p16, drawTray(16));
+  // existsSync alone never repairs the 0-byte leftovers of an interrupted
+  // first run — a corrupt tray-32.png would mean a permanently blank tray.
+  const usable = (p) => { try { return fs.existsSync(p) && fs.statSync(p).size > 0; } catch { return false; } };
+  if (!usable(p32)) fs.writeFileSync(p32, drawTray(32));
+  if (!usable(p16)) fs.writeFileSync(p16, drawTray(16));
   return { tray32: p32, tray16: p16 };
 }
 

@@ -47,9 +47,16 @@ function cleanUserTheme(it, takenNames) {
   let name = String(it.name ?? '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 24);
   if (!name) name = 'Theme';
   let uniq = name, n = 2;
-  while (takenNames.has(uniq.toLowerCase())) uniq = `${name} (${n++})`.slice(0, 24);
+  // The counter suffix must be built from a base short enough to survive the
+  // 24-char cap — slicing `${name} (n)` when name is already 24 long yields
+  // the same string every pass (infinite loop in the main process). Kept
+  // in sync with the settings renderer's theme-dedup (shared/naming.mjs).
+  while (takenNames.has(uniq.toLowerCase()) && n <= 9999) uniq = `${name.slice(0, 18)} (${n++})`.slice(0, 24);
+  if (takenNames.has(uniq.toLowerCase())) uniq = 'Theme ' + nid();   // absurd-collision escape hatch
   takenNames.add(uniq.toLowerCase());
-  return { id: typeof it.id === 'string' && it.id ? it.id : nid(), name, colors };
+  // Persist the DEDUPED name — storing the raw `name` would discard the work
+  // above and let two imported themes carry the same displayed name.
+  return { id: typeof it.id === 'string' && it.id ? it.id : nid(), name: uniq, colors };
 }
 
 function defaults() {
@@ -64,6 +71,11 @@ function defaults() {
     behavior: {
       autostart: true, dismissOnEscape: true, dismissOnRightClick: true,
       reTriggerToggles: true,
+      /* When the summon trigger's main key is a mouse button, the press is
+         swallowed by default so Middle click doesn't ALSO paste (etc.).
+         True = the app under the cursor still receives the click. Inert for
+         keyboard hotkeys. */
+      mouseClickThrough: false,
       gameMode: { enabled: false, apps: [] }
     },
     theme: { id: DEFAULT_THEME_ID, customized: false, colors: { ...DEFAULT_COLORS } },
@@ -176,12 +188,23 @@ function validate(raw) {
     : cleanPalette(thIn.colors) || (themeById(themeId) && cleanPalette(themeById(themeId).colors))
     || { ...DEFAULT_COLORS };
 
+  /* Cross-constraint: the ring band is (outerRadius - innerRadius) and a dial
+     where inner >= outer has no band at all — hit-testing can never match and
+     the hub swallows the whole overlay. Clamp inner down (mirrored by the
+     slider pair in the Settings appearance section); old bad configs
+     self-heal here on load. */
+  const MIN_BAND = 24;
+  const outerRadius = clamp(ap.outerRadius, 120, 360, base.appearance.outerRadius);
+  const innerRadius = Math.max(24, Math.min(
+    clamp(ap.innerRadius, 24, 140, base.appearance.innerRadius),
+    outerRadius - MIN_BAND));
+
   return {
     version: VERSION,
     hotkey,
     appearance: {
-      innerRadius: clamp(ap.innerRadius, 24, 140, base.appearance.innerRadius),
-      outerRadius: clamp(ap.outerRadius, 120, 360, base.appearance.outerRadius),
+      innerRadius,
+      outerRadius,
       ringSplit: clamp(ap.ringSplit, 0.2, 0.8, base.appearance.ringSplit),
       startAngle: clamp(ap.startAngle, 0, 359.9, base.appearance.startAngle),
       gapDeg: clamp(ap.gapDeg, 0, 10, base.appearance.gapDeg),
@@ -196,6 +219,8 @@ function validate(raw) {
       dismissOnEscape: bhvIn.dismissOnEscape !== false,
       dismissOnRightClick: bhvIn.dismissOnRightClick !== false,
       reTriggerToggles: bhvIn.reTriggerToggles !== false,
+      // Fail-closed on purpose: junk/absent means "swallow the click", the safe default.
+      mouseClickThrough: bhvIn.mouseClickThrough === true,
       gameMode: require('./gamemode').sanitizeGameMode(bhvIn.gameMode)
     },
     theme: {
@@ -246,6 +271,11 @@ function importLegacy(cfgDirCandidates) {
   return null;
 }
 
+/* The live registration depends on the spec AND on the mouse click-through
+   policy, so a change to either must read as "hotkeyChanged" and re-arm the
+   hook — otherwise toggling the checkbox would only take effect after a restart. */
+const hotkeyPolicy = (c) => `${c.hotkey}|${c.behavior && c.behavior.mouseClickThrough ? 1 : 0}`;
+
 class ConfigStore extends EventEmitter {
   constructor() {
     super();
@@ -280,7 +310,14 @@ class ConfigStore extends EventEmitter {
       }
       this._createdNew = true;
       try { fs.mkdirSync(path.dirname(p), { recursive: true }); } catch {}
-      this._write();
+      try {
+        this._write();
+      } catch (err2) {
+        // Disk unavailable on a fresh install: run from the in-memory config,
+        // stay resident, and let the Settings banner (broken flag) say so.
+        console.error('[radial-wheel] could not write initial config:', err2 && err2.message);
+        this.broken = true;
+      }
       if (err.message === 'missing' && !legacy) {
         // brand-new install, nothing else to do
       } else if (err.message !== 'missing') {
@@ -297,11 +334,21 @@ class ConfigStore extends EventEmitter {
   set(newCfg) {
     const merged = validate({ ...newCfg, version: VERSION });
     const old = this._cfg;
+    const oldGood = this._lastGood;
+    const oldRev = this.rev;
     this._cfg = merged;
-    this._lastGood = merged;
     this.rev++;
-    this._write();
-    this.emit('changed', { config: merged, old, rev: this.rev, hotkeyChanged: old.hotkey !== merged.hotkey, autostartChanged: old.behavior.autostart !== merged.behavior.autostart });
+    try {
+      this._write();
+    } catch (e) {
+      // disk refused the save — roll the store back so memory and file agree
+      this._cfg = old;
+      this._lastGood = oldGood;
+      this.rev = oldRev;
+      throw e;
+    }
+    this._lastGood = merged;
+    this.emit('changed', { config: merged, old, rev: this.rev, hotkeyChanged: hotkeyPolicy(old) !== hotkeyPolicy(merged), autostartChanged: old.behavior.autostart !== merged.behavior.autostart });
     return merged;
   }
 
@@ -313,7 +360,7 @@ class ConfigStore extends EventEmitter {
       this._cfg = cfg;
       this._lastGood = cfg;
       this.rev++;
-      this.emit('changed', { config: cfg, old, rev: this.rev, hotkeyChanged: old.hotkey !== cfg.hotkey, autostartChanged: old.behavior.autostart !== cfg.behavior.autostart, reload: true });
+      this.emit('changed', { config: cfg, old, rev: this.rev, hotkeyChanged: hotkeyPolicy(old) !== hotkeyPolicy(cfg), autostartChanged: old.behavior.autostart !== cfg.behavior.autostart, reload: true });
       return cfg;
     } catch {
       if (this._lastGood) { this._cfg = this._lastGood; }
@@ -325,16 +372,22 @@ class ConfigStore extends EventEmitter {
     const p = this.file();
     const tmp = p + '.tmp';
     this._suppressUntil = Date.now() + 300;
-    fs.mkdirSync(path.dirname(p), { recursive: true });
-    fs.writeFileSync(tmp, JSON.stringify(this._cfg, null, 2), 'utf8');
-    fs.renameSync(tmp, p);
+    try {
+      fs.mkdirSync(path.dirname(p), { recursive: true });
+      fs.writeFileSync(tmp, JSON.stringify(this._cfg, null, 2), 'utf8');
+      fs.renameSync(tmp, p);
+    } catch (e) {
+      try { fs.unlinkSync(tmp); } catch { /* leftover temp, best effort */ }
+      // ENOENT/EACCES/EBUSY from AV locks, disk-full, unwritable userData…
+      throw new Error(`could not save config (${e.code || e.message}) — is config.json locked?`);
+    }
   }
 
   _watch() {
     const p = this.file();
     try {
       this._watcher && this._watcher.close();
-      fs.watch(path.dirname(p), (evt, name) => {
+      this._watcher = fs.watch(path.dirname(p), (evt, name) => {
         if (name !== 'config.json') return;
         if (Date.now() < this._suppressUntil) return;
         clearTimeout(this._t);

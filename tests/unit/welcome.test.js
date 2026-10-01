@@ -70,6 +70,55 @@ test('formatSpec renders the human keycap form', async () => {
   assert.equal(formatSpec('   '), '—');
 });
 
+/* ------------------------------- mouse buttons ------------------------------ */
+const mev = (button, mods = {}) => ({
+  button, ctrlKey: !!mods.ctrl, altKey: !!mods.alt, shiftKey: !!mods.shift, metaKey: !!mods.win
+});
+
+test('mouseEventToSpec maps Middle/Back/Forward, with or without modifiers', async () => {
+  const { mouseEventToSpec } = await use();
+  assert.equal(mouseEventToSpec(mev(1)), 'mmiddle');                 // bare button is legal
+  assert.equal(mouseEventToSpec(mev(3)), 'mback');
+  assert.equal(mouseEventToSpec(mev(4)), 'mfwd');
+  assert.equal(mouseEventToSpec(mev(1, { ctrl: true, alt: true })), 'ctrl+alt+mmiddle');
+  assert.equal(mouseEventToSpec(mev(4, { win: true, shift: true })), 'shift+win+mfwd');
+  assert.match(mouseEventToSpec(mev(3, { ctrl: true })), HOTKEY_RE);
+});
+
+test('mouseEventToSpec returns null for the buttons that must stay usable', async () => {
+  const { mouseEventToSpec } = await use();
+  assert.equal(mouseEventToSpec(mev(0)), null);        // left
+  assert.equal(mouseEventToSpec(mev(2)), null);        // right
+  assert.equal(mouseEventToSpec(mev(5)), null);        // extra thumb buttons
+  assert.equal(mouseEventToSpec(mev(-1)), null);
+  for (const junk of [undefined, null, {}, 'x', 42, { button: '1' }]) {
+    assert.equal(mouseEventToSpec(junk), null, String(junk));
+  }
+});
+
+test('every mouse spec is one hotkey:set can accept', async () => {
+  const { mouseEventToSpec } = await use();
+  for (const button of [1, 3, 4]) {
+    for (const mods of [{}, { ctrl: true }, { alt: true }, { shift: true, win: true },
+      { ctrl: true, alt: true, shift: true, win: true }]) {
+      const spec = mouseEventToSpec(mev(button, mods));
+      assert.ok(spec, `${button} + ${JSON.stringify(mods)}`);
+      assert.match(spec, HOTKEY_RE);
+      const toks = spec.split('+');
+      assert.equal(new Set(toks).size, toks.length, `no duplicate tokens in ${spec}`);
+      assert.ok(['mmiddle', 'mback', 'mfwd'].includes(toks.at(-1)), `button is the main key of ${spec}`);
+    }
+  }
+});
+
+test('formatSpec renders mouse buttons as words', async () => {
+  const { formatSpec } = await use();
+  assert.equal(formatSpec('mmiddle'), 'Middle click');
+  assert.equal(formatSpec('ctrl+alt+mmiddle'), 'Ctrl + Alt + Middle click');
+  assert.equal(formatSpec('mback'), 'Back button');
+  assert.equal(formatSpec('shift+mfwd'), 'Shift + Forward button');
+});
+
 /* ---------------------------------- nextStep --------------------------------- */
 test('nextStep clamps at both ends', async () => {
   const { nextStep } = await use();

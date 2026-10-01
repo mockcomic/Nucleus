@@ -38,17 +38,28 @@ const CATALOG = [
 
 const IDS = new Set(CATALOG.map(c => c.id));
 
+/* Fire-and-forget launch, but startup failures surface honestly: the 'error'
+   event (ENOENT, AV-blocked binary, …) arrives asynchronously — long after
+   run() would otherwise resolve — so throwing from that handler would be an
+   uncaughtException killing the resident process. Resolve on 'spawn' (or a
+   1.5 s grace window), reject on 'error'; callers already await run(). */
 function spawnDetached(cmd, args) {
-  const child = spawn(cmd, args, { detached: true, stdio: 'ignore', windowsHide: true });
-  child.unref();
-  child.on('error', (e) => { throw new Error(`failed to start ${cmd}: ${e.message}`); });
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const done = (fn, arg) => { if (settled) return; settled = true; clearTimeout(timer); fn(arg); };
+    const child = spawn(cmd, args, { detached: true, stdio: 'ignore', windowsHide: true });
+    child.unref();
+    const timer = setTimeout(() => done(resolve), 1500);
+    child.once('error', (e) => done(reject, new Error(`failed to start ${cmd}: ${e.message}`)));
+    child.once('spawn', () => done(resolve));
+  });
 }
 
 async function run(id, ctx = {}, opts = {}) {
   const key = ALIAS[String(id || '').toLowerCase()] || String(id || '').toLowerCase();
   switch (key) {
-    case 'lock': spawnDetached('rundll32.exe', ['user32.dll,LockWorkStation']); return;
-    case 'sleep': spawnDetached('rundll32.exe', ['powrprof.dll,SetSuspendState', '0,1,0']); return;
+    case 'lock': return spawnDetached('rundll32.exe', ['user32.dll,LockWorkStation']);
+    case 'sleep': return spawnDetached('rundll32.exe', ['powrprof.dll,SetSuspendState', '0,1,0']);
     case 'screenshot': return macro.sendChord(['win', 'shift', 's']);
     case 'show_desktop': return macro.sendChord(['win', 'd']);
     case 'clipboard_history': return macro.sendChord(['win', 'v']);
@@ -56,9 +67,9 @@ async function run(id, ctx = {}, opts = {}) {
     case 'mute': return macro.sendVk(0xAD);
     case 'volume_up': return macro.sendVk(0xAF);
     case 'volume_down': return macro.sendVk(0xAE);
-    case 'task_manager': spawnDetached('taskmgr.exe', []); return;
+    case 'task_manager': return spawnDetached('taskmgr.exe', []);
     // A user-picked folder opens directly; empty dir keeps the default view.
-    case 'explorer': spawnDetached('explorer.exe', opts.dir ? [opts.dir] : []); return;
+    case 'explorer': return spawnDetached('explorer.exe', opts.dir ? [opts.dir] : []);
     case 'recycle_bin': {
       const err = await shell.openPath('shell:RecycleBinFolder');
       if (err) throw new Error(err);

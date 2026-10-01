@@ -6,7 +6,11 @@ whenToUse: "When adding or changing keyboard synthesis, global hotkeys, or any u
 
 # Win32 / koffi rules
 
-`src/main/macro.js` is the only sanctioned FFI module. New Win32 calls follow its conventions.
+`src/main/macro.js` is the only sanctioned FFI module — it is the single place koffi is
+`require`d and loaded. Other modules that need user32 (e.g. `mousehook.js`) declare their
+prototypes through the guarded `macro.ffi` passthroughs (`declareUser32`, `proto`,
+`pointer`, `register`, `unregister`, `decode`) and never load koffi themselves.
+New Win32 calls follow its conventions.
 
 ## Loading
 
@@ -30,6 +34,14 @@ whenToUse: "When adding or changing keyboard synthesis, global hotkeys, or any u
 - Registration goes through Electron `globalShortcut`; a falsy register result / `isRegistered` re-check catches "already taken by another app" — unregister before reporting failure (`hotkeys.js:51-62`).
 - Ctrl+Alt combos keep re-firing after release (Electron/Windows quirk); the callback guards it with `GetAsyncKeyState` on both modifier VK codes via `macro.isDown` (`hotkeys.js:51-57`).
 - `macro.isDown` returns `true` when FFI is unavailable — a fail-open choice. Any new guard must state its failure mode explicitly (`macro.js:124-127`).
+
+## Global mouse hooks (mousehook.js)
+
+- A `WH_MOUSE_LL` procedure runs on the system's input critical path: Windows holds up every mouse event in the session until it returns. Keep the body to a few integer compares, never call Electron/Node APIs inline (defer the trigger with `setImmediate`), and route EVERY bail-out through `CallNextHookEx` — fail-open, so a broken hook passes clicks through instead of eating them (`mousehook.js` hook body).
+- Read `MSLLHOOKSTRUCT` fields only for the message you actually matched: `mouseData` u32@8, `flags` u32@12 (x64, after `POINT pt`), via `macro.ffi.decode(lParam, off, 'uint32')`. Skip `LLMHF_INJECTED` (0x1) events so synthesized input can't summon the wheel.
+- Swallowing must be PAIRED: if the press is hidden (`return 1`), the matching release must be hidden too, or the target app gets a stray button-up (`state.suppressed`).
+- Keep the koffi-registered callback pinned in a module variable and reuse it across install/uninstall; `koffi.unregister` only at shutdown.
+- `Quit` AND every trigger change must unhook: `hotkeyMgr.unregister()` → `mousehook.clear()`, `quitApp()` → `mousehook.shutdown()`. A leaked hook keeps stealing the user's clicks.
 
 ## Teardown & platform
 

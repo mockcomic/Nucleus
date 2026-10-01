@@ -98,8 +98,15 @@ function touch(rerender = true) {
 async function persist() {
   dirty = false;
   const sent = JSON.stringify(cfg);
-  const r = await api.setConfig(cfg);
-  if (r.ok) {
+  let r = null;
+  try {
+    r = await api.setConfig(cfg);
+  } catch (err) {
+    // Handlers are written to answer {ok:false}, but the invoke can still
+    // reject (window reloaded mid-save) — never leave the UI stuck "Saving…".
+    r = { ok: false, error: String((err && err.message) || err) };
+  }
+  if (r && r.ok) {
     if (typeof r.rev === 'number') storeRev = r.rev;   // our graph now matches the store's revision
     // Do NOT adopt the reply blindly: it is a fresh object graph, and swapping
     // it in would orphan the item refs the open editor/modal captured. Adopt
@@ -119,7 +126,11 @@ async function persist() {
   } else {
     dirty = true;
     setSaveState('Not saved', 'err');
-    toast('Could not save: ' + (r.error || 'unknown'), true);
+    toast('Could not save: ' + ((r && r.error) || 'unknown'), true);
+    // Retry shortly on our own — waiting for the user to type again would
+    // silently drop the edits if they never touch an input before quitting.
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(persist, 2000);
   }
 }
 
@@ -159,9 +170,12 @@ selectTab(tabBtns[0]);
 
 /* ---------------------- dashboard-icons logo resolution ------------------- */
 /* item.iconImage holds a dashboardicons slug; main hands us data: URLs (and
-   caches the bytes on disk). null = resolved-and-failed, so we don't retry
-   every keystroke while offline. */
+   caches the bytes on disk). Successes are cached forever; failures only get
+   a 60 s cooldown — a cache that never retried kept every logo glyph-only
+   until app restart once the wheel had popped while offline. */
 const imgCache = new Map();
+const failedAt = new Map();          // slug -> ms timestamp of last failed resolve
+const ICON_FAIL_TTL = 60000;
 const iconPending = new Set();
 const liveIconSpans = [];        // [{span, item, fallback}] — repopulated by renderSegments
 
@@ -182,23 +196,27 @@ function fillIconSpan(span, item, fallback) {
 function registerIconSpan(span, item, fallback) {
   liveIconSpans.push({ span, item, fallback });
   fillIconSpan(span, item, fallback);
-  if (item.iconImage && !imgCache.has(item.iconImage)) requestIconImage(item.iconImage);
+  if (item.iconImage && !imgCache.get(item.iconImage)) requestIconImage(item.iconImage);
 }
 
 function requestIconImage(slug) {
-  if (imgCache.has(slug)) return Promise.resolve(imgCache.get(slug));
+  const hit = imgCache.get(slug);
+  if (hit) return Promise.resolve(hit);
+  const at = failedAt.get(slug) || 0;
+  if (at && Date.now() - at < ICON_FAIL_TTL) return Promise.resolve(null);   // fresh failure — cool down
   if (iconPending.has(slug)) return Promise.resolve(null);
   iconPending.add(slug);
   return api.iconDataUrl(slug).then((r) => {
     iconPending.delete(slug);
     const url = r && r.ok ? r.dataUrl : null;
-    imgCache.set(slug, url);
+    if (url) { imgCache.set(slug, url); failedAt.delete(slug); }
+    else failedAt.set(slug, Date.now());
     refreshIconSpans();
     renderPreview();
     return url;
   }, () => {
     iconPending.delete(slug);
-    if (!imgCache.has(slug)) imgCache.set(slug, null);
+    failedAt.set(slug, Date.now());
     return null;
   });
 }
@@ -235,8 +253,9 @@ function renderSegments() {
   host.innerHTML = '';
   const keys = ringKeys();
   const N = keys.length;
+  let createdRing = false;
   for (const ring of keys) {
-    if (!cfg.rings[ring]) cfg.rings[ring] = [];
+    if (!cfg.rings[ring]) { cfg.rings[ring] = []; createdRing = true; }
     const sec = el('div', 'ring-sec', {}, host);
     const head = el('div', 'ring-head', {}, sec);
     el('h3', null, { text: ringTitle(ring, N) }, head);
@@ -263,6 +282,9 @@ function renderSegments() {
     const list = el('div', 'seg-list', {}, sec);
     cfg.rings[ring].forEach((item, i) => list.appendChild(segRow(ring, item, i)));
   }
+  // renderSegments created a missing ring array — model mutated in render;
+  // flag it (preview-only touch) so the repair reaches disk without a keystroke.
+  if (createdRing) touch(false);
   if (N < MAX_RINGS) {
     const addRing = el('button', 'btn', { text: '+ Add ring', title: `Add ring ${N + 1} (outermost)` }, host);
     addRing.style.marginTop = '4px';
@@ -352,12 +374,14 @@ function segRow(ring, item, i) {
     btn.addEventListener('pointerdown', () => {
       // click = one step; holding past 420ms steps every 110ms until release or edge
       t0 = setTimeout(() => { t1 = setInterval(() => { if (!stepMove(dir)) stop(); }, 110); }, 420);
+      // the row rerenders mid-hold (touch() rebuilds it), so the release
+      // listener sits on window — but registered only WHILE a hold is live:
+      // at-render-time registration left rows×2 window listeners behind on
+      // every full re-render, each pinning its detached button.
+      window.addEventListener('pointerup', () => stop(), { once: true });
     });
     btn.addEventListener('pointercancel', stop);
     btn.addEventListener('blur', stop);
-    // the row rerenders mid-hold (touch() rebuilds it), so listen on window —
-    // the button that started the hold may already be gone when the mouse lets go
-    window.addEventListener('pointerup', () => stop(), { once: true });
   };
   holdRepeat(mini('\uE74A', 'Move earlier', () => stepMove(-1), '', 'Move earlier — hold to keep moving'), -1);
   holdRepeat(mini('\uE74B', 'Move later', () => stepMove(1), '', 'Move later — hold to keep moving'), 1);
@@ -718,9 +742,10 @@ function appCombo(item, inV, f) {
     renderList();
   }
 
-  search.addEventListener('focus', () => { ensureLoaded(); list.classList.remove('hidden'); renderList(); });
-  search.addEventListener('input', () => { list.classList.remove('hidden'); renderList(); });
-  search.addEventListener('blur', () => setTimeout(() => list.classList.add('hidden'), 180));
+  let listHideTimer = null;   // cancellable — a quick refocus must not lose the open list
+  search.addEventListener('focus', () => { clearTimeout(listHideTimer); ensureLoaded(); list.classList.remove('hidden'); renderList(); });
+  search.addEventListener('input', () => { clearTimeout(listHideTimer); list.classList.remove('hidden'); renderList(); });
+  search.addEventListener('blur', () => { clearTimeout(listHideTimer); listHideTimer = setTimeout(() => list.classList.add('hidden'), 180); });
   search.addEventListener('keydown', (ev) => {
     if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
       ev.preventDefault(); showList();
@@ -876,11 +901,14 @@ async function runDiSearch() {
   }
 }
 
+let pickSeq = 0;
 async function pickDashboardIcon(res) {
   if (!iconModalTarget) return;
+  const my = ++pickSeq;
   $('#di-status').textContent = `Downloading “${res.slug}”…`;
-  const r = await api.fetchIcon(res.slug);
-  if (!r || !r.ok) { $('#di-status').textContent = (r && r.error) || 'Download failed — try again.'; return; }
+  const r = await safe(() => api.fetchIcon(res.slug));
+  if (my !== pickSeq) return;                     // a newer click won the race — don't resurrect this pick
+  if (!r.ok) { $('#di-status').textContent = r.error || 'Download failed — try again.'; return; }
   imgCache.set(res.slug, r.dataUrl);
   const t = modalTarget();
   if (t) t.iconImage = res.slug;
@@ -911,6 +939,9 @@ const SLIDERS = [
   ['fontSize', 'Label size', 8, 20, 1],
   ['animationMs', 'Pop duration ms', 0, 400, 10]
 ];
+/* Keep in sync with config.js validate (MIN_BAND): the ring band needs
+   outer ≥ inner + MIN_BAND or hit-testing matches nothing at all. */
+const MIN_BAND = 24;
 
 function renderAppearance() {
   const host = $('#appearance-controls');
@@ -927,8 +958,22 @@ function renderAppearance() {
     const fill = () => r.style.setProperty('--fill', ((+r.value - min) / (max - min) * 100) + '%');
     fill();
     // Only the preview needs the new value — never rerender the segment rows per drag frame.
-    r.addEventListener('input', () => { cfg.appearance[key] = parseFloat(r.value); out.textContent = r.value; fill(); renderPreview(); });
-    r.addEventListener('change', () => touch(false));
+    r.addEventListener('input', () => {
+      let v = parseFloat(r.value);
+      // Live mirror of config.js's cross-constraint: dragging Hub past
+      // Wheel−24 (or Wheel under Hub+24) clamps the value back, so the dial
+      // can never enter the no-band state that kills hit-testing.
+      if (key === 'innerRadius') v = Math.min(v, cfg.appearance.outerRadius - MIN_BAND);
+      if (key === 'outerRadius') v = Math.max(v, cfg.appearance.innerRadius + MIN_BAND);
+      v = Math.min(max, Math.max(min, v));
+      cfg.appearance[key] = v;
+      r.value = String(v); out.textContent = String(v); fill(); renderPreview();
+    });
+    r.addEventListener('change', () => {
+      // Re-paint the sibling radius row so its slider/label show the clamp.
+      if (key === 'innerRadius' || key === 'outerRadius') renderAppearance();
+      touch(false);
+    });
   }
 
   const cg = $('#color-grid');
@@ -1058,7 +1103,12 @@ function renderThemes() {
         THEMES.map((t) => t.name.toLowerCase())
           .concat((cfg.userThemes || []).map((t) => t.name.toLowerCase())));
       let name = raw.slice(0, 24), n = 2;
-      while (taken.has(name.toLowerCase())) name = (raw + ' (' + n++).slice(0, 24);
+      // Mirror of config.js cleanUserTheme: build the suffix from a base the
+      // 24-char cap cannot swallow — the old `(raw + ' (n)').slice(0, 24)`
+      // form looped forever (freezing this renderer) when a ≥24-char name hit
+      // an existing 24-char prefix.
+      while (taken.has(name.toLowerCase()) && n <= 9999) name = (raw.slice(0, 18) + ' (' + (n++) + ')').slice(0, 24);
+      if (taken.has(name.toLowerCase())) name = ('Theme ' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5)).slice(0, 24);
       cfg.userThemes = (cfg.userThemes || []).concat([{
         id: 'u' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
         name, colors: { ...cfg.appearance.colors },
@@ -1105,11 +1155,37 @@ function renderThemes() {
 }
 
 /* -------------------------------- behavior -------------------------------- */
+/* Mouse-button triggers. MouseEvent.button -> spec token; left (0) and right (2)
+   are deliberately not recordable (see hotkeys.js MOUSE_KEYS). */
+const HK_MOUSE = { 1: 'mmiddle', 3: 'mback', 4: 'mfwd' };
+const MOUSE_LABELS = { mmiddle: 'Middle click', mback: 'Back button', mfwd: 'Forward button' };
+
 function fmtHotkey(spec) {
   const nice = { ctrl: 'Ctrl', alt: 'Alt', shift: 'Shift', win: 'Win', space: 'Space', esc: 'Esc', enter: 'Enter', pgup: 'PgUp', pgdn: 'PgDn' };
-  return String(spec || '').split('+').map((t) => nice[t] || (t.length === 1 ? t.toUpperCase() : t[0].toUpperCase() + t.slice(1))).join(' + ');
+  return String(spec || '').toLowerCase().split('+').filter(Boolean)
+    .map((t) => MOUSE_LABELS[t] || nice[t] || (t.length === 1 ? t.toUpperCase() : t[0].toUpperCase() + t.slice(1)))
+    .join(' + ');
 }
-function updateHotkeyChip() { $('#hk-display').textContent = fmtHotkey(cfg.hotkey); }
+/** The mouse token of a spec, or null when its main key is a keyboard key. */
+function hotkeyMouseToken(spec) {
+  const toks = String(spec || '').toLowerCase().split('+').filter(Boolean);
+  const last = toks[toks.length - 1];
+  return MOUSE_LABELS[last] ? last : null;
+}
+function updateHotkeyChip() {
+  $('#hk-display').textContent = fmtHotkey(cfg.hotkey);
+  updateMouseControls();
+}
+/* The click-through checkbox only means something while a mouse button is the
+   trigger — dim it otherwise (same affordance as the gaming-mode app list). */
+function updateMouseControls() {
+  const c = $('#bh-mouse-through');
+  if (!c) return;
+  const live = hotkeyMouseToken(cfg.hotkey) !== null;
+  c.disabled = !live;
+  const lbl = c.closest('label');
+  if (lbl) lbl.classList.toggle('dim', !live);
+}
 function showHkError(msg) {
   const e = $('#hk-error');
   if (msg) { e.textContent = msg; e.classList.remove('hidden'); }
@@ -1124,10 +1200,66 @@ $('#recorder-btn').addEventListener('click', () => {
   $('#hk-display').classList.toggle('recording', recording);
 });
 
+function modsOf(e) {
+  const mods = [];
+  if (e.ctrlKey) mods.push('ctrl');
+  if (e.altKey) mods.push('alt');
+  if (e.shiftKey) mods.push('shift');
+  if (e.metaKey) mods.push('win');
+  return mods;
+}
+
+/* Register + persist through main (which restores the old trigger if the
+ * registration fails), then refresh the chip. Capture is stopped BEFORE the
+ * await: if the invoke rejects, the window-wide preventDefault/stopPropagation
+ * listeners must already be off — otherwise Settings stays input-dead until the
+ * recorder button is clicked again (the behaviour welcome.js has always had). */
+async function commitSpec(spec, note) {
+  stopRecording();
+  let r = null;
+  try { r = await api.setHotkey(spec); } catch (err) { r = { ok: false, error: String((err && err.message) || err) }; }
+  if (r.ok) {
+    cfg.hotkey = spec; updateHotkeyChip(); showHkError(null);
+    toast(`Hotkey set to ${fmtHotkey(spec)}` + (note ? ' — ' + note : ''), !!note, null, note ? 6000 : 2000);
+  } else { showHkError(r.error); toast(r.error, true, null, 5000); }
+}
+
+/* Mouse-button capture: press Middle / Back / Forward (optionally with
+   modifiers) while recording. The button under the cursor must NOT act as the
+   trigger, so the recorder's own control is ignored — clicking "Change…" still
+   cancels. Left/right presses are ignored outright (not recordable). */
+window.addEventListener('mousedown', (e) => {
+  if (!recording) return;
+  const t = e.target;
+  if (t && t.closest && t.closest('#recorder-btn')) return;
+  e.preventDefault(); e.stopPropagation();
+  if (e.button === 0 || e.button === 2) return;                 // cancel / no-op, stays silent
+  const token = HK_MOUSE[e.button];
+  if (!token) { toast('Use the Middle, Back or Forward button', true); return; }
+  const mods = modsOf(e);
+  const spec = [...mods, token].join('+');
+  // A bare button trigger also hides the swallow default, so say what happened.
+  const note = (!mods.length && cfg.behavior && cfg.behavior.mouseClickThrough === false)
+    ? `${MOUSE_LABELS[token]} no longer reaches the app underneath — tick “Let the mouse button through” to get it back.`
+    : '';
+  commitSpec(spec, note);
+}, true);
+
+/* Right-click during capture must not pop the window menu. */
+window.addEventListener('contextmenu', (e) => {
+  if (!recording) return;
+  e.preventDefault(); e.stopPropagation();
+}, true);
+
 const HK_KEYS = {
   ' ': 'space', Enter: 'enter', Tab: 'tab', Escape: 'esc', Backspace: 'backspace',
   Delete: 'delete', Insert: 'insert', Home: 'home', End: 'end', PageUp: 'pgup', PageDown: 'pgdn',
   ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down'
+};
+/* Punctuation keys the hotkey grammar accepts (mirrors welcome-core.mjs NAMED). */
+const REC_PUNCT = {
+  '-': 'minus', '=': 'equal', ',': 'comma', '.': 'period', '/': 'slash',
+  '\\': 'backslash', ';': 'semicolon', "'": 'quote', '`': 'backquote'
 };
 
 window.addEventListener('keydown', async (e) => {
@@ -1137,19 +1269,13 @@ window.addEventListener('keydown', async (e) => {
   if (['Control', 'Alt', 'Shift', 'Meta'].includes(e.key)) return;   // wait for the main key
   let key = HK_KEYS[e.key];
   if (!key && /^F([1-9]|1[0-9]|2[0-4])$/i.test(e.key)) key = e.key.toLowerCase();
-  if (!key && e.key.length === 1 && /[a-z0-9]/i.test(e.key)) key = e.key.toLowerCase();
+  // Same punctuation set as welcome-core.mjs NAMED / hotkeys.js KEYS — combos
+  // recordable in the FTU must be obtainable from Settings too.
+  if (!key && e.key.length === 1) key = REC_PUNCT[e.key] || (/[a-z0-9]/i.test(e.key) ? e.key.toLowerCase() : undefined);
   if (!key) { toast('Unsupported key: ' + e.key, true); return; }
-  const mods = [];
-  if (e.ctrlKey) mods.push('ctrl');
-  if (e.altKey) mods.push('alt');
-  if (e.shiftKey) mods.push('shift');
-  if (e.metaKey) mods.push('win');
-  if (!mods.length) { toast('Add at least one modifier (Ctrl/Alt/Shift/Win)', true); return; }
-  const spec = [...mods, key].join('+');
-  const r = await api.setHotkey(spec);
-  if (r.ok) { cfg.hotkey = spec; updateHotkeyChip(); showHkError(null); toast(`Hotkey set to ${fmtHotkey(spec)}`); }
-  else { showHkError(r.error); toast(r.error, true, null, 5000); }
-  stopRecording();
+  const mods = modsOf(e);
+  if (!mods.length) { toast('Add a modifier (Ctrl/Alt/Shift/Win) — or press Middle / Back / Forward on the mouse', true); return; }
+  commitSpec([...mods, key].join('+'));
 }, true);
 
 function stopRecording() {
@@ -1181,16 +1307,23 @@ function wireBehaviorCheckboxes() {
     'autostart-chk': ['behavior', 'autostart'],
     'bh-esc': ['behavior', 'dismissOnEscape'],
     'bh-right': ['behavior', 'dismissOnRightClick'],
-    'bh-retrigger': ['behavior', 'reTriggerToggles']
-  };
-  for (const [id, [sec, key]] of Object.entries(map)) {
+    'bh-retrigger': ['behavior', 'reTriggerToggles'],
+    // Only meaningful while the trigger's main key is a mouse button (dimmed then).
+    'bh-mouse-through': ['behavior', 'mouseClickThrough']
+  };  for (const [id, [sec, key]] of Object.entries(map)) {
     const c = $('#' + id);
     c.checked = cfg[sec][key];
     c.onchange = async () => {
       cfg[sec][key] = c.checked;
       if (sec === 'behavior' && key === 'autostart') {
-        const r = await api.setAutostart(c.checked);
-        if (!r.ok) { toast('Autostart failed: ' + r.error, true); c.checked = !c.checked; return; }
+        let r = null;
+        try { r = await api.setAutostart(c.checked); } catch (err) { r = { ok: false, error: String((err && err.message) || err) }; }
+        if (!r || !r.ok) {
+          toast('Autostart failed: ' + ((r && r.error) || 'unknown'), true);
+          c.checked = !c.checked;
+          cfg[sec][key] = c.checked;   // revert the MODEL with the checkbox — the old code left cfg flipped
+          return;
+        }
         toast(r.verified ? 'Startup registration confirmed' : 'Saved (could not verify login item)');
       }
       touch(false);
@@ -1213,6 +1346,7 @@ function wireBehaviorCheckboxes() {
     gmApps.value = cfg.behavior.gameMode.apps.join(', ');   // reflect normalization
     touch(false);
   };
+  updateMouseControls();   // dim/enable the click-through toggle for the current trigger
   $('#ap-showlabels').checked = cfg.appearance.showLabels;
   $('#ap-showlabels').onchange = (e) => { cfg.appearance.showLabels = e.target.checked; renderPreview(); touch(false); };
   const cl = $('#ap-centerlabel');
@@ -1222,8 +1356,16 @@ function wireBehaviorCheckboxes() {
 }
 
 /* -------------------------------- advanced --------------------------------- */
+/* Every bridge invoke is treated as possibly REJECTING (window reload mid-call,
+   an unexpected main-side throw): rejections are folded into the {ok:false,
+   error} shape every UI branch in this file already speaks. */
+async function safe(call) {
+  try { return (await call()) || { ok: false, error: 'empty response' }; }
+  catch (err) { return { ok: false, error: String((err && err.message) || err) }; }
+}
+
 async function restoreConfig(snapshot) {
-  const u = await api.setConfig(snapshot);
+  const u = await safe(() => api.setConfig(snapshot));
   if (u.ok) {
     cfg = clone(u.config); dirty = false;
     renderAll();
@@ -1236,12 +1378,17 @@ async function restoreConfig(snapshot) {
 
 async function wireAdvanced() {
   $('#ver').textContent = 'v' + (await api.appVersion());
-  $('#btn-export').onclick = async () => { const r = await api.exportConfig(); if (r.ok) toast('Exported to ' + r.path); };
+  $('#btn-export').onclick = async () => {
+    const r = await safe(() => api.exportConfig());
+    if (r.ok) toast('Exported to ' + r.path);
+    else if (!r.canceled) toast('Export failed: ' + r.error, true);
+  };
   $('#btn-import').onclick = async () => {
     const snapshot = clone(cfg);
-    const r = await api.importConfig();
+    const r = await safe(() => api.importConfig());
     if (r.ok) {
       cfg = clone(r.config); dirty = false;
+      if (typeof r.rev === 'number') storeRev = r.rev;
       renderAll();
       showHkError(r.hotkeyError || null);          // never let the chip claim a combo that failed to register
       toast('Config imported', false, async () => { await restoreConfig(snapshot); });
@@ -1249,13 +1396,14 @@ async function wireAdvanced() {
   };
   $('#btn-reset').onclick = async () => {
     const snapshot = clone(cfg);
-    const r = await api.resetConfig();
+    const r = await safe(() => api.resetConfig());
     if (r.ok) {
       cfg = clone(r.config); dirty = false;
+      if (typeof r.rev === 'number') storeRev = r.rev;
       renderAll();
       showHkError(r.hotkeyError || null);
       toast('Settings reset to defaults', false, async () => { await restoreConfig(snapshot); });
-    }
+    } else if (!r.canceled) toast(r.error, true);
   };
   $('#btn-openfolder').onclick = () => api.openConfigFolder();
   /* Quit is the highest-stakes click in this window — answer it in-brand,
@@ -1411,6 +1559,13 @@ async function boot() {
     cfg = newCfg;
     renderAll();                                                             // genuine external change
   });
+  // Flush the 450 ms autosave when this page goes away for good (app quit
+  // destroys the window before the debounce fires — those last keystrokes
+  // would be lost). A synchronous send() still lands in main at this point;
+  // an invoke could not.
+  const flushOnExit = () => { if (dirty && cfg) { dirty = false; api.flushConfig(clone(cfg)); } };
+  window.addEventListener('pagehide', flushOnExit);
+  window.addEventListener('beforeunload', flushOnExit);
   window.addEventListener('resize', () => renderPreview());
 }
 

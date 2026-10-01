@@ -26,6 +26,7 @@ export function ringSpans(cfg) {
     .filter((r) => r.items.length);
   if (!active.length) return [];
   const span = ap.outerRadius - ap.innerRadius;
+  if (span <= 0) return [];   // no band (should be impossible post-validate) — degrade to hub-only instead of an unhittable dial
   const out = [];
   for (let i = 0; i < active.length; i++) {
     const f0 = active.length === 1 ? 0 : i / active.length;
@@ -294,6 +295,11 @@ export function buildWheel(container, cfg, opts = {}) {
     return null;
   }
 
+  // Force the "nothing hovered" hub reset once at build time — the
+  // hovered===seg guard would otherwise skip it (hovered already starts as
+  // null, so a plain setHover(null) was a dead no-op; harmless only while the
+  // build-time defaults below coincided with this reset).
+  hovered = undefined;
   setHover(null);
   return { cfg: s, size, segments, setHover, hitTest };
 }
