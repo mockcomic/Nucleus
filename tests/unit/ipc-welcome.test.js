@@ -22,7 +22,10 @@ function fakeWindow() {
   const win = {
     sent: [], shown: 0, hidden: 0, closed: 0, destroyed: 0, focusCalls: 0, visible: false,
     handlers,
-    webContents: { send: (ch, payload) => { win.sent.push([ch, payload]); } },
+    webContents: {
+      send: (ch, payload) => { win.sent.push([ch, payload]); },
+      on: () => {}
+    },
     once: (ev, fn) => { handlers[ev] = fn; },
     on: (ev, fn) => { handlers[ev] = fn; },
     loadFile: () => {}, setMenuBarVisibility: () => {},

@@ -67,7 +67,7 @@ function startCapture() {
   $('rec-btn').textContent = 'Listening…';
   $('hk-display').classList.add('recording');
   setHotkeyError(null);
-  setStatus('Press a combo — Ctrl / Alt / Shift / Win + any key — or click Middle / Back / Forward on the mouse. Esc cancels.', '');
+  setStatus('Press Ctrl, Alt, Shift, or Win plus a key. Or click Middle, Back, or Forward. Esc cancels.', '');
 }
 function stopCapture() {
   recording = false;
@@ -121,10 +121,10 @@ window.addEventListener('keydown', async (e) => {
     await commitSpec(spec);
     return;
   }
-  if (e.key === 'Escape') { api.finish(false); return; }
+  if (e.key === 'Escape') { finish(false); return; }
   // Enter finishes on the last step, unless a button has focus (it handles its own Enter)
   if (e.key === 'Enter' && step === LAST && !(document.activeElement instanceof HTMLButtonElement)) {
-    api.finish(true);
+    finish(true);
   }
 }, true);
 
@@ -178,9 +178,25 @@ $('rec-btn').addEventListener('click', () => { recording ? stopCapture() : start
 $('test-btn').addEventListener('click', () => api.testWheel());
 $('back-btn').addEventListener('click', () => go(-1));
 $('next-btn').addEventListener('click', () => go(1));
-$('go-settings').addEventListener('click', () => api.finish(true));
-$('go-done').addEventListener('click', () => api.finish(false));
-$('tb-close').addEventListener('click', () => api.finish(false));
+/* First completion only. The last step's checkbox is the opt-in; leaving
+   earlier (Esc, close, or Done from a previous step) writes startup off so a
+   dismissed guide never registers a login item the user did not see. Replays
+   send null and main leaves the registry alone. */
+function finish(openSettings) {
+  const first = !info || !info.ftuSeen;
+  let applyAutostart = null;
+  if (first) {
+    const row = $('autostart-row');
+    const box = $('welcome-autostart');
+    const onLast = step === LAST && info.autostartAllowed && row && !row.classList.contains('hidden');
+    applyAutostart = onLast && box ? !!box.checked : false;
+  }
+  api.finish({ openSettings: !!openSettings, applyAutostart });
+}
+
+$('go-settings').addEventListener('click', () => finish(true));
+$('go-done').addEventListener('click', () => finish(false));
+$('tb-close').addEventListener('click', () => finish(false));
 
 /* Tray → “Show welcome…” reuses this page without reloading it, so main asks us
    to walk back before showing — a finished guide must not replay on step 4. */
@@ -189,6 +205,11 @@ if (api.onReset) api.onReset(() => {
   setHotkeyError(null);
   setStatus('', '');
   step = 0;
+  // Replays are never the first completion — hide the startup opt-in so Done
+  // cannot send a new choice. main also ignores it once ftuSeen is set.
+  if (info) info.ftuSeen = true;
+  const row = $('autostart-row');
+  if (row) row.classList.add('hidden');
   render();
   if (cfg) setHotkeyChips(cfg.hotkey);
 });
@@ -215,5 +236,9 @@ api.onConfigChanged((payload) => {
     n.classList.remove('hidden');
   }
   if (info.hotkeyError) setHotkeyError(info.hotkeyError);
+  const row = $('autostart-row');
+  if (row) row.classList.toggle('hidden', !(info && !info.ftuSeen && info.autostartAllowed));
+  const box = $('welcome-autostart');
+  if (box) box.checked = true;
   render();
 })();

@@ -326,6 +326,18 @@ input[type=range]:focus-visible::-webkit-slider-thumb { outline: 2px solid var(-
 .combo-empty, .combo-foot { padding: 8px 10px; font-size: 12px; }
 .combo-foot { border-top: 1px solid var(--line); margin-top: 4px; padding-top: 6px; }
 
+/* sys action searchable select (type: sys) — same popup voice as the
+   installed-programs dropdown, but grouped and single-line per action */
+.seg-edit .f-ctl .combo-host { position: relative; flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 8px; }
+.seg-edit .f-ctl .combo-host > input[type=text] { flex: 1 1 auto; min-width: 0; }
+.combo-grp { padding: 8px 9px 3px; font-size: 11px; font-weight: 700; color: var(--dim); }
+.combo-list > .combo-grp:first-child { padding-top: 4px; }
+.combo-row.combo-sys { grid-template-columns: auto 1fr; column-gap: 9px; align-items: center; }
+.combo-row.combo-sys .cs-ico { font-family: var(--icon-font); font-size: 15px; line-height: 1; }
+.combo-row.combo-sys.selected .cr-name::after { content: ' ✓'; color: var(--accent); }
+.combo-row.combo-sys.selected:hover .cr-name::after,
+.combo-row.combo-sys.active .cr-name::after { color: var(--on-accent); }
+
 /* overlay-style scrollbars */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border: 2px solid transparent; background-clip: padding-box; border-radius: 8px; }

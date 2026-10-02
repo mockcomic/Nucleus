@@ -92,9 +92,10 @@ async function executeAction(item, ctx = {}) {
         const exe = cmd[1].replace(/^"|"$/g, '');
         return launchDetached(exe, tokens.concat(splitArgs(cmd[2] || '')), value);
       }
-      // last resort: shell resolution (e.g. "notepad", "ms-...", store links) —
-      // the raw args string rides along so cmd.exe still sees the quotes as typed.
-      return launchDetached(tokens.length ? target + ' ' + rawArgs : target, [], value, { shell: true });
+      // Not a file on disk (notepad, ms-settings, a store link). `start` resolves
+      // PATH, App Paths, and protocol handlers. This stays off Node's shell:true;
+      // a free-form shell line belongs to a command segment.
+      return launchDetached('cmd.exe', ['/d', '/s', '/c', 'start', '""', target, ...tokens], target);
     }
     case 'command': {
       if (!value) throw new Error('no command configured');
@@ -113,9 +114,10 @@ async function executeAction(item, ctx = {}) {
         // Same `start ""` route as the batch files: powershell.exe spawned
         // directly with detached:true silently never runs (verified on real
         // machines); through cmd's ShellExecute it launches reliably.
+        // No -ExecutionPolicy Bypass — the script runs under the machine policy.
         const child = spawn('cmd.exe',
           ['/d', '/s', '/c', 'start', '""', 'powershell.exe',
-            '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script],
+            '-NoProfile', '-File', script],
           { detached: true, stdio: 'ignore', windowsHide: true });
         child.unref();
         return;

@@ -75,7 +75,16 @@ if (on('welcome')) {
     info: invoke('welcome:info'),
     setHotkey: invoke('hotkey:set'),
     testWheel: invoke('overlay:show'),
-    finish: (openSettings) => ipcRenderer.send('welcome:done', !!openSettings),
+    finish: (payload) => {
+      if (payload && typeof payload === 'object') {
+        ipcRenderer.send('welcome:done', {
+          openSettings: !!payload.openSettings,
+          applyAutostart: typeof payload.applyAutostart === 'boolean' ? payload.applyAutostart : null
+        });
+      } else {
+        ipcRenderer.send('welcome:done', !!payload);
+      }
+    },
     onConfigChanged: (cb) => ipcRenderer.on('config:changed', (_e, payload) => cb(payload)),
     onReset: (cb) => ipcRenderer.on('welcome:reset', () => cb())
   });

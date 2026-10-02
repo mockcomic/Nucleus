@@ -3,5 +3,7 @@ dist/
 .dev-userdata/
 .npm-cache/
 .cache/
+.serena/
+.codebase-memory/
 assets/tray.ico
 assets/tray-32.png

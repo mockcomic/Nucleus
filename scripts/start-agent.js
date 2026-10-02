@@ -21,10 +21,9 @@
 
    The isolated profile also keeps a dev run off the real
    %APPDATA%\Radial Wheel\ files. First-run seeding forces
-   behavior.autostart=false, because main.js registers the HKCU Run key from
-   process.execPath on first run — which in a dev tree is
-   node_modules\electron\dist\electron.exe, a login item that dies the moment
-   node_modules is reinstalled (see the release-check autostart caveat).
+   behavior.autostart=false so the dev profile does not record a startup
+   preference. An unpackaged exe is not an installed copy, so main.js will
+   not register a login item for electron.exe either.
 
    Usage: npm run start:agent [-- --show-wheel]
    Normal desktop runs still use `npm start`.

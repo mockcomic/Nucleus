@@ -74,11 +74,12 @@
           <div id="hk-display" class="hk-chip" aria-live="polite">Ctrl + Alt + Space</div>
           <button id="recorder-btn" class="btn">Change…</button>
         </div>
-        <div class="hint muted">Click “Change…”, then press any modifier combination (Ctrl/Alt/Shift/Win + key) — or click the <b>Middle</b>, <b>Back</b> or <b>Forward</b> mouse button, with or without a modifier. It registers instantly — if the combo is taken by another app you'll be told and the old hotkey stays active.</div>
+        <div class="hint muted">Click “Change…”, then press Ctrl, Alt, Shift, or Win plus a key. Ctrl + Alt + Space is the usual choice. A mouse button — <b>Middle</b>, <b>Back</b>, or <b>Forward</b>, with or without a modifier — is the alternative. It registers instantly — if the combo is taken by another app you'll be told and the old hotkey stays active.</div>
       </div>
       <div class="card">
         <div class="card-title">Startup</div>
-        <label class="chk"><input type="checkbox" id="autostart-chk"> Launch Radial Wheel when I sign in to Windows</label>
+        <label class="chk" id="autostart-lbl"><input type="checkbox" id="autostart-chk"> Launch Radial Wheel when I sign in to Windows</label>
+        <div id="autostart-hint" class="hint muted hidden">Startup is only available in the installed app. This copy will not register a login item.</div>
       </div>
       <div class="card">
         <div class="card-title">Wheel behavior</div>

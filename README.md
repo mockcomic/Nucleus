@@ -19,9 +19,10 @@ Default hotkey: **Ctrl + Alt + Space** — or use a mouse button instead: **Midd
 or **Forward**, on their own or with modifiers (`Ctrl + Middle`). Change it in
 Settings → **Hotkey & behavior** → *Change…*: press a combo, or click the button.
 First launch opens the **Welcome guide** — four steps: what the wheel is, re-record your
-hotkey (with a live "try the wheel" test), what to know, hand-off to Settings — and
-registers autostart (per-user Startup entry); both are changeable anytime. Replay the
-guide anytime from tray → **Show welcome…**.
+hotkey (with a live "try the wheel" test), what to know, hand-off to Settings. On the
+installed app, the last step can turn on start-with-Windows; a portable or development
+copy does not register a login item. The hotkey and startup are both changeable anytime
+in Settings. Replay the guide anytime from tray → **Show welcome…**.
 
 - The app lives in the system tray — no taskbar entry, no console.
 - Tray menu: Show wheel · Open Settings · Show welcome… · Reload config · Pause hotkey · Quit.

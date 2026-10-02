@@ -6,7 +6,7 @@ whenToUse: "Before shipping a build, after version bumps, or whenever dist outpu
 
 # Release check
 
-`npm run dist` = `node scripts/make-icons.mjs` (regenerates `assets/tray.ico` + png via `src/main/icon-gen.js`) followed by electron-builder (`package.json:13`). Targets: portable + NSIS oneClick, per-machine false, `signExecutable: false`, `appId local.radialwheel`.
+`npm run dist` = `node scripts/make-icons.mjs` (regenerates `assets/tray.ico` + png via `src/main/icon-gen.js`) followed by electron-builder. Targets: portable + NSIS oneClick, per-machine false, `appId local.radialwheel`. Signing is electron-builder's default (do not set `forceCodeSigning`): when `CSC_LINK` or `WIN_CSC_LINK` plus the password, or a certificate selected via `signtoolOptions`, is present, the app exe and the NSIS setup are signed. With no certificate the build still completes and the executables stay unsigned (`no signing info identified, signing is skipped` is a debug log).
 
 ## Pre-flight
 
@@ -17,12 +17,13 @@ whenToUse: "Before shipping a build, after version bumps, or whenever dist outpu
 
 - Launch the portable exe: tray icon appears, first run creates `config.json` under `%APPDATA%\Radial Wheel\`, shows the welcome balloon, and opens settings (`src/main/main.js:106-113`).
 - Verify the `[radial-wheel] ready` marker path works packaged-in (`main.js:117`) and the wheel pops on the configured hotkey.
-- Because the exe is unsigned, expect SmartScreen prompts — warn testers; never "fix" this by claiming the build is signed.
+- A build produced with no certificate is unsigned — expect SmartScreen prompts. Do not describe that build as signed.
 
 ## Autostart caveat (classic trap)
 
-- Autostart registers `process.execPath` with `--hidden` (`src/main/autostart.js:8-12`). A portable exe launched from `Downloads\` or a build folder registers that literal path — move the file and login-start silently dies.
-- Verify autostart from the final intended location, not the build path. The second-instance handler honors `--hidden` and must not open settings on login (`src/main/main.js:128-131`).
+- A login item is registered only for an installed NSIS copy: packaged, `PORTABLE_EXECUTABLE_FILE` unset, and an `Uninstall *.exe` beside the executable (`src/main/autostart.js`). Portable, `dist\win-unpacked`, and `npm start` call `set(false)` for **this** exe only and do not rewrite `behavior.autostart` in the shared `%APPDATA%\Radial Wheel` config.
+- On the installed app, startup is applied when the welcome guide finishes: the last step's checkbox, or off if the guide is closed before that step. After the guide has been seen, each launch reconciles the registry to `behavior.autostart`.
+- The second-instance handler honors `--hidden` and must not open settings on login.
 
 ## Clean-profile smoke
 

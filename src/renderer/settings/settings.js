@@ -545,19 +545,7 @@ function segEditor(ring, item) {
 
   if (item.type === 'sys') {
     const cTarget = field(TARGET_LABELS.sys, uid + '-target');
-    const sel = el('select', null, { id: uid + '-target' }, cTarget);
-    for (const c of (sysCatalogCache || [])) el('option', null, { value: c.id, text: `${c.group} — ${c.label}` }, sel);
-    sel.value = item.value;
-    sel.addEventListener('change', () => {
-      const wasDir = !!(sysEntry(item.value) || {}).hasDir;
-      item.value = sel.value;
-      const isDir = !!(sysEntry(item.value) || {}).hasDir;
-      if (!isDir) item.dir = '';                     // folder slot belongs to explorer only
-      syncRowText();
-      // The Folder field appears/vanishes with the action — rebuild the editor
-      // (touch()) so it stays in sync; otherwise save without a rerender.
-      if (isDir !== wasDir) touch(); else touch(false);
-    });
+    sysActionCombo(item, cTarget, `${uid}-list`, syncRowText);
     if ((sysEntry(item.value) || {}).hasDir) {
       const cDir = field('Folder', uid + '-dir');
       const inD = bind(el('input', null, {
@@ -751,6 +739,129 @@ function appCombo(item, inV, f) {
   });
   ddBtn.addEventListener('mousedown', (ev) => { ev.preventDefault(); if (list.classList.contains('hidden')) showList(); else list.classList.add('hidden'); search.focus(); });
   scanBtn.addEventListener('mousedown', (ev) => { ev.preventDefault(); ensureLoaded(true); showList(); search.focus(); });
+}
+
+/* ---------------- sys action searchable dropdown (type: sys) --------------
+   Same shape as appCombo: search input + ▾ button + .combo-list popup. The
+   catalog is small and fully in-memory, so there is no scan/cache — the list
+   renders instantly, grouped with headers and the action's own glyph. The
+   input is a display field, not free text: blur always restores it to the
+   selected action, and only a pick from the list writes item.value. */
+function sysComboText(c) {
+  return c ? `${c.label}  ·  ${c.group}` : '';
+}
+
+function sysActionCombo(item, cTarget, listId, syncRowText) {
+  const host = el('div', 'combo-host', {}, cTarget);
+  const search = el('input', null, {
+    type: 'text', placeholder: 'Search actions…  (▾ opens the full list)',
+    'aria-label': 'Search Windows actions', role: 'combobox', 'aria-autocomplete': 'list',
+    'aria-controls': listId, autocomplete: 'off', spellcheck: 'false'
+  }, host);
+  search.value = sysComboText(sysEntry(item.value));
+  const ddBtn = el('button', 'btn small', { type: 'button', title: 'Show all actions', 'aria-label': 'Show all actions' }, host);
+  el('span', 'g', { text: '\uE70D' }, ddBtn);   // ChevronDown
+  const list = el('div', 'combo-list hidden', { id: listId, role: 'listbox', 'aria-label': 'Windows actions' }, host);
+
+  let rows = [];
+  let active = -1;
+  let hideTimer = null;
+  const hasDir = (id) => !!(sysEntry(id) || {}).hasDir;
+
+  function match(c, q) {
+    const hay = `${c.label} ${c.group} ${c.id}`.toLowerCase();
+    if (hay.includes(q)) return true;
+    // "volumemixer" finds "Volume Mixer" — space-insensitive like the ALIAS map in main.
+    return hay.replace(/\s+/g, '').includes(q.replace(/\s+/g, ''));
+  }
+
+  function renderList(useQuery) {
+    const q = useQuery ? search.value.trim().toLowerCase() : '';
+    list.innerHTML = ''; rows = []; active = -1;
+    search.removeAttribute('aria-activedescendant');
+    const all = sysCatalogCache || [];
+    const shown = q ? all.filter((c) => match(c, q)) : all;
+    if (!shown.length) {
+      el('div', 'combo-empty muted', { text: `No action matches “${search.value.trim()}”` }, list);
+      return;
+    }
+    let lastGroup = null;
+    shown.forEach((c, idx) => {
+      if (c.group !== lastGroup) {
+        lastGroup = c.group;
+        el('div', 'combo-grp', { text: c.group, role: 'presentation' }, list);
+      }
+      const r = el('div', 'combo-row combo-sys', { role: 'option', 'aria-selected': 'false', id: `${listId}-opt-${idx}` }, list);
+      el('span', 'g cs-ico', { text: c.icon || '\uE713' }, r);
+      el('span', 'cr-name', { text: c.label }, r);
+      if (c.id === item.value) r.classList.add('selected');
+      r.addEventListener('mousedown', (ev) => { ev.preventDefault(); pick(c); });
+      rows.push(r);
+    });
+    el('div', 'combo-foot muted', { text: `${shown.length} of ${all.length} — click or Enter to select` }, list);
+  }
+
+  function pick(c) {
+    const wasDir = hasDir(item.value);
+    item.value = c.id;
+    const isDir = hasDir(c.id);
+    if (!isDir) item.dir = '';                       // folder slot belongs to explorer only
+    search.value = sysComboText(c);
+    list.classList.add('hidden');
+    syncRowText();
+    // The Folder field appears/vanishes with the action — rebuild the editor
+    // (touch()) so it stays in sync; otherwise save without a rerender.
+    if (isDir !== wasDir) touch(); else touch(false);
+  }
+
+  function setActive(i) {
+    active = i;
+    rows.forEach((r, k) => { r.classList.toggle('active', k === active); r.setAttribute('aria-selected', String(k === active)); });
+    if (rows[active]) {
+      rows[active].scrollIntoView({ block: 'nearest' });
+      search.setAttribute('aria-activedescendant', rows[active].id);
+    }
+  }
+  function activateByValue() {                          // reopen with the selection highlighted
+    const i = rows.findIndex((r) => r.classList.contains('selected'));
+    setActive(i >= 0 ? i : -1);
+  }
+
+  search.addEventListener('focus', () => { clearTimeout(hideTimer); renderList(false); list.classList.remove('hidden'); activateByValue(); });
+  search.addEventListener('input', () => { clearTimeout(hideTimer); list.classList.remove('hidden'); renderList(true); setActive(rows.length === 1 ? 0 : -1); });
+  search.addEventListener('blur', () => {
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(() => {
+      list.classList.add('hidden');
+      search.value = sysComboText(sysEntry(item.value));  // a typed query is never the value
+    }, 180);
+  });
+  search.addEventListener('keydown', (ev) => {
+    if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+      ev.preventDefault();
+      if (list.classList.contains('hidden')) { clearTimeout(hideTimer); renderList(false); list.classList.remove('hidden'); activateByValue(); }
+      if (!rows.length) return;
+      const dir = ev.key === 'ArrowDown' ? 1 : -1;
+      setActive((active + dir + rows.length) % rows.length);
+    } else if (ev.key === 'Enter') {
+      // Enter commits the highlighted row, or the sole match of a filter —
+      // it never accepts free text.
+      const hit = active >= 0 ? rows[active] : (rows.length === 1 ? rows[0] : null);
+      if (hit) { ev.preventDefault(); hit.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); }
+    } else if (ev.key === 'Escape') {
+      if (!list.classList.contains('hidden')) {
+        ev.stopPropagation();                          // close the dropdown, not the editor
+        list.classList.add('hidden');
+        search.value = sysComboText(sysEntry(item.value));
+      }
+    }
+  });
+  ddBtn.addEventListener('mousedown', (ev) => {
+    ev.preventDefault();
+    if (list.classList.contains('hidden')) { renderList(false); list.classList.remove('hidden'); activateByValue(); }
+    else list.classList.add('hidden');
+    search.focus();
+  });
 }
 
 function valueHint(type) {
@@ -1355,6 +1466,8 @@ function parseAppList(text) {
   return out;
 }
 
+let autostartAllowed = true;
+
 function wireBehaviorCheckboxes() {
   const map = {
     'autostart-chk': ['behavior', 'autostart'],
@@ -1382,6 +1495,12 @@ function wireBehaviorCheckboxes() {
       touch(false);
     };
   }
+  const auto = $('#autostart-chk');
+  const autoLbl = $('#autostart-lbl');
+  const autoHint = $('#autostart-hint');
+  if (auto) auto.disabled = !autostartAllowed;
+  if (autoLbl) autoLbl.classList.toggle('dim', !autostartAllowed);
+  if (autoHint) autoHint.classList.toggle('hidden', autostartAllowed);
   /* Gaming mode: master toggle + comma-separated always-off app list. */
   if (!cfg.behavior.gameMode) cfg.behavior.gameMode = { enabled: false, apps: [] };
   const gmOn = $('#bh-gamemode');
@@ -1588,6 +1707,10 @@ function wireConflict() {
 async function boot() {
   api.env?.().then((e) => { if (e && e.vibrant) document.documentElement.dataset.vibrant = '1'; });
   const r = await api.getConfig();
+  try {
+    const a = await api.getAutostart();
+    if (a && a.allowed === false) autostartAllowed = false;
+  } catch { /* leave the checkbox usable; set() reports a real failure */ }
   cfg = r.config;
   storeRev = typeof r.rev === 'number' ? r.rev : null;
   sysCatalogCache = await api.sysCatalog();

@@ -209,13 +209,23 @@ function bootstrap() {
 
   overlay.ensure(); // pre-warm the hidden window so the first popup is instant
 
-  if (init.createdNew) {
-    autostart.set(store.get().behavior.autostart);
-    if (tray) {
-      // display() renders mouse triggers too: "Middle click", not "mmiddle".
-      tray.balloon('Radial Wheel is running',
-        `Press ${HotkeyManager.display(store.get().hotkey)} anywhere to open the wheel${store.importedFrom ? ' (settings imported from your old config)' : ''}.`);
-    }
+  /* Login item: installed copy only. A fresh install waits for the welcome
+     guide (the last step's checkbox, or off if they leave early). After the
+     guide has been seen, the registry follows behavior.autostart. Any other
+     copy clears a login item for THIS exe only — portable and dev share the
+     config with the installed app and must not rewrite that preference. */
+  if (!autostart.allowed()) {
+    try { autostart.set(false); }
+    catch (err) { log.warn('could not clear the login item for this copy:', err && err.message); }
+  } else if (getState('ftuSeen', false)) {
+    try { autostart.set(!!store.get().behavior.autostart); }
+    catch (err) { log.warn('autostart reconcile failed:', err && err.message); }
+  }
+
+  if (init.createdNew && tray) {
+    // display() renders mouse triggers too: "Middle click", not "mmiddle".
+    tray.balloon('Radial Wheel is running',
+      `Press ${HotkeyManager.display(store.get().hotkey)} anywhere to open the wheel${store.importedFrom ? ' (settings imported from your old config)' : ''}.`);
     /* (Settings no longer auto-opens on first run — the FTU welcome window
        below hands off to it when the user is ready.) */
   }

@@ -27,7 +27,7 @@
 
     <section class="step hidden" id="step-1" aria-labelledby="s1-h">
       <h2 id="s1-h">Make the hotkey yours</h2>
-      <p class="hint">The default works for most people. If it clashes with another app, or you just like a different chord — record a new one. Ctrl / Alt / Shift / Win plus any key — or make a mouse button do it: Middle, Back or Forward, on its own or with modifiers.</p>
+      <p class="hint">Ctrl + Alt + Space works for most people — start there. If it clashes with another app, record a different chord: Ctrl, Alt, Shift, or Win plus a key. A mouse button is the alternative: Middle, Back, or Forward, on its own or with a modifier.</p>
       <div id="hk-error" class="err hidden" role="alert"></div>
       <div class="row-line">
         <div id="hk-display" class="hk-chip" aria-live="polite">…</div>
@@ -57,6 +57,10 @@
     <section class="step hidden" id="step-3" aria-labelledby="s3-h">
       <h2 id="s3-h">You're set.</h2>
       <p class="hint">Shape the wheel — apps you launch daily, links you re-open, a macro you always redo — in Settings. It's built for fiddling: live preview, autosave, nothing to break.</p>
+      <label class="chk hidden" id="autostart-row">
+        <input type="checkbox" id="welcome-autostart" checked>
+        Launch Radial Wheel when I sign in
+      </label>
       <div class="row-line go-row">
         <button id="go-settings" class="btn primary">Open Settings</button>
         <button id="go-done" class="btn">Done for now</button>

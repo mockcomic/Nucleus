@@ -72,8 +72,7 @@ function registerIpc(deps) {
     // sys.ALIAS forms (volup, clipboard, …) canonicalize through the same map
     // sys.run() uses, so aliased key-actions get the focus-regain wait too.
     const sysKey = sys.ALIAS[String(item.value || '').toLowerCase()] || String(item.value || '').toLowerCase();
-    const isKeyAction = item.type === 'macro' || (item.type === 'sys' &&
-      ['screenshot', 'show_desktop', 'clipboard_history', 'emoji_picker', 'mute', 'volume_up', 'volume_down'].includes(sysKey));
+    const isKeyAction = item.type === 'macro' || (item.type === 'sys' && sys.KEY_ACTIONS.has(sysKey));
     if (isKeyAction) await new Promise((r) => setTimeout(r, 120)); // let the former window regain focus
     try {
       await actions.executeAction(item, { quit: () => deps.quitApp() });
@@ -202,7 +201,8 @@ function registerIpc(deps) {
   /* ---- autostart ---- */
   guardHandle('autostart:get', () => ({
     enabled: store.get().behavior.autostart,
-    registered: autostart.get()
+    registered: autostart.get(),
+    allowed: autostart.allowed()
   }));
   guardHandle('autostart:set', (ev, on) => {
     const r = autostart.set(on);
@@ -311,13 +311,36 @@ function registerIpc(deps) {
       hotkeyError: store.hotkeyError || null,
       version: app.getVersion(),
       importedFrom: store.importedFrom || null,
-      hasWheel
+      hasWheel,
+      ftuSeen: !!deps.getState('ftuSeen', false),
+      autostartAllowed: autostart.allowed()
     };
   });
-  guardOn('welcome:done', (_e, openSettings) => {
-    // Every exit path lands here — so this handler owns all three consequences:
+  guardOn('welcome:done', (_e, payload) => {
+    // Every exit path lands here — so this handler owns the consequences:
     // put the guide away, remember it was seen, hand off to Settings on request.
+    // A boolean payload is the older "open Settings?" signal and does not touch
+    // startup. An object may also carry applyAutostart, honored only the first
+    // time and only for an installed copy (portable must not rewrite the shared
+    // config flag).
+    const openSettings = payload === true || !!(payload && typeof payload === 'object' && payload.openSettings);
+    const first = !deps.getState('ftuSeen', false);
+    const apply = payload && typeof payload === 'object' && typeof payload.applyAutostart === 'boolean'
+      ? payload.applyAutostart : null;
     welcome.close();
+    if (first && apply !== null && autostart.allowed()) {
+      try { autostart.set(apply); }
+      catch (err) { log.warn('autostart from welcome failed:', err && err.message); }
+      try {
+        const cur = JSON.parse(JSON.stringify(store.get()));
+        if (!!cur.behavior.autostart !== apply) {
+          cur.behavior.autostart = apply;
+          store.set(cur);
+        }
+      } catch (err) {
+        log.warn('could not save welcome autostart choice:', err && err.message);
+      }
+    }
     deps.setState('ftuSeen', true);   // UI state, not config — rides in state.json
     if (openSettings) settings.open();
   });
