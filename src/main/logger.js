@@ -183,14 +183,28 @@ function info(...a) { emit('info', null, a); }
 function warn(...a) { emit('warn', null, a); }
 function error(...a) { emit('error', null, a); }
 
+/* The dist build number, stamped into src/main/build-info.js by
+   scripts/bump-build.mjs (electron-builder strips the package.json `build`
+   block from the packaged app, so the app cannot read it from there). Absent
+   file — a dev tree that never ran dist — and the seed "0" both mean
+   "never packaged" → plain versions. */
+function buildNumber() {
+  try {
+    const n = require('./build-info').buildNumber;
+    const s = typeof n === 'string' || typeof n === 'number' ? String(n) : '';
+    return /^\d+$/.test(s) && parseInt(s, 10) > 0 ? s : null;
+  } catch { return null; }
+}
+
 /* One boot banner per process: version + where the log lives. Call inside
    whenReady — app.getVersion()/userData are guaranteed by then. */
 function banner() {
   try {
   const app = appSafe();
   const ver = app && app.getVersion ? app.getVersion() : '?';
+  const bn = buildNumber();
   const pack = app && app.isPackaged ? 'packaged' : 'dev';
-  info(`starting — v${ver} (electron ${process.versions.electron}, ${process.platform} ${process.arch} ${typeof process.getSystemVersion === 'function' ? process.getSystemVersion() : ''}, ${pack})`);
+  info(`starting — v${ver}${bn ? ` (build ${bn})` : ''} (electron ${process.versions.electron}, ${process.platform} ${process.arch} ${typeof process.getSystemVersion === 'function' ? process.getSystemVersion() : ''}, ${pack})`);
   const d = ensureDir();
   if (d) info(`logging to ${path.join(d, dayName(new Date()))} (level: ${debugAllowed && threshold <= LEVELS.debug ? 'debug' : 'info'} and up)`);
   else warn('log file unavailable — console output only');
@@ -209,4 +223,4 @@ function forwardRenderer(payload) {
   } catch { /* never let a bad log payload break IPC */ }
 }
 
-module.exports = { init, dir: dir_, debug, info, warn, error, banner, forwardRenderer, TAG };
+module.exports = { init, dir: dir_, debug, info, warn, error, banner, forwardRenderer, buildNumber, TAG };

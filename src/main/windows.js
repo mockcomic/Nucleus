@@ -119,6 +119,9 @@ class Overlay {
     y = Math.min(Math.max(y, disp.bounds.y), disp.bounds.y + Math.max(0, disp.bounds.height - s));
 
     win.setBounds({ x, y, width: s, height: s }, false);
+    // Geometry memo for grow(): a branch-open flyout may ask to enlarge this
+    // square around its center (scale is unchanged — the SVG stays centered).
+    this._geo = { s, curS: s, disp, scale };
     const payload = {
       config: JSON.parse(JSON.stringify(cfg)),
       scale,
@@ -134,6 +137,33 @@ class Overlay {
     win.show();
     win.focus();
     this._shownAt = Date.now();
+  }
+
+  /* Grow the transparent square around its own center so a branch-open
+     flyout that reaches past the wheel's outer radius (a folder on the
+     outermost ring) stays on-screen. Scale never changes — the SVG stays
+     flex-centered, only the clip boundary widens — so no renderer round
+     trip is needed. Re-clamped to the display like showAtCursor does; the
+     growth is capped so a bogus reach value can't blow the window up. */
+  grow(reachPx) {
+    const win = this.win;
+    if (!win || win.isDestroyed() || !win.isVisible()) return;
+    const geo = this._geo;
+    if (!geo) return;
+    const want = 2 * (Math.ceil(reachPx) + 12);   // margin for the plate shadow
+    // Monotonic within one summon: never shrink back below the current size
+    // (a mid-hover resize would jerk the SVG under the pointer).
+    const s2 = Math.max(geo.curS, Math.min(want, geo.s + 240));
+    if (s2 === geo.curS) return;
+    const b = win.getBounds();
+    const cx = b.x + b.width / 2, cy = b.y + b.height / 2;
+    const d = geo.disp.bounds;
+    let x = Math.round(cx - s2 / 2);
+    let y = Math.round(cy - s2 / 2);
+    x = Math.min(Math.max(x, d.x), d.x + Math.max(0, d.width - s2));
+    y = Math.min(Math.max(y, d.y), d.y + Math.max(0, d.height - s2));
+    win.setBounds({ x, y, width: s2, height: s2 }, false);
+    geo.curS = s2;
   }
 
   hide() {

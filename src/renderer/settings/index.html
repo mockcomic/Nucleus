@@ -88,6 +88,13 @@
         <label class="chk"><input type="checkbox" id="bh-retrigger"> Pressing the hotkey again hides the wheel</label>
         <label class="chk"><input type="checkbox" id="bh-mouse-through"> Let the mouse button through to the app under the cursor</label>
         <div class="hint muted">Only applies when the shortcut's main key is a mouse button: Middle, Back or Forward. Off (the default) means the wheel treats it like a real hotkey and the app never sees the click — so Middle click stops pasting while it is your summon button. Turn it on if you want both.</div>
+        <div class="slider-row" style="margin-top:10px">
+          <label class="slider-lbl" for="bh-flyout">Sub-menu delay
+            <input type="range" id="bh-flyout" min="0" max="600" step="10" style="flex:1">
+            <output id="bh-flyout-out" for="bh-flyout">180 ms</output>
+          </label>
+        </div>
+        <div class="hint muted">How long the pointer must rest on a folder segment before its sub-menu branches open. Set 0 to branch instantly on hover.</div>
       </div>
       <div class="card">
         <div class="card-title">Gaming mode</div>

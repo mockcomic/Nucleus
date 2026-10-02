@@ -98,10 +98,16 @@ imported automatically on first run.
 ## Packaging (optional but recommended for daily use)
 
 ```powershell
-npm run dist    # → dist/:
-                #    RadialWheel-1.0.0-portable.exe        (no-install single exe)
-                #    Radial Wheel Setup 1.0.0.exe          (one-click NSIS installer)
+npm run dist    # bumps build.buildNumber in package.json, then → dist/:
+                #    RadialWheel-1.0.0-b1-portable.exe     (no-install single exe)
+                #    RadialWheel-1.0.0-b1-setup.exe        (one-click NSIS installer)
 ```
+
+Every `dist` run increments that build number (also stamped into the exe's
+Windows `FileVersion`, e.g. `1.0.0.1`, and into the generated
+`src/main/build-info.js` that the log banner and welcome screen's version line
+read). When cutting a new `version`, reset `build.buildNumber` to `"0"` in
+`package.json` to start the series over.
 
 Packaged builds are the recommended way to run long-term: the Start-with-Windows
 entry (registry value `local.radialwheel` under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`)

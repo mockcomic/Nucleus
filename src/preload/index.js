@@ -21,6 +21,8 @@ const wheelSurface = {
   onShow: (cb) => ipcRenderer.on('overlay:show', (_e, payload) => cb(payload)),
   clickSegment: (item) => ipcRenderer.send('wheel:segment-click', item),
   dismiss: () => ipcRenderer.send('wheel:dismiss'),
+  // Ask main to enlarge the transparent window (flyout beyond the outer ring).
+  growCanvas: (reachPx) => ipcRenderer.send('wheel:grow', reachPx),
   iconDataUrl: invoke('icons:data-url')
 };
 

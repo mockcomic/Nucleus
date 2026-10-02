@@ -1,9 +1,31 @@
 /* Shared radial wheel renderer — used by both the live overlay and the settings preview,
-   so what you edit is literally what you get. */
+   so what you edit is literally what you get.
+
+   Folder segments (item.type === 'folder') carry an inline `children` sub-menu.
+   They render with an outward chevron; when the host asks (via the dwell
+   navigator below, or directly), their children branch out as a flyout: an
+   annular fan centered on the parent's angle, stacked just outside the
+   parent's outer edge. Nested folders stack further bands outward — the
+   config caps the data tree at MAX_FOLDER_DEPTH levels (src/main/config.js),
+   and a depth fuse here mirrors that ceiling. */
 
 export const PAD = 26;
 export const ICON_FONT = "'Segoe Fluent Icons','Segoe MDL2 Assets',system-ui";
 export const UI_FONT = "'Segoe UI',system-ui,sans-serif";
+/* Segoe Fluent/MDL2 ChevronRight — rotated outward on folder plates. */
+export const CHEVRON_GLYPH = '\uE76C';
+
+/* Flyout fan tuning: each child gets at least MIN_STEP degrees; the whole
+   fan blooms to at most 3× the parent's sweep or MAX_SPAN degrees. */
+const FLY_MIN_STEP = 14;
+const FLY_MAX_SPAN = 300;
+const FLY_GAP = 3;          // radial air between the parent plate and its fan
+const FLY_DEPTH_LO = 44;    // fan band depth (scaled px), clamped
+const FLY_DEPTH_HI = 84;
+/* Data-side depth cap (config.js) is 3; this is the renderer's cycle fuse. */
+export const MAX_FLY_LEVELS = 4;
+/* How long the pointer may leave the open family before the fan collapses. */
+export const FLY_CLOSE_GRACE = 140;
 
 /* angle convention: degrees, 0 = 12 o'clock, increasing clockwise */
 export function degToXY(cx, cy, r, deg) {
@@ -43,6 +65,14 @@ export function ringSpans(cfg) {
   return out;
 }
 
+/* Fan geometry for one folder's children, as pure offsets from the parent's
+   center angle: total span + per-child step. Exported for tests. */
+export function fanSpans(parentDeg, n) {
+  if (!(n > 0)) return { span: 0, step: 0 };
+  const span = Math.min(FLY_MAX_SPAN, Math.max(parentDeg * 3, n * FLY_MIN_STEP));
+  return { span, step: span / n };
+}
+
 function svgEl(tag, attrs = {}) {
   const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
   for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
@@ -74,8 +104,73 @@ export function sectorPath(cx, cy, r0, r1, a0, a1) {
   return `M ${x0o} ${y0o} A ${r1} ${r1} 0 ${large} 1 ${x1o} ${y1o} L ${x1i} ${y1i} A ${r0} ${r0} 0 ${large} 0 ${x0i} ${y0i} Z`;
 }
 
+/* Shared plate decoration for ring segments AND flyout children: the hover
+   lift vector, icon (logo image or glyph), truncated label, and the folder
+   chevron. Returns the resolved imgHref for the segment record. */
+function paintItemContent(g, item, cx, cy, r0, r1, center, ap, opts) {
+  const band = r1 - r0;
+  const rm = (r0 + r1) / 2;
+  const midRad = (center - 90) * Math.PI / 180;
+  const tx = (Math.cos(midRad) * 3).toFixed(2), ty = (Math.sin(midRad) * 3).toFixed(2);
+  g.style.setProperty('--tx', tx + 'px');
+  g.style.setProperty('--ty', ty + 'px');
+
+  const imgHref = iconHrefFor(opts, item.iconImage);
+  const showIcon = !!item.icon || !!imgHref;
+  const showLabel = ap.showLabels && !!item.label && !item.hideLabel;
+  const iconSize = Math.max(13, Math.min(26, band * 0.30));
+
+  if (showIcon) {
+    const ir = showLabel ? rm - band * 0.10 : rm;
+    const [ix, iy] = degToXY(cx, cy, ir, center);
+    if (imgHref) {
+      // A color logo reads better a touch larger than a mono glyph.
+      const w = Math.max(17, Math.min(34, band * 0.40));
+      g.appendChild(svgEl('image', {
+        href: imgHref, x: ix - w / 2, y: iy - w / 2, width: w, height: w,
+        preserveAspectRatio: 'xMidYMid meet', class: 'seg-img'
+      }));
+    } else {
+      const t = svgEl('text', {
+        x: ix, y: iy, 'text-anchor': 'middle', 'dominant-baseline': 'central',
+        'font-family': ICON_FONT, 'font-size': iconSize, fill: ap.colors.text, class: 'seg-icon'
+      });
+      t.textContent = item.icon;
+      g.appendChild(t);
+    }
+  }
+  if (showLabel) {
+    const lr = showIcon ? rm + band * 0.20 : rm;
+    const [lx, ly] = degToXY(cx, cy, lr, center);
+    const t = svgEl('text', {
+      x: lx, y: ly + 1, 'text-anchor': 'middle', 'dominant-baseline': 'central',
+      'font-family': UI_FONT, 'font-size': ap.fontSize, 'font-weight': 600,
+      fill: ap.colors.text, class: 'seg-label'
+    });
+    t.textContent = item.label;
+    const maxChars = Math.max(6, Math.floor((band * 0.85) / (ap.fontSize * 0.55)));
+    if (item.label.length > maxChars) t.textContent = item.label.slice(0, maxChars - 1) + '…';
+    g.appendChild(t);
+  }
+  if (item.type === 'folder' && Array.isArray(item.children) && item.children.length && band >= 26) {
+    // Small outward chevron riding the plate's outer edge — the sub-menu affordance.
+    const cr = r1 - Math.min(10, band * 0.16);
+    const [px, py] = degToXY(cx, cy, cr, center);
+    const t = svgEl('text', {
+      x: px, y: py, 'text-anchor': 'middle', 'dominant-baseline': 'central',
+      'font-family': ICON_FONT, 'font-size': Math.max(9, Math.min(13, band * 0.22)),
+      fill: ap.colors.text, 'fill-opacity': 0.85, class: 'seg-chevron',
+      transform: `rotate(${(center - 90).toFixed(2)} ${px.toFixed(2)} ${py.toFixed(2)})`
+    });
+    t.textContent = CHEVRON_GLYPH;
+    g.appendChild(t);
+  }
+  return imgHref;
+}
+
 /**
- * Build the wheel into `container`. Returns { cfg, segments, setHover, size }.
+ * Build the wheel into `container`. Returns { cfg, segments, setHover, hitTest,
+ * flyout, center, size } (see below for the flyout API).
  * opts: { preview?:bool, scale?:number, pad?:number }
  */
 /* Def ids must be unique PER WHEEL, not per document: the settings page hosts
@@ -147,61 +242,19 @@ export function buildWheel(container, cfg, opts = {}) {
       const a0 = center - halfSpan + (gap / 2);
       const a1 = center + halfSpan - (gap / 2);
       const g = svgEl('g', { class: 'seg' });
+      const plateFill = item.color || ap.colors[rg.ring % 2 === 1 ? 'ring1' : 'ring2'];
       const path = svgEl('path', {
         d: sectorPath(cx, cy, rg.r0, rg.r1, a0, a1),
         /* Plates alternate outward: odd rings the ring1 tint, even rings ring2. */
-        fill: item.color || ap.colors[rg.ring % 2 === 1 ? 'ring1' : 'ring2'],
+        fill: plateFill,
         stroke: persona.edge, 'stroke-width': 1,
         'fill-rule': 'evenodd'
       });
       g.appendChild(path);
 
-      const midRad = (center - 90) * Math.PI / 180;
-      const tx = (Math.cos(midRad) * 3).toFixed(2), ty = (Math.sin(midRad) * 3).toFixed(2);
-      g.style.setProperty('--tx', tx + 'px');
-      g.style.setProperty('--ty', ty + 'px');
-
-      const band = rg.r1 - rg.r0;
-      const rm = (rg.r0 + rg.r1) / 2;
-      const imgHref = iconHrefFor(opts, item.iconImage);
-      const showIcon = !!item.icon || !!imgHref;
-      const showLabel = ap.showLabels && !!item.label && !item.hideLabel;
-      const iconSize = Math.max(13, Math.min(26, band * 0.30));
-
-      if (showIcon) {
-        const ir = showLabel ? rm - band * 0.10 : rm;
-        const [ix, iy] = degToXY(cx, cy, ir, center);
-        if (imgHref) {
-          // A color logo reads better a touch larger than a mono glyph.
-          const w = Math.max(17, Math.min(34, band * 0.40));
-          g.appendChild(svgEl('image', {
-            href: imgHref, x: ix - w / 2, y: iy - w / 2, width: w, height: w,
-            preserveAspectRatio: 'xMidYMid meet', class: 'seg-img'
-          }));
-        } else {
-          const t = svgEl('text', {
-            x: ix, y: iy, 'text-anchor': 'middle', 'dominant-baseline': 'central',
-            'font-family': ICON_FONT, 'font-size': iconSize, fill: ap.colors.text, class: 'seg-icon'
-          });
-          t.textContent = item.icon;
-          g.appendChild(t);
-        }
-      }
-      if (showLabel) {
-        const lr = showIcon ? rm + band * 0.20 : rm;
-        const [lx, ly] = degToXY(cx, cy, lr, center);
-        const t = svgEl('text', {
-          x: lx, y: ly + 1, 'text-anchor': 'middle', 'dominant-baseline': 'central',
-          'font-family': UI_FONT, 'font-size': ap.fontSize, 'font-weight': 600,
-          fill: ap.colors.text, class: 'seg-label'
-        });
-        t.textContent = item.label;
-        const maxChars = Math.max(6, Math.floor((band * 0.85) / (ap.fontSize * 0.55)));
-        if (item.label.length > maxChars) t.textContent = item.label.slice(0, maxChars - 1) + '…';
-        g.appendChild(t);
-      }
+      const imgHref = paintItemContent(g, item, cx, cy, rg.r0, rg.r1, center, ap, opts);
       gRing.appendChild(g);
-      segments.push({ el: g, path, item, imgHref, ring: rg.ring, r0: rg.r0, r1: rg.r1, center, halfSpan, baseFill: path.getAttribute('fill') });
+      segments.push({ el: g, path, item, imgHref, ring: rg.ring, r0: rg.r0, r1: rg.r1, center, halfSpan, baseFill: plateFill });
     });
     shadow.appendChild(gRing);
   }
@@ -281,12 +334,132 @@ export function buildWheel(container, cfg, opts = {}) {
     }
   }
 
+  /* ── folder flyouts ───────────────────────────────────────────────────────
+     Each open level is { parentSeg, group, segs, r1f }. Children of the same
+     parent stack outward from its plate; opening a level closes anything at
+     the same depth on a different parent AND everything deeper. Flyout segs
+     ride the shared `segments` array (so hover, hub-report, and keyboard
+     walking come for free) and hitTest scans LAST-IN first, which gives the
+     fan priority over the ring plates it overlays. */
+  const flyGroups = [];
+
+  const isFolderSeg = (seg) => !!seg && !!seg.item && seg.item.type === 'folder' &&
+    Array.isArray(seg.item.children) && seg.item.children.length > 0;
+
+  function occlusionCheck(seg, parentSeg, r0f, r1f) {
+    if (seg.flyout) return false;                    // other fans manage themselves
+    if (seg.r1 <= r0f - 1) return false;             // band below the fan
+    const d = Math.abs(((seg.center - parentSeg.center + 540) % 360) - 180);
+    const { span } = fanSpans(parentSeg.halfSpan * 2, parentSeg.item.children.length);
+    return d < span / 2 + seg.halfSpan;
+  }
+  function refreshOcclusion() {
+    for (const seg of segments) {
+      if (seg.flyout) continue;
+      let covered = false;
+      for (const f of flyGroups) if (occlusionCheck(seg, f.parentSeg, f.r0f, f.r1f)) { covered = true; break; }
+      seg.el.classList.toggle('occluded', covered);
+    }
+  }
+
+  function openFlyout(parentSeg) {
+    if (!isFolderSeg(parentSeg)) return false;
+    if (flyGroups.some((f) => f.parentSeg === parentSeg)) return true;   // already open
+    const depth = parentSeg.flyout ? parentSeg.flyLevel + 1 : 0;
+    if (depth >= MAX_FLY_LEVELS) return false;                            // cycle fuse
+    // Anything at or deeper than this level belongs to a different branch now.
+    while (flyGroups.length > depth) closeTop();
+    const band = parentSeg.r1 - parentSeg.r0;
+    const depthPx = Math.max(FLY_DEPTH_LO, Math.min(FLY_DEPTH_HI, band * 0.45));
+    const r0f = parentSeg.r1 + FLY_GAP;
+    const r1f = r0f + depthPx;
+    const kids = parentSeg.item.children;
+    const { span, step } = fanSpans(parentSeg.halfSpan * 2, kids.length);
+    const gFly = svgEl('g', { class: 'flyout' });
+    const made = [];
+    kids.forEach((child, i) => {
+      const center = parentSeg.center - span / 2 + step * (i + 0.5);
+      const halfSpan = step / 2 - gap / 2;
+      const g = svgEl('g', { class: 'seg seg-fly' });
+      // A child inherits its parent's plate tint unless it picks its own color —
+      // the fan reads as one branch, matching-machined, like a real folder.
+      const plateFill = child.color || parentSeg.baseFill;
+      const path = svgEl('path', {
+        d: sectorPath(cx, cy, r0f, r1f, center - halfSpan, center + halfSpan),
+        fill: plateFill, stroke: persona.edge, 'stroke-width': 1, 'fill-rule': 'evenodd'
+      });
+      g.appendChild(path);
+      const imgHref = paintItemContent(g, child, cx, cy, r0f, r1f, center, ap, opts);
+      gFly.appendChild(g);
+      const rec = {
+        el: g, path, item: child, imgHref, ring: parentSeg.ring,
+        flyout: true, flyLevel: depth, parentSeg,
+        r0: r0f, r1: r1f, center, halfSpan: Math.max(2, halfSpan), baseFill: plateFill
+      };
+      made.push(rec);
+      segments.push(rec);
+    });
+    // Branch the fan from the hub centre — the entrance scales about the wheel
+    // centre so plates read as growing outward from the parent. Parented into
+    // the shadow layer with the ring plates: same machined drop shadow, and
+    // the top-light/rim wash still rides over everything.
+    shadow.appendChild(gFly);
+    gFly.style.transformBox = 'view-box';
+    gFly.style.transformOrigin = `${cx}px ${cy}px`;
+    flyGroups.push({ parentSeg, group: gFly, segs: made, r0f, r1f });
+    parentSeg.el.classList.add('fly-parent');
+    parentSeg.path.setAttribute('fill', ap.colors.hover);
+    refreshOcclusion();
+    return true;
+  }
+
+  function closeTop() {
+    const f = flyGroups.pop();
+    if (!f) return;
+    // A child of this fan holding the hover (or the keyboard cursor) must
+    // release it before its plates go away; hovering the parent plate stays.
+    if (hovered && f.segs.indexOf(hovered) >= 0) setHover(null);
+    for (const s of f.segs) {
+      const i = segments.indexOf(s);
+      if (i >= 0) segments.splice(i, 1);
+    }
+    f.group.remove();
+    f.parentSeg.el.classList.remove('fly-parent');
+    if (hovered !== f.parentSeg) f.parentSeg.path.setAttribute('fill', f.parentSeg.baseFill);
+    refreshOcclusion();
+  }
+  function closeFlyouts(fromLevel = 0) {
+    while (flyGroups.length > fromLevel) closeTop();
+  }
+
+  const flyout = {
+    open: openFlyout,
+    closeAll: () => closeFlyouts(0),
+    // Close a level and everything deeper than it.
+    closeLevel: (depth) => closeFlyouts(Math.max(0, depth)),
+    isOpen: (seg) => flyGroups.some((f) => f.parentSeg === seg),
+    depthOf: (seg) => flyGroups.findIndex((f) => f.parentSeg === seg),
+    levels: () => flyGroups.length,
+    isFolder: isFolderSeg,
+    // Furthest radius currently painted (for the host's window-grow request).
+    reach: () => (flyGroups.length ? flyGroups[flyGroups.length - 1].r1f : 0),
+    // Is this seg part of an open family (the fan's children or its parent chain)?
+    inOpenFamily: (seg) => {
+      if (!seg) return false;
+      for (let s = seg; s; s = s.parentSeg || null) if (flyGroups.some((f) => f.parentSeg === s)) return true;
+      return false;
+    }
+  };
+
   function hitTest(px, py) {
     const dx = px - cx, dy = py - cy;
     const dist = Math.hypot(dx, dy);
     if (dist < ap.innerRadius) return { hub: true, dist };
     let deg = (Math.atan2(dx, -dy) * 180 / Math.PI + 360) % 360;
-    for (const seg of segments) {
+    // Scan outward-in: flyout children (appended last) take priority over the
+    // ring plates they visually cover; deeper fans over shallower ones.
+    for (let i = segments.length - 1; i >= 0; i--) {
+      const seg = segments[i];
       if (dist < seg.r0 - 1 || dist > seg.r1 + 1) continue;
       let d = Math.abs(deg - ((seg.center % 360) + 360) % 360);
       d = Math.min(d, 360 - d);
@@ -301,5 +474,108 @@ export function buildWheel(container, cfg, opts = {}) {
   // build-time defaults below coincided with this reset).
   hovered = undefined;
   setHover(null);
-  return { cfg: s, size, segments, setHover, hitTest };
+  return { cfg: s, size, segments, setHover, hitTest, flyout, center: { cx, cy }, outerRadius: ap.outerRadius };
+}
+
+/**
+ * Dwell state machine for folder flyouts, shared by the overlay (wheel.js) and
+ * the settings preview, so the demo matches the product exactly.
+ *
+ * The host calls feed(seg, onWheel) after every hover resolution — seg is the
+ * hit segment (or null) and onWheel says whether the pointer is anywhere on
+ * the wheel (hub and dead-zone between parent and fan count as on-wheel, so
+ * a crossing gap never collapses the family instantly). toggle(seg) handles
+ * click/Enter on a folder plate; back() peels the deepest level (hub click).
+ * Geometry lives entirely in buildWheel's flyout API — this is timing only.
+ *
+ * opts: { dwellMs (0 = instant), graceMs, onGrow(reachPx) called after any
+ *         expansion whose fan reaches reach (the host decides whether that
+ *         needs more window) }
+ */
+export function createFlyoutNavigator(built, opts = {}) {
+  const dwellMs = Math.max(0, opts.dwellMs == null ? 180 : opts.dwellMs);
+  const graceMs = Math.max(0, opts.graceMs == null ? FLY_CLOSE_GRACE : opts.graceMs);
+  const onGrow = typeof opts.onGrow === 'function' ? opts.onGrow : null;
+  const fl = built.flyout;
+
+  let openT = null, closeT = null, lastKey = '';
+  const latched = new Set();   // folders the user collapsed — stay shut until the pointer leaves the wheel
+
+  const clearTimers = () => {
+    if (openT) { clearTimeout(openT); openT = null; }
+    if (closeT) { clearTimeout(closeT); closeT = null; }
+  };
+  const doOpen = (seg) => {
+    clearTimers();
+    if (fl.open(seg) && onGrow) onGrow(fl.reach());
+  };
+  const startClose = (alsoUnlatch) => {
+    if (openT) { clearTimeout(openT); openT = null; }
+    if (closeT) clearTimeout(closeT);
+    closeT = setTimeout(() => {
+      closeT = null;
+      fl.closeAll();
+      if (alsoUnlatch) latched.clear();
+    }, graceMs);
+  };
+
+  function feed(seg, onWheel) {
+    const key = seg ? 's' + segKey(seg) : (onWheel ? 'w' : 'o');
+    if (key === lastKey) return;
+    lastKey = key;
+    if (seg && fl.inOpenFamily(seg)) {
+      // pointer inside the open family — hold everything steady
+      clearTimers();
+      return;
+    }
+    if (seg && fl.isFolder(seg) && !fl.isOpen(seg) && !latched.has(seg)) {
+      // hovering a (fresh) folder: dwell-open it; any unrelated open family
+      // closes after the grace, so sweeping folders reads as one sweep
+      if (openT) clearTimeout(openT);
+      openT = setTimeout(() => doOpen(seg), dwellMs);
+      if (fl.levels()) startClose();
+      return;
+    }
+    clearTimers();
+    if (fl.levels()) startClose(!onWheel);
+    else if (!onWheel) latched.clear();   // fully off the wheel: folders may auto-open again
+  }
+  function segKey(seg) {
+    if (!seg) return '';
+    const i = built.segments.indexOf(seg);
+    return i >= 0 ? 'i' + i : 'p' + ((seg.item && seg.item.id) || '');
+  }
+
+  /* Click / Enter on a folder plate: open now, or collapse (with latch) if
+     this one is already open. */
+  function toggle(seg) {
+    if (!seg || !fl.isFolder(seg)) return false;
+    clearTimers();
+    const d = fl.depthOf(seg);
+    if (d >= 0) {
+      fl.closeLevel(d);
+      latched.add(seg);
+    } else {
+      latched.delete(seg);
+      doOpen(seg);
+    }
+    return true;
+  }
+
+  /* Hub click / Backspace: peel the deepest open level. True = consumed. */
+  function back() {
+    if (!fl.levels()) return false;
+    clearTimers();
+    fl.closeLevel(fl.levels() - 1);
+    return true;
+  }
+
+  function reset() {
+    clearTimers();
+    fl.closeAll();
+    latched.clear();
+    lastKey = '';
+  }
+
+  return { feed, toggle, back, reset };
 }

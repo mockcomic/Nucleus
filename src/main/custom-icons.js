@@ -28,6 +28,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { readCapped } = require('./capped-fetch');
 
 const PREFIX = 'custom:';
 const KEY_RE = /^custom:([a-f0-9]{16})\.([a-z]{3,4})$/;
@@ -308,9 +309,14 @@ async function fetchImage(url) {
     if (!res.ok) return { error: `The server answered ${res.status}` };
     const len = Number(res.headers.get('content-length'));
     if (len > FILE_MAX_BYTES) return { error: 'That image is larger than ' + Math.round(FILE_MAX_BYTES / 1048576) + ' MB' };
-    const buf = Buffer.from(await res.arrayBuffer());
+    // Cap enforced while streaming: the header check is only a cheap up-front
+    // reject, and a lying server must not be able to buffer an oversized body
+    // into main before we notice (readCapped cancels the stream at the cap).
+    const got = await readCapped(res, FILE_MAX_BYTES);
+    if (got.overflow) return { error: 'That image is larger than ' + Math.round(FILE_MAX_BYTES / 1048576) + ' MB' };
+    if (got.failed) return { error: 'Could not download that URL — the transfer failed' };
+    const buf = got.buf;
     if (!buf.length) return { error: 'That URL returned no data' };
-    if (buf.length > FILE_MAX_BYTES) return { error: 'That image is larger than ' + Math.round(FILE_MAX_BYTES / 1048576) + ' MB' };
     // The bytes decide, not the server's content-type: plenty of static hosts
     // serve pngs as octet-stream, and a lying header must not matter.
     if (!sniffImage(buf)) return { error: 'That URL is not a supported image (PNG, JPG, GIF, WebP, BMP, ICO or SVG)' };

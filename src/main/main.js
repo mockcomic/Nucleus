@@ -209,16 +209,34 @@ function bootstrap() {
 
   overlay.ensure(); // pre-warm the hidden window so the first popup is instant
 
+  /* Which copy is this? The log must not call every packaged run "packaged":
+     portable and win-unpacked are packaged too, and mixing them up hid the
+     login-item wipe (an unverified disable from one copy deletes the shared
+     Run value by name). Print exe, stub marker, argv, and the gate verdict. */
+  log.info(`running as — "${process.execPath}" [${app.isPackaged ? 'packaged' : 'dev'}]` +
+    (process.env.PORTABLE_EXECUTABLE_FILE ? ` portable stub of "${process.env.PORTABLE_EXECUTABLE_FILE}"` : '') +
+    ` argv: ${process.argv.slice(1).join(' ') || '(none)'}; login item ${autostart.allowed() ? 'allowed' : 'not allowed'}`);
+
   /* Login item: installed copy only. A fresh install waits for the welcome
      guide (the last step's checkbox, or off if they leave early). After the
      guide has been seen, the registry follows behavior.autostart. Any other
-     copy clears a login item for THIS exe only — portable and dev share the
-     config with the installed app and must not rewrite that preference. */
+     copy clears a login item for THIS exe only — the disable inside
+     autostart.set(false) verifies the stored command line points at our own
+     exe before deleting, because Electron deletes HKCU Run values by NAME and
+     every copy shares 'local.radialwheel'. Portable and dev share the config
+     with the installed app and must not rewrite that preference. */
   if (!autostart.allowed()) {
-    try { autostart.set(false); }
+    try {
+      const r = autostart.set(false);
+      if (r && !r.ok) log.warn('could not clear the login item for this copy:', r.error);
+    }
     catch (err) { log.warn('could not clear the login item for this copy:', err && err.message); }
   } else if (getState('ftuSeen', false)) {
-    try { autostart.set(!!store.get().behavior.autostart); }
+    try {
+      const r = autostart.set(!!store.get().behavior.autostart);
+      if (r && r.ok && r.enabled) log.info(r.verified ? 'login item registered (verified)' : 'login item written (verification fell back)');
+      else if (r && !r.ok && store.get().behavior.autostart) log.warn('login item not registered:', r.error);
+    }
     catch (err) { log.warn('autostart reconcile failed:', err && err.message); }
   }
 

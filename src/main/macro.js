@@ -116,6 +116,60 @@ function foregroundProbe() {
   }
 }
 
+/* ---------------- registry probes (advapi32, read-only) ---------------------
+   Read-only peek at a single HKCU Run value so the login-item disable path can
+   verify OWNERSHIP before deleting (see autostart.js): Electron's
+   setLoginItemSettings({openAtLogin:false}) deletes the Run value by NAME,
+   ignoring `path`, and every copy of this app shares the 'local.radialwheel'
+   name — so a portable/dev launch must never reach that delete without first
+   seeing the stored command line. Deliberately read-only: writes/deletes stay
+   with Electron's API.
+
+   Fail-soft like everything else here: no koffi, non-win32, or ia32 (we cannot
+   marshal a pointer-sized HKEY safely there) leaves regProbeAvailable false and
+   every probe answers {state:'error'} — UNKNOWN, which callers must treat as
+   "do not delete", never as "absent". */
+let _RegGetValueW = null;
+let regProbeAvailable = false;
+const HKEY_CURRENT_USER = 0x80000001;
+const RUN_KEY = 'Software\\Microsoft\\Windows\\CurrentVersion\\Run';
+const RRF_RT_REG_SZ = 0x00000002;
+const ERROR_SUCCESS = 0, ERROR_FILE_NOT_FOUND = 2, ERROR_PATH_NOT_FOUND = 3;
+
+try {
+  if (available && process.arch !== 'ia32') {
+    const advapi32 = koffi.load('advapi32.dll');
+    _RegGetValueW = advapi32.func('int32 __stdcall RegGetValueW(uint64 hkey, str16 subKey, str16 value, uint32 dwFlags, void* pdwType, void* pvData, void* pcbData)');
+    regProbeAvailable = true;
+  }
+} catch {
+  _RegGetValueW = null;
+  regProbeAvailable = false;
+}
+
+/** Read one REG_SZ under HKCU\Software\Microsoft\Windows\CurrentVersion\Run.
+ *  Returns {state:'value', data} | {state:'absent'} (key/value genuinely
+ *  missing) | {state:'error', code} (could not look — UNKNOWN, not absent). */
+function readRunValue(valueName) {
+  if (!regProbeAvailable || typeof valueName !== 'string' || !valueName) return { state: 'error', code: 'unavailable' };
+  try {
+    const sizeBuf = Buffer.alloc(4);
+    let r = _RegGetValueW(HKEY_CURRENT_USER, RUN_KEY, valueName, RRF_RT_REG_SZ, null, null, sizeBuf);
+    if (r === ERROR_FILE_NOT_FOUND || r === ERROR_PATH_NOT_FOUND) return { state: 'absent' };
+    if (r !== ERROR_SUCCESS) return { state: 'error', code: r };
+    const cb = sizeBuf.readUInt32LE(0);
+    if (cb <= 0 || cb > 8192) return { state: 'error', code: 'size' };   // sane cap for a Run command line
+    const data = Buffer.alloc(cb + 2);                                    // slack for a NUL terminator
+    sizeBuf.writeUInt32LE(cb + 2, 0);
+    r = _RegGetValueW(HKEY_CURRENT_USER, RUN_KEY, valueName, RRF_RT_REG_SZ, null, data, sizeBuf);
+    if (r !== ERROR_SUCCESS) return { state: 'error', code: r };
+    const bytes = Math.min(sizeBuf.readUInt32LE(0), cb + 2) & ~1;         // whole UTF-16 units
+    return { state: 'value', data: data.toString('utf16le', 0, bytes).replace(/\0+$/, '') };
+  } catch (e) {
+    return { state: 'error', code: (e && e.message) || 'throw' };
+  }
+}
+
 const MOD_VK = { ctrl: 0x11, control: 0x11, alt: 0x12, option: 0x12, shift: 0x10, win: 0x5B, super: 0x5B, cmd: 0x5B, command: 0x5B };
 const NAME_VK = {
   space: 0x20, enter: 0x0D, return: 0x0D, tab: 0x09, esc: 0x1B, escape: 0x1B,
@@ -219,7 +273,37 @@ function splitSteps(text) {
   return (before ? before.split(',') : []).concat(text.slice(typeStart));
 }
 
+/* Hard bounds so NO caller — not even a compromised renderer driving
+   action:preview — can push an unbounded workload into SendInput. The spec
+   cap mirrors config.js's slice(0, 2048) on item.value, so a legitimately
+   saved macro can never exceed it; typed text and chord tokens are substrings
+   of the spec, so the spec cap bounds them too. The per-step wait clamp
+   (Math.min(5, …)) stays; this adds a TOTAL wait budget. */
+const MACRO_MAX_SPEC = 2048;
+const MACRO_MAX_STEPS = 128;
+const MACRO_MAX_TOTAL_WAIT_MS = 15000;
+
+/* Pure precondition of sendMacro — exported for node:test alongside
+   _splitSteps. Throws a user-readable Error; never injects anything. */
+function validateSpec(spec) {
+  const s = String(spec || '').trim();
+  if (s.length > MACRO_MAX_SPEC) throw new Error(`macro too long (${s.length} chars; max ${MACRO_MAX_SPEC})`);
+  const steps = splitSteps(s).filter((x) => String(x || '').trim());
+  if (steps.length > MACRO_MAX_STEPS) throw new Error(`macro has too many steps (${steps.length}; max ${MACRO_MAX_STEPS})`);
+  let budget = MACRO_MAX_TOTAL_WAIT_MS;
+  for (const step of steps) {
+    const wm = step.trim().match(/^wait\s*=\s*([0-9.]+)$/i);
+    if (!wm) continue;
+    const secs = parseFloat(wm[1]);
+    // Same clamp the runner applies at execution time.
+    budget -= Math.min(5, Number.isNaN(secs) ? 0.2 : Math.max(0, secs)) * 1000;
+    if (budget < 0) throw new Error(`macro waits exceed ${Math.floor(MACRO_MAX_TOTAL_WAIT_MS / 1000)}s in total`);
+  }
+}
+
 async function sendMacro(spec) {
+  validateSpec(spec);   // bounds BEFORE anything else (and before needInput,
+                        // so the limit error wins even where FFI is absent)
   needInput();
   for (const rawStep of splitSteps(String(spec || '').trim())) {
     const step = rawStep.trim();
@@ -279,4 +363,4 @@ const ffi = {
 };
 
 // _splitSteps is exported purely for node:test (pure function, no FFI needed).
-module.exports = { available, loadError, probeAvailable, foregroundProbe, sendMacro, sendVk, sendChord, isDown, vkFor, _splitSteps: splitSteps, ffi };
+module.exports = { available, loadError, probeAvailable, foregroundProbe, sendMacro, sendVk, sendChord, isDown, vkFor, _splitSteps: splitSteps, _validateSpec: validateSpec, readRunValue, regProbeAvailable, ffi, MACRO_MAX_SPEC, MACRO_MAX_STEPS, MACRO_MAX_TOTAL_WAIT_MS };

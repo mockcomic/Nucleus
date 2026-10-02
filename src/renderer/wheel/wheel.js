@@ -1,10 +1,33 @@
-import { buildWheel } from '../shared/wheel-core.js';
+import { buildWheel, createFlyoutNavigator } from '../shared/wheel-core.js';
 
 const api = window.wheelAPI;
 const rootEl = document.getElementById('root');
 
 let built = null;
 let lastPayload = null;
+let nav = null;          // folder flyout dwell state machine (wheel-core)
+let grownTo = 0;         // px the overlay window was last asked to cover
+
+/* A flyout reaching past the wheel rim (a folder on the outermost ring) asks
+   main to grow the transparent window around itself. Geometry only, throttled
+   to strictly-increasing requests; reset on every summon. */
+function requestRoom(reachPx) {
+  const need = Math.ceil(reachPx) + 6;
+  if (!built || need <= built.outerRadius || need <= grownTo) return;
+  grownTo = need;
+  api.growCanvas(need);
+}
+
+function mountWheel(config, scale, preview) {
+  built = buildWheel(rootEl, config, { scale, iconImages: iconCache, preview: !!preview });
+  nav = createFlyoutNavigator(built, {
+    dwellMs: (config.behavior && config.behavior.flyoutDwellMs) || 0,
+    onGrow: requestRoom
+  });
+  selIdx = -1;
+  grownTo = 0;
+  return built;
+}
 
 /* Dashboard Icons logos, memoized across show cycles: slug -> dataUrl.
    Failures are NOT cached forever — a 60 s cooldown (iconFailedAt) lets the
@@ -17,11 +40,14 @@ const iconPending = new Set();
 
 function itemSlugs(config) {
   const slugs = new Set();
-  for (const arr of (config && config.rings ? Object.values(config.rings) : [])) {
+  const down = (arr) => {
     for (const it of Array.isArray(arr) ? arr : []) {
-      if (it && it.iconImage) slugs.add(it.iconImage);
+      if (!it || typeof it !== 'object') continue;
+      if (it.iconImage) slugs.add(it.iconImage);
+      if (Array.isArray(it.children) && it.children.length) down(it.children);   // folder children prefetch too
     }
-  }
+  };
+  for (const arr of (config && config.rings ? Object.values(config.rings) : [])) down(arr);
   return [...slugs];
 }
 
@@ -42,7 +68,7 @@ function ensureIcons(config) {
       if (built && lastPayload && lastPayload.config === config) {
         const hoveredSeg = selIdx >= 0 ? built.segments[selIdx] : null;
         const hoveredItem = hoveredSeg && hoveredSeg.item;
-        built = buildWheel(rootEl, config, { scale: lastPayload.scale, iconImages: iconCache, preview: true });
+        mountWheel(config, lastPayload.scale, true);   // preview:true — silent refresh, no re-pop
         const restored = hoveredItem && built.segments.find((s) => s.item === hoveredItem || (s.item.id || '') === (hoveredItem.id || ''));
         if (restored) applyHover({ seg: restored });                  // don't pop hover/hub-report state
       }
@@ -77,12 +103,14 @@ function applyHover(hit) {
   const rootG = document.querySelector('.wheel-root');
   if (rootG) rootG.classList.toggle('any-hover', !!seg);
   rootEl.classList.toggle('has-hover', !!seg || (hit && hit.hub));
+  // folder dwell: branch open/close is timing-only logic, shared with the
+  // settings preview through the same navigator.
+  if (nav) nav.feed(seg, !!hit);
 }
 
 api.onShow((payload) => {
   lastPayload = payload;
-  built = buildWheel(rootEl, payload.config, { scale: payload.scale, iconImages: iconCache });
-  selIdx = -1;
+  mountWheel(payload.config, payload.scale);
   // Decorative to AT: the SVG (plates, glyph text) is aria-hidden; the visually
   // hidden live region below announces the keyboard selection instead.
   const svg = rootEl.querySelector('svg');
@@ -99,8 +127,19 @@ window.addEventListener('mousemove', (e) => applyHover(pointToHit(e.clientX, e.c
 window.addEventListener('mousedown', (e) => {
   if (e.button !== 0 || !built) return;
   const hit = pointToHit(e.clientX, e.clientY);
-  if (hit && hit.hub) { api.dismiss(); return; }
-  if (hit && hit.seg) api.clickSegment(hit.seg.item); // main hides the overlay + executes
+  if (hit && hit.hub) {
+    // With a sub-menu open the hub is the back-out button; the second click
+    // (nothing left open) dismisses the wheel as always.
+    if (nav && nav.back()) return;
+    api.dismiss();
+    return;
+  }
+  if (hit && hit.seg) {
+    // Folder plates branch (and collapse with a latch) instead of firing —
+    // a folder executes nothing. Leaf children ride the same click path.
+    if (built.flyout.isFolder(hit.seg) && nav && nav.toggle(hit.seg)) return;
+    api.clickSegment(hit.seg.item); // main hides the overlay + executes
+  }
 });
 
 // Right-click dismiss is a setting, not a law: honor behavior.dismissOnRightClick.
@@ -146,7 +185,17 @@ function selectSeg(i) {
   const rootG = document.querySelector('.wheel-root');
   if (rootG) rootG.classList.add('any-hover');
   rootEl.classList.add('has-hover');
-  ensureLive().textContent = (seg.item.label || seg.item.type || 'Segment') + ' \u2014 ring ' + seg.ring;
+  const isFly = !!seg.flyout;
+  let ann = seg.item.label || seg.item.type || 'Segment';
+  if (seg.item.type === 'folder') {
+    const n = Array.isArray(seg.item.children) ? seg.item.children.length : 0;
+    ann += ` \u2014 folder, ${n} items${built.flyout.isOpen(seg) ? ' \u2014 open, Enter closes' : ' \u2014 Enter opens'}`;
+  } else {
+    ann += isFly ? ' \u2014 in sub-menu' : ' \u2014 ring ' + seg.ring;
+  }
+  ensureLive().textContent = ann;
+  // the keyboard cursor drives the same dwell machine as the pointer
+  if (nav) nav.feed(seg, true);
 }
 
 window.addEventListener('keydown', (e) => {
@@ -162,7 +211,14 @@ window.addEventListener('keydown', (e) => {
   } else if ((e.key === 'Enter' || e.key === ' ') && selIdx >= 0) {
     e.preventDefault();
     const seg = segs[selIdx];
-    if (seg) api.clickSegment(seg.item);
+    if (!seg) return;
+    // Enter on a folder branches it (or collapses the latch); on a leaf it
+    // fires through the same ipc path the pointer uses.
+    if (built.flyout.isFolder(seg) && nav && nav.toggle(seg)) { selectSeg(selIdx); return; }
+    api.clickSegment(seg.item);
+  } else if (e.key === 'Backspace') {
+    // peel the deepest open sub-menu (no-op when nothing is branched)
+    if (nav && nav.back()) { e.preventDefault(); selIdx = -1; }
   }
 });
 

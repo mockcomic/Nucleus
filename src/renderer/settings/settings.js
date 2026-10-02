@@ -1,4 +1,4 @@
-import { buildWheel } from '../shared/wheel-core.js';
+import { buildWheel, createFlyoutNavigator } from '../shared/wheel-core.js';
 import { THEMES, themeById, themeBySignature, signature, computeChrome, chromeVarMap, paletteMode } from '../../main/themes.mjs';
 import { ICON_CATALOG } from '../shared/icon-catalog.js';
 
@@ -16,6 +16,9 @@ let iconModalTarget = null;        // item currently picking an icon
    Rings are keyed 1..N outward in cfg.rings (config.js normalizes to a
    contiguous range and enforces the same cap). */
 const MAX_RINGS = 4;
+/* Keep in sync with src/main/config.js — the renderer cannot require it. */
+const MAX_CHILDREN = 12;        // segments inside one folder sub-menu
+const MAX_FOLDER_DEPTH = 3;     // folder-in-folder-in-folder
 
 function ringKeys(c = cfg) {
   const ns = Object.keys((c && c.rings) || {})
@@ -26,6 +29,21 @@ function ringKeys(c = cfg) {
 }
 function ringItems(c = cfg) {
   return ringKeys(c).flatMap((k) => (c.rings && Array.isArray(c.rings[k]) ? c.rings[k] : []));
+}
+/* Mirror of config.js walkItems: every item INCLUDING folder children,
+   depth-first. Anything treating "every item" as one pool (icon prefetch,
+   modal target lookup) uses this, not ringItems(). */
+function allItems(c = cfg) {
+  const out = [];
+  const down = (arr, d) => {
+    for (const it of Array.isArray(arr) ? arr : []) {
+      if (!it || typeof it !== 'object') continue;
+      out.push(it);
+      if (Array.isArray(it.children) && it.children.length && d < MAX_FOLDER_DEPTH) down(it.children, d + 1);
+    }
+  };
+  for (const k of ringKeys(c)) down(c.rings[k], 0);
+  return out;
 }
 function ringTitle(n, N) {
   if (N <= 2) return n === '1' ? 'Inner ring' : 'Outer ring';
@@ -227,13 +245,14 @@ function refreshIconSpans() {
 
 function ensureAllIcons() {
   if (!cfg) return;
-  for (const it of ringItems()) if (it.iconImage) requestIconImage(it.iconImage);
+  for (const it of allItems()) if (it.iconImage) requestIconImage(it.iconImage);
 }
 
 /* ------------------------------- segments --------------------------------- */
 const TYPE_OPTIONS = [
   ['app', 'app — launch program'], ['url', 'url — open link'], ['file', 'file — open file'],
-  ['command', 'command — shell command / script'], ['macro', 'macro — keystrokes'], ['sys', 'sys — Windows action']
+  ['command', 'command — shell command / script'], ['macro', 'macro — keystrokes'], ['sys', 'sys — Windows action'],
+  ['folder', 'folder — sub-menu that branches on hover']
 ];
 
 /* What goes in the value box, per type — a single "Target" label asked the user
@@ -262,13 +281,13 @@ function renderSegments() {
     el('span', 'muted', { text: `${cfg.rings[ring].length} segment${cfg.rings[ring].length === 1 ? '' : 's'}` }, head);
     const add = el('button', 'btn small', { text: '+ Add' }, head);
     add.onclick = () => {
-      const item = { id: crypto.randomUUID(), label: 'New item', icon: '', iconImage: '', type: 'app', value: '', color: null };
+      const item = newSegItem();
       cfg.rings[ring].push(item);
       openEditorKey = `${ring}-${cfg.rings[ring].length - 1}`;
       touch();
       // touch() rerendered synchronously — land the caret in the new row's Label box
       // so the user can type the name right away (and pre-select "New item" to replace it).
-      const lbl = document.querySelector('.seg-edit input');
+      const lbl = document.querySelector(`[data-seg-key="${openEditorKey}"] .seg-edit input`);
       if (lbl) { lbl.focus(); lbl.select(); }
     };
     if (ring === keys[N - 1] && N >= 3) {
@@ -280,7 +299,7 @@ function renderSegments() {
       continue;
     }
     const list = el('div', 'seg-list', {}, sec);
-    cfg.rings[ring].forEach((item, i) => list.appendChild(segRow(ring, item, i)));
+    cfg.rings[ring].forEach((item, i) => list.appendChild(segRow({ ring, owner: cfg.rings[ring], item, i, key: `${ring}-${i}`, depth: 0 })));
   }
   // renderSegments created a missing ring array — model mutated in render;
   // flag it (preview-only touch) so the repair reaches disk without a keystroke.
@@ -328,11 +347,32 @@ function removeRing(ring) {
 
 const GUARDED_TYPES = new Set(['command', 'macro', 'sys']);
 
-function segRow(ring, item, i) {
+/* Row + editor work on an OWNER ARRAY, not a ring key, so the same component
+   renders ring segments (depth 0, owner = cfg.rings[ring]) and folder children
+   (depth > 0, owner = parentItem.children). `key` addresses disclosure state
+   across the tree ("1-3", "1-3/0", …). */
+function newSegItem(type = 'app') {
+  const it = { id: crypto.randomUUID(), label: 'New item', icon: '', iconImage: '', type, value: '', color: null };
+  if (type === 'folder') it.children = [];
+  return it;
+}
+
+/* Deep-copy with FRESH ids throughout the subtree: the overlay matches
+   clicked items against the live config by id (ipc.js), so a duplicated
+   folder must not smuggle its children's old ids back in. */
+function renewIds(it) {
+  const c = clone(it);
+  const down = (x) => { x.id = crypto.randomUUID(); (Array.isArray(x.children) ? x.children : []).forEach(down); };
+  down(c);
+  return c;
+}
+
+function segRow(ctx) {
+  const { owner, item, key, depth } = ctx;
   const row = el('div', 'seg-row');
-  row.dataset.segKey = `${ring}-${i}`;
+  row.dataset.segKey = key;
+  if (depth > 0) row.classList.add('seg-kid');
   const main = el('div', 'seg-main', {}, row);
-  const key = `${ring}-${i}`;
 
   // Proper disclosure button (mouse click on the row also opens the editor below).
   const disc = el('button', 'btn mini seg-disc', {
@@ -343,7 +383,7 @@ function segRow(ring, item, i) {
   el('span', 'g', { text: '\uE70D' }, disc);   // ChevronDown
 
   const icoSpan = el('span', 'seg-ico', {}, main);
-  registerIconSpan(icoSpan, item, item.icon || (item.type === 'sys' ? '\uE713' : '\uE76C'));
+  registerIconSpan(icoSpan, item, item.icon || (item.type === 'folder' ? '\uE838' : item.type === 'sys' ? '\uE713' : '\uE76C'));
   el('span', 'seg-name', { text: item.label || '(no name)' }, main);
   el('span', 'seg-type', { text: item.type }, main);
   el('span', 'seg-val', { text: rowValueText(item) }, main);
@@ -360,7 +400,7 @@ function segRow(ring, item, i) {
      while the item itself keeps moving. Ring-move and Duplicate live in the
      editor — seven anonymous glyphs on one row read like a generic toolbar. */
   const stepMove = (dir) => {
-    const a = cfg.rings[ring];
+    const a = owner;
     const j = a.indexOf(item);
     const k = j + dir;
     if (j < 0 || k < 0 || k >= a.length) return false;
@@ -390,42 +430,47 @@ function segRow(ring, item, i) {
   el('span', 'act-sep', { 'aria-hidden': 'true' }, acts);
   // Play can fire arbitrary shell commands, injected keystrokes, or lock/sleep
   // — those require a deliberate second click, not a slip from Delete.
-  let armed = false, armTimer = null;
-  const runBtn = mini('\uE9A1', 'Try this action now', async () => {   // Play — E768 renders the catalog's Mic glyph
-    if (GUARDED_TYPES.has(item.type) && !armed) {
-      armed = true;
-      runBtn.querySelector('.g').textContent = '\uE7BA';   // Warning
-      runBtn.classList.add('armed');
-      runBtn.title = `Really run “${item.label}”? This ${item.type} can affect other apps — click again within 3s`;
+  if (item.type !== 'folder') {
+    // A folder executes nothing (main refuses it too) — no Play affordance to dangle.
+    let armed = false, armTimer = null;
+    const runBtn = mini('\uE9A1', 'Try this action now', async () => {   // Play — E768 renders the catalog's Mic glyph
+      if (GUARDED_TYPES.has(item.type) && !armed) {
+        armed = true;
+        runBtn.querySelector('.g').textContent = '\uE7BA';   // Warning
+        runBtn.classList.add('armed');
+        runBtn.title = `Really run “${item.label}”? This ${item.type} can affect other apps — click again within 3s`;
+        clearTimeout(armTimer);
+        armTimer = setTimeout(disarm, 3000);
+        return;
+      }
+      disarm();
+      const r = await api.previewAction(item);
+      toast(r.ok ? `Ran “${item.label}”` : `“${item.label}” failed: ${r.error}`, !r.ok);
+    }, 'act-run');
+    function disarm() {
+      armed = false;
       clearTimeout(armTimer);
-      armTimer = setTimeout(disarm, 3000);
-      return;
+      runBtn.querySelector('.g').textContent = '\uE9A1';
+      runBtn.classList.remove('armed');
+      runBtn.title = 'Try this action now';
     }
-    disarm();
-    const r = await api.previewAction(item);
-    toast(r.ok ? `Ran “${item.label}”` : `“${item.label}” failed: ${r.error}`, !r.ok);
-  }, 'act-run');
-  function disarm() {
-    armed = false;
-    clearTimeout(armTimer);
-    runBtn.querySelector('.g').textContent = '\uE9A1';
-    runBtn.classList.remove('armed');
-    runBtn.title = 'Try this action now';
   }
   mini('\uE75D', 'Delete segment', () => {   // Trash (E894 stays reserved for clear/close)
-    if (ringItems().length <= 1) {
+    if (depth === 0 && ringItems().length <= 1) {
       toast('The wheel needs at least one segment', true);
       return;
     }
     // Inverse-op undo: the item goes back exactly where it was, and every
     // edit made AFTER the delete survives. (Graph-swap undos silently ate
     // unrelated later work — the critique's P1.)
-    const from = cfg.rings[ring];
+    const from = owner;
     const idx = from.indexOf(item);
     from.splice(idx, 1);
     touch();
     toast(`Removed “${item.label}”`, false, () => {
-      const cur = cfg.rings[ring];
+      // Re-fetch the live array: an external-config swap replaces ring arrays
+      // wholesale; a folder's children array rides on its parent item.
+      const cur = depth === 0 ? (cfg.rings[ctx.ring] || (cfg.rings[ctx.ring] = [])) : owner;
       if (cur.some((x) => x.id === item.id)) return;   // already restored meanwhile
       cur.splice(Math.min(idx, cur.length), 0, item);
       touch();
@@ -435,14 +480,20 @@ function segRow(ring, item, i) {
   const toggleEditor = () => {
     openEditorKey = openEditorKey === key ? null : key;
     renderSegments();
-    const f = document.querySelector('.seg-edit');
-    if (f) f.querySelector('input')?.focus();
-    else document.querySelector(`[data-seg-key="${key}"] .seg-disc`)?.focus();
+    const rowEl = document.querySelector(`[data-seg-key="${key}"]`);
+    const ed = rowEl && rowEl.querySelector('.seg-edit');
+    if (ed) ed.querySelector('input')?.focus();
+    else rowEl?.querySelector('.seg-disc')?.focus();
   };
   disc.onclick = (e) => { e.stopPropagation(); toggleEditor(); };
   main.addEventListener('click', toggleEditor);
 
-  if (openEditorKey === key) row.appendChild(segEditor(ring, item));
+  // Own editor opens the full form; a DESCENDANT's editor keeps just the
+  // folder manager visible, so opening a child never hides the child list
+  // you clicked through.
+  const openSelf = openEditorKey === key;
+  const openDesc = !openSelf && typeof openEditorKey === 'string' && openEditorKey.startsWith(key + '/');
+  if (openSelf || openDesc) row.appendChild(segEditor(ctx, openSelf));
   return row;
 }
 
@@ -473,6 +524,10 @@ function sysDisplayText(item) {
    plus (for app items) the launch parameters, so a set Arguments box is
    visible without opening the editor. */
 function rowValueText(item) {
+  if (item.type === 'folder') {
+    const n = Array.isArray(item.children) ? item.children.length : 0;
+    return n ? `${n} segment${n === 1 ? '' : 's'} inside` : 'empty sub-menu';
+  }
   if (item.type === 'sys') return sysDisplayText(item);
   if (item.type === 'app' && String(item.args || '').trim()) return item.value + '  ' + String(item.args).trim();
   return item.value;
@@ -480,8 +535,13 @@ function rowValueText(item) {
 
 let sysCatalogCache = null;
 
-function segEditor(ring, item) {
+function segEditor(ctx, withFields = true) {
+  const { owner, item, key, depth } = ctx;
+  const ring = ctx.ring;
   const f = el('div', 'seg-edit');
+  // A DESCENDANT editor is open (this folder's own fields are collapsed):
+  // keep just the branch manager on screen so the tree never hides itself.
+  if (withFields === false && item.type === 'folder') { folderManager(ctx, f); return f; }
   const uid = `se-${item.id}`;
   // Text inputs must NOT rerender the row list mid-keystroke — renderSegments()
   // tears down host.innerHTML and destroys the focused input. Write the model,
@@ -528,7 +588,15 @@ function segEditor(ring, item) {
     // Each type owns a disjoint value namespace — carrying an old one over
     // left the parameter box showing a sys catalog id as "Keys" (and an
     // unknown id parked in the Action select at selectedIndex -1).
-    if (item.type === 'sys') {
+    if (item.type === 'folder') {
+      item.value = '';
+      item.args = '';
+      item.dir = '';                                 // folders execute nothing
+      if (!Array.isArray(item.children)) item.children = [];
+      if (!item.icon && !item.iconImage) item.icon = '\uE838';   // open-folder glyph
+    } else if (oldType === 'folder') {
+      item.children = [];                            // the sub-menu slot is folder-only
+    } else if (item.type === 'sys') {
       if (!(sysCatalogCache || []).some((c) => c.id === item.value)) {
         item.value = (sysCatalogCache && sysCatalogCache[0] && sysCatalogCache[0].id) || '';
       }
@@ -539,11 +607,14 @@ function segEditor(ring, item) {
       item.args = '';                                // the arguments slot is app-only
     }
     touch();                                     // rebuilds the editor for the new type
-    const ed = document.querySelector('.seg-edit');
-    ed?.querySelector('select')?.focus();        // keep the keyboard in the editor
+    document.querySelector(`[data-seg-key="${key}"] .seg-edit select`)?.focus();   // keep the keyboard in the editor
   });
 
-  if (item.type === 'sys') {
+  if (item.type === 'folder') {
+    const cKids = field('Sub-menu');
+    cKids.classList.add('kid-ctl');
+    folderManager(ctx, cKids);
+  } else if (item.type === 'sys') {
     const cTarget = field(TARGET_LABELS.sys, uid + '-target');
     sysActionCombo(item, cTarget, `${uid}-list`, syncRowText);
     if ((sysEntry(item.value) || {}).hasDir) {
@@ -612,6 +683,7 @@ function segEditor(ring, item) {
   chkAuto.addEventListener('change', () => { item.color = chkAuto.checked ? null : colIn.value; touch(false); });
   colIn.addEventListener('input', () => { if (!chkAuto.checked) { item.color = colIn.value; touch(false); } });
 
+  if (depth === 0) {
   const cRing = field('Ring');
   const ringBox = el('div', 'ring-pick', {}, cRing);
   const allKeys = ringKeys();
@@ -651,26 +723,110 @@ function segEditor(ring, item) {
     rb.value = r;
     lb.appendChild(document.createTextNode(ringRadioLabel(r, allKeys)));
   }
-  const dup = el('button', 'btn small', { type: 'button', text: 'Duplicate', title: 'Copy this segment into the next position' }, ringBox);
+  makeDupButton(ringBox, cfg.rings[ring], 24, item, 'A ring holds at most 24 segments');
+  } else {
+    // Duplicate is the only child-level placement control (the ring radios are
+    // root-only); no label needed — the button names itself.
+    const cPlace = field(null);
+    const box = el('div', 'ring-pick', {}, cPlace);
+    makeDupButton(box, owner, MAX_CHILDREN, item, `A sub-menu holds at most ${MAX_CHILDREN} segments`);
+  }
+  return f;
+}
+
+/* One Duplicate button for both placement levels. Cap + toast text vary
+   (24-per-ring vs 12-per-sub-menu); the copy always gets fresh ids so the
+   overlay's live-config id match (ipc.js) stays unambiguous. */
+function makeDupButton(host, ownerArr, cap, item, capMsg) {
+  const dup = el('button', 'btn small', { type: 'button', text: 'Duplicate', title: 'Copy this segment into the next position' }, host);
   dup.onclick = (e) => {
     e.stopPropagation();
-    const a = cfg.rings[ring];
-    if (a.length >= 24) { toast('A ring holds at most 24 segments', true); return; }   // config.js cleanRing cap
-    const copy = { ...clone(item), id: crypto.randomUUID() };
-    a.splice(a.indexOf(item) + 1, 0, copy);
+    if (ownerArr.length >= cap) { toast(capMsg, true); return; }
+    const copy = renewIds(item);
+    ownerArr.splice(ownerArr.indexOf(item) + 1, 0, copy);
     openEditorKey = null;
     touch();
     toast(`Duplicated “${item.label || '(no name)'}”`, false, () => {
-      const cur = cfg.rings[ring];
-      const k = cur.findIndex((x) => x.id === copy.id);
-      if (k >= 0) { cur.splice(k, 1); touch(); }
+      const k = ownerArr.findIndex((x) => x.id === copy.id);
+      if (k >= 0) { ownerArr.splice(k, 1); touch(); }
     });
   };
-  return f;
+  return dup;
+}
+
+/* Sub-menu list inside a folder's editor. Child rows reuse the ordinary
+   segment row component — editors, reorder, delete-and-undo, icon picker and
+   all — addressed by path keys (parent key + "/index"), so the nesting UI is
+   literally the same UI at every level. */
+function folderManager(ctx, host) {
+  const item = ctx.item;
+  if (!Array.isArray(item.children)) item.children = [];
+  const kids = item.children;
+  const d = ctx.depth || 0;
+  const canNest = d + 1 < MAX_FOLDER_DEPTH;
+  const addKid = (type) => {
+    if (kids.length >= MAX_CHILDREN) { toast(`A sub-menu holds at most ${MAX_CHILDREN} segments`, true); return; }
+    kids.push(newSegItem(type));
+    openEditorKey = `${ctx.key}/${kids.length - 1}`;
+    touch();
+    // land the caret in the new row's Label box, pre-selected like ring rows do
+    const lbl = document.querySelector(`[data-seg-key="${openEditorKey}"] .seg-edit input`);
+    if (lbl) { lbl.focus(); lbl.select(); }
+  };
+  const addButtons = (where) => {
+    const b = el('button', 'btn small', { type: 'button', text: '+ Add segment', title: 'Add an action inside this sub-menu' }, where);
+    b.onclick = (e) => { e.stopPropagation(); addKid('app'); };
+    if (canNest) {
+      const s = el('button', 'btn small', { type: 'button', text: '+ Add sub-folder', title: 'Add a folder that branches further outward' }, where);
+      s.onclick = (e) => { e.stopPropagation(); addKid('folder'); };
+    }
+  };
+  if (!kids.length) {
+    // One dashed empty state — explains what belongs here and offers the action.
+    const box = el('div', 'empty-hint kid-empty', {}, host);
+    el('div', null, { text: 'No segments yet — actions added here branch outward when the pointer rests on this folder.' }, box);
+    addButtons(el('div', 'row-line kid-add', {}, box));
+    return;
+  }
+  el('div', 'f-hint', {
+    text: canNest
+      ? `Branches outward when the pointer rests on this folder — up to ${MAX_CHILDREN} segments.`
+      : `Deepest folder level — its segments branch out as actions.`
+  }, host);
+  const listBox = el('div', 'kid-list', {}, host);
+  kids.forEach((kid, j) => listBox.appendChild(segRow({ owner: kids, item: kid, i: j, key: `${ctx.key}/${j}`, depth: d + 1 })));
+  addButtons(el('div', 'row-line kid-add', {}, host));
 }
 
 /* ---------------- installed-programs dropdown (type: app) ----------------- */
 let appsCache = null;   // { loading, items }
+
+/* Popup sizing shared by both searchable combos. The list lives inside the
+   .seg-edit card, which the .seg-list's overflow:clip cuts off — a tall fixed
+   popup "dropped down" past the card edge and was clipped mid-row. Instead:
+   cap the view at COMBO_VISIBLE_ROWS option rows (the rest scroll) and flip
+   the popup above the input when the card has no room left below it.
+   Must be called while the list is displayed, after its rows are final. */
+const COMBO_VISIBLE_ROWS = 5;
+
+function fitComboList(list) {
+  list.style.maxHeight = '';                       // re-measure from natural layout
+  list.classList.remove('flip-up');
+  if (!list.getClientRects().length) return;       // hidden — the CSS fallback covers it
+  const rows = list.querySelectorAll('.combo-row');
+  if (rows.length <= COMBO_VISIBLE_ROWS) return;
+  const listTop = list.getBoundingClientRect().top;
+  const lastEdge = rows[COMBO_VISIBLE_ROWS - 1].getBoundingClientRect().bottom;
+  // Keep the "N of M" foot visible under the cap: it is the popup's caption,
+  // not a row — 5 is the number of *options* that peek through the window.
+  const foot = list.querySelector('.combo-foot');
+  const footH = foot ? foot.offsetHeight + parseFloat(getComputedStyle(foot).marginTop || '0') : 0;
+  list.style.maxHeight = Math.ceil(lastEdge - listTop + footH + 5) + 'px';   // + padding-bottom/border
+  // Flip if the capped popup would run past the clipping card or the window.
+  const card = list.closest('.seg-list') || document.body;
+  const room = Math.min(card.getBoundingClientRect().bottom, window.innerHeight);
+  if (list.getBoundingClientRect().bottom > room - 4) list.classList.add('flip-up');
+}
 
 function appCombo(item, inV, f) {
   const host = el('div', 'f-full', {}, f);
@@ -690,10 +846,10 @@ function appCombo(item, inV, f) {
     const q = search.value.trim().toLowerCase();
     list.innerHTML = ''; rows = []; active = -1;
     search.removeAttribute('aria-activedescendant');
-    if (appsCache && appsCache.loading) { el('div', 'combo-empty muted', { text: 'Scanning installed programs…', role: 'presentation' }, list); return; }
+    if (appsCache && appsCache.loading) { el('div', 'combo-empty muted', { text: 'Scanning installed programs…', role: 'presentation' }, list); fitComboList(list); return; }
     const all = (appsCache && appsCache.items) || [];
     const shown = (q ? all.filter((a) => a.name.toLowerCase().includes(q) || a.path.toLowerCase().includes(q)) : all).slice(0, 120);
-    if (!shown.length) { el('div', 'combo-empty muted', { text: q ? 'No installed program matches “' + q + '” — keep typing, or Browse… for an exact path.' : 'No installed programs found.' }, list); return; }
+    if (!shown.length) { el('div', 'combo-empty muted', { text: q ? 'No installed program matches “' + q + '” — keep typing, or Browse… for an exact path.' : 'No installed programs found.' }, list); fitComboList(list); return; }
     shown.forEach((a, idx) => {
       const r = el('div', 'combo-row', { role: 'option', 'aria-selected': 'false', id: `opt-${item.id}-${idx}` }, list);
       el('span', 'cr-name', { text: a.name }, r);
@@ -703,6 +859,7 @@ function appCombo(item, inV, f) {
       rows.push(r);
     });
     el('div', 'combo-foot muted', { text: `${shown.length} of ${all.length} — click to fill “Target”` }, list);
+    fitComboList(list);
   }
 
   function pick(a) {
@@ -711,7 +868,7 @@ function appCombo(item, inV, f) {
     touch(false);
     toast(`Target set to ${a.name}`);
   }
-  function showList() { ensureLoaded(); renderList(); }
+  function showList() { clearTimeout(listHideTimer); list.classList.remove('hidden'); ensureLoaded(); renderList(); }
   async function ensureLoaded(force) {
     if (appsCache && !force) return;
     appsCache = { loading: true, items: [] };
@@ -783,6 +940,7 @@ function sysActionCombo(item, cTarget, listId, syncRowText) {
     const shown = q ? all.filter((c) => match(c, q)) : all;
     if (!shown.length) {
       el('div', 'combo-empty muted', { text: `No action matches “${search.value.trim()}”` }, list);
+      fitComboList(list);
       return;
     }
     let lastGroup = null;
@@ -799,6 +957,7 @@ function sysActionCombo(item, cTarget, listId, syncRowText) {
       rows.push(r);
     });
     el('div', 'combo-foot muted', { text: `${shown.length} of ${all.length} — click or Enter to select` }, list);
+    fitComboList(list);
   }
 
   function pick(c) {
@@ -827,7 +986,7 @@ function sysActionCombo(item, cTarget, listId, syncRowText) {
     setActive(i >= 0 ? i : -1);
   }
 
-  search.addEventListener('focus', () => { clearTimeout(hideTimer); renderList(false); list.classList.remove('hidden'); activateByValue(); });
+  search.addEventListener('focus', () => { clearTimeout(hideTimer); list.classList.remove('hidden'); renderList(false); activateByValue(); });
   search.addEventListener('input', () => { clearTimeout(hideTimer); list.classList.remove('hidden'); renderList(true); setActive(rows.length === 1 ? 0 : -1); });
   search.addEventListener('blur', () => {
     clearTimeout(hideTimer);
@@ -839,7 +998,7 @@ function sysActionCombo(item, cTarget, listId, syncRowText) {
   search.addEventListener('keydown', (ev) => {
     if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
       ev.preventDefault();
-      if (list.classList.contains('hidden')) { clearTimeout(hideTimer); renderList(false); list.classList.remove('hidden'); activateByValue(); }
+      if (list.classList.contains('hidden')) { clearTimeout(hideTimer); list.classList.remove('hidden'); renderList(false); activateByValue(); }
       if (!rows.length) return;
       const dir = ev.key === 'ArrowDown' ? 1 : -1;
       setActive((active + dir + rows.length) % rows.length);
@@ -858,7 +1017,7 @@ function sysActionCombo(item, cTarget, listId, syncRowText) {
   });
   ddBtn.addEventListener('mousedown', (ev) => {
     ev.preventDefault();
-    if (list.classList.contains('hidden')) { renderList(false); list.classList.remove('hidden'); activateByValue(); }
+    if (list.classList.contains('hidden')) { list.classList.remove('hidden'); renderList(false); activateByValue(); }
     else list.classList.add('hidden');
     search.focus();
   });
@@ -882,7 +1041,7 @@ let iconModalOpener = null;
    cfg while the modal is up, and a write through the stale ref would vanish. */
 function modalTarget() {
   if (!iconModalTarget) return null;
-  for (const it of ringItems())
+  for (const it of allItems())
     if (it.id === iconModalTarget.id) return it;
   return iconModalTarget;
 }
@@ -1107,9 +1266,23 @@ const SLIDERS = [
    outer ≥ inner + MIN_BAND or hit-testing matches nothing at all. */
 const MIN_BAND = 24;
 
+/* The radius pair is cross-constrained (MIN_BAND): dragging one clamps the
+   other. The clamp repaints the SIBLING row in place — never via
+   renderAppearance(). Chromium fires `change` on every arrow-key press of a
+   range input, so a full rebuild would destroy the focused slider after each
+   single step (keyboard users lost focus every keypress). */
+const sliderCtl = new Map();   // key -> { input, out, fill }
+function syncSlider(key) {
+  const c = sliderCtl.get(key);
+  if (!c) return;
+  const v = String(cfg.appearance[key]);
+  c.input.value = v; c.out.textContent = v; c.fill();
+}
+
 function renderAppearance() {
   const host = $('#appearance-controls');
   host.innerHTML = '';
+  sliderCtl.clear();
   for (const [key, label, min, max, step] of SLIDERS) {
     const row = el('div', 'slider-row', {}, host);
     const id = 'slider-' + key;
@@ -1121,6 +1294,7 @@ function renderAppearance() {
     // Apple-style filled track: Chromium ranges have no fill pseudo, so pin a --fill stop.
     const fill = () => r.style.setProperty('--fill', ((+r.value - min) / (max - min) * 100) + '%');
     fill();
+    sliderCtl.set(key, { input: r, out, fill });
     // Only the preview needs the new value — never rerender the segment rows per drag frame.
     r.addEventListener('input', () => {
       let v = parseFloat(r.value);
@@ -1134,8 +1308,10 @@ function renderAppearance() {
       r.value = String(v); out.textContent = String(v); fill(); renderPreview();
     });
     r.addEventListener('change', () => {
-      // Re-paint the sibling radius row so its slider/label show the clamp.
-      if (key === 'innerRadius' || key === 'outerRadius') renderAppearance();
+      // Sibling radius row shows the other slider's clamp (see syncSlider note).
+      if (key === 'innerRadius') syncSlider('outerRadius');
+      else if (key === 'outerRadius') syncSlider('innerRadius');
+      syncSlider(key);
       touch(false);
     });
   }
@@ -1445,6 +1621,7 @@ window.addEventListener('keydown', async (e) => {
 function stopRecording() {
   recording = false;
   $('#recorder-btn').textContent = 'Change…';
+  $('#recorder-btn').setAttribute('aria-pressed', 'false');
   $('#hk-display').classList.remove('recording');
 }
 
@@ -1490,7 +1667,7 @@ function wireBehaviorCheckboxes() {
           cfg[sec][key] = c.checked;   // revert the MODEL with the checkbox — the old code left cfg flipped
           return;
         }
-        toast(r.verified ? 'Startup registration confirmed' : 'Saved (could not verify login item)');
+        toast(r.skipped ? 'Saved' : (r.verified ? 'Startup registration confirmed' : 'Saved (could not verify login item)'));
       }
       touch(false);
     };
@@ -1501,6 +1678,17 @@ function wireBehaviorCheckboxes() {
   if (auto) auto.disabled = !autostartAllowed;
   if (autoLbl) autoLbl.classList.toggle('dim', !autostartAllowed);
   if (autoHint) autoHint.classList.toggle('hidden', autostartAllowed);
+  /* Sub-menu dwell: how long a folder must be hovered before it branches. */
+  const fly = $('#bh-flyout'), flyOut = $('#bh-flyout-out');
+  if (fly) {
+    const fill = () => fly.style.setProperty('--fill', (Math.min(600, Math.max(0, Number(fly.value))) / 600 * 100) + '%');
+    const cur = Number(cfg.behavior && cfg.behavior.flyoutDwellMs);
+    fly.value = String(Number.isFinite(cur) ? Math.min(600, Math.max(0, cur)) : 180);
+    if (flyOut) flyOut.textContent = fly.value + ' ms';
+    fill();
+    fly.addEventListener('input', () => { if (flyOut) flyOut.textContent = fly.value + ' ms'; fill(); });
+    fly.addEventListener('change', () => { cfg.behavior.flyoutDwellMs = Number(fly.value) || 0; touch(false); });
+  }
   /* Gaming mode: master toggle + comma-separated always-off app list. */
   if (!cfg.behavior.gameMode) cfg.behavior.gameMode = { enabled: false, apps: [] };
   const gmOn = $('#bh-gamemode');
@@ -1524,7 +1712,10 @@ function wireBehaviorCheckboxes() {
   const cl = $('#ap-centerlabel');
   cl.value = cfg.appearance.centerLabel;
   cl.oninput = () => { cfg.appearance.centerLabel = cl.value; touch(false); };   // preview live AND persist (touch(false) rerenders the preview without the row-list rebuild)
-  $('#btn-test').onclick = async () => { await api.testWheel(); };                   // onclick, not addEventListener: never stacks across rerenders
+  $('#btn-test').onclick = async () => {                                             // onclick, not addEventListener: never stacks across rerenders
+    const r = await safe(() => api.testWheel());
+    if (r && r.ok === false) toast(r.error || 'Could not pop the wheel', true);
+  };
 }
 
 /* -------------------------------- advanced --------------------------------- */
@@ -1611,6 +1802,7 @@ async function wireAdvanced() {
    `preview` flag suppresses the pop; click-firing is safe because no
    segment-click handler exists on this page. */
 let previewBuilt = null;
+let previewNav = null;
 let previewHoverBound = false;
 
 function bindPreviewHover() {
@@ -1627,12 +1819,26 @@ function bindPreviewHover() {
     previewBuilt.setHover(seg);
     const rootG = svg.querySelector('.wheel-root');
     if (rootG) rootG.classList.toggle('any-hover', !!seg);
+    // same dwell state machine the overlay uses — folder fans demo live
+    if (previewNav) previewNav.feed(seg, !!hit);
   });
   host.addEventListener('mouseleave', () => {
     if (!previewBuilt) return;
     previewBuilt.setHover(null);
     const rootG = $('#wheel-preview .wheel-root');
     if (rootG) rootG.classList.remove('any-hover');
+    if (previewNav) previewNav.feed(null, false);
+  });
+  // Clicking a folder plate in the preview opens/collapses its branch — the
+  // preview fires no actions (no segment-click handler on this page), so the
+  // fan is demoable without side effects.
+  host.addEventListener('click', (e) => {
+    if (!previewBuilt || !previewNav) return;
+    const svg = host.querySelector('svg');
+    if (!svg) return;
+    const rct = svg.getBoundingClientRect();
+    const hit = previewBuilt.hitTest(e.clientX - rct.left, e.clientY - rct.top);
+    if (hit && hit.seg) previewNav.toggle(hit.seg);
   });
 }
 
@@ -1642,6 +1848,12 @@ function renderPreview() {
   const need = cfg.appearance.outerRadius * 2 + 52;
   const scale = Math.min(1, Math.max(0.3, avail / need));
   previewBuilt = buildWheel(host, cfg, { preview: true, scale, iconImages: imgCache });
+  previewNav = createFlyoutNavigator(previewBuilt, {
+    dwellMs: cfg.behavior && cfg.behavior.flyoutDwellMs,
+    // The preview box may need to breathe past the wheel rim when a fan
+    // branches; CSS overflow handles it, no window involved.
+    onGrow: () => { host.classList.add('fan-out'); }
+  });
   bindPreviewHover();
 }
 

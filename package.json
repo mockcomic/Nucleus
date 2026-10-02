@@ -11,7 +11,8 @@
     "start:agent": "node scripts/start-agent.js",
     "start:hidden": "wscript scripts/launch-hidden.vbs",
     "make-icons": "node scripts/make-icons.mjs",
-    "dist": "node scripts/make-icons.mjs && electron-builder",
+    "build": "npm run dist",
+    "dist": "node scripts/make-icons.mjs && node scripts/bump-build.mjs && electron-builder",
     "test": "node --test tests/*.test.js tests/unit/*.test.js"
   },
   "dependencies": {
@@ -24,6 +25,7 @@
   "build": {
     "appId": "local.radialwheel",
     "productName": "Radial Wheel",
+    "buildNumber": "4",
     "directories": {
       "output": "dist"
     },
@@ -44,10 +46,11 @@
       "oneClick": true,
       "perMachine": false,
       "deleteAppDataOnUninstall": false,
+      "artifactName": "RadialWheel-${version}-b${buildNumber}-setup.exe",
       "include": "build/installer.nsh"
     },
     "portable": {
-      "artifactName": "RadialWheel-${version}-portable.exe"
+      "artifactName": "RadialWheel-${version}-b${buildNumber}-portable.exe"
     }
   }
 }

@@ -47,6 +47,20 @@ function runShellCommand(value) {
 }
 
 /**
+ * Scheme guard for the `url` action: anything that is not an explicitly
+ * allowed scheme gets `https://` prepended — so a bare host still works, and
+ * hostile shapes (`file://C:\evil\path.exe`, custom protocol handlers) can
+ * never reach shell.openExternal as written. The old filter accepted any
+ * RFC-shaped scheme; this is a real allowlist. mailto: is listed because it
+ * lacks the `://` form and would otherwise be mangled by the default — pages
+ * opened by other schemes belong to the sys action's ms-settings targets.
+ */
+function safeExternalUrl(value) {
+  const s = String(value);
+  return /^(https?:|mailto:)/i.test(s) ? s : 'https://' + s;
+}
+
+/**
  * Execute one configured item. Throws Error with a user-readable message on failure.
  * ctx: { quit?: () => void }
  */
@@ -58,8 +72,7 @@ async function executeAction(item, ctx = {}) {
   switch (type) {
     case 'url': {
       if (!value) throw new Error('no URL configured');
-      const url = /^[a-z][a-z0-9+.-]*:\/\//i.test(value) ? value : 'https://' + value;
-      const err = await shell.openExternal(url);
+      const err = await shell.openExternal(safeExternalUrl(value));
       if (err) throw new Error(err);
       return;
     }
@@ -133,9 +146,14 @@ async function executeAction(item, ctx = {}) {
       await sys.run(value, ctx, { dir: String(item.dir || '').trim() });
       return;
     }
+    case 'folder':
+      // Folder segments are sub-menu containers, never executable — and the
+      // wheel renderer shouldn't send them either. Loudly refuse (defense in
+      // depth behind the recursive live-config match in ipc.js).
+      throw new Error('a folder segment cannot be launched');
     default:
       throw new Error(`unknown action type '${type}'`);
   }
 }
 
-module.exports = { executeAction };
+module.exports = { executeAction, safeExternalUrl };

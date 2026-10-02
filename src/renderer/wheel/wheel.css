@@ -13,7 +13,7 @@ html, body {
 #root { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
 #root.has-hover { cursor: pointer; }
 
-.wheel-svg { display: block; }
+.wheel-svg { display: block; overflow: visible; }  /* flyout fans may paint past the rim; main grows the window to fit */
 
 .wheel-root {
   transform-box: fill-box;
@@ -39,6 +39,19 @@ html, body {
 /* The lifted plate catches the light: its icon brightens a notch, no glow. */
 .wheel-root.any-hover .seg.hovered .seg-icon { filter: brightness(1.18); transition: filter .12s ease; }
 
+/* ── folder sub-menus ─────────────────────────────────────────────────────
+   Flyout plates are ordinary .seg groups built by wheel-core, so hover lift,
+   sibling dim, and hub report reuse the rules above untouched. Motion
+   explains the branch: plates fade in and extend outward from the hub
+   (origin set in wheel-core), ease-out ≤150 ms — no spring (that belongs to
+   hover/summon alone, per the Snap-Back Rule). */
+.flyout { pointer-events: none; animation: flyoutin 140ms ease-out; }        /* hit-testing is geometric (hitTest), as everywhere */
+.flyout .seg { pointer-events: none; }
+@keyframes flyoutin { from { opacity: 0; transform: scale(.97); } }
+.wheel-root .seg.fly-parent { opacity: 1; }               /* the trunk never dims while branched */
+.wheel-root .seg.occluded { opacity: .35; transition: opacity .12s ease; }  /* under the fan, not gone */
+.seg-chevron { pointer-events: none; }
+
 .hub { transition: fill .1s ease; }
 .hub-icon, .hub-label, .center-label { pointer-events: none; }
 
@@ -47,6 +60,7 @@ html, body {
 
 /* reduced motion: state changes land instantly; hover fill + hub report keep the affordance */
 @media (prefers-reduced-motion: reduce) {
-  .seg, .seg path, .hub, .seg.hovered .seg-icon { transition: none; }
+  .seg, .seg path, .hub, .seg.occluded, .seg.hovered .seg-icon { transition: none; }
+  .flyout { animation: none; }
   .wheel-root.any-hover .seg.hovered { transition: none; transform: none; }
 }

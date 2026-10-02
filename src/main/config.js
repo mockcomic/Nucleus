@@ -21,6 +21,13 @@ const MAX_USER_THEMES = 24;
    settings renderer's Add-ring button. */
 const MAX_RINGS = 4;
 
+/* Folder segments carry an inline sub-menu that branches radially on hover.
+   Nesting is capped (folder-in-folder-in-folder) and each sub-menu is capped
+   well below the ring cap — a fan of 24 children in a partial arc is unreadable.
+   Mirrored by the settings renderer (it cannot require this CommonJS module). */
+const MAX_CHILDREN = 12;
+const MAX_FOLDER_DEPTH = 3;
+
 /* Optional persona fields on a palette; malformed entries are dropped, never
    defaulted (see themes.mjs sanitizePalette for the renderer-side mirror). */
 function cleanPalette(raw) {
@@ -77,6 +84,9 @@ function defaults() {
          True = the app under the cursor still receives the click. Inert for
          keyboard hotkeys. */
       mouseClickThrough: false,
+      /* Dwell (ms) on a folder segment before its sub-menu branches open.
+         0 = branch instantly on hover. */
+      flyoutDwellMs: 180,
       gameMode: { enabled: false, apps: [] }
     },
     theme: { id: DEFAULT_THEME_ID, customized: false, colors: { ...DEFAULT_COLORS } },
@@ -106,7 +116,7 @@ const HEX = /^#[0-9a-fA-F]{6}$/;
 const clamp = (v, lo, hi, dflt) =>
   (typeof v === 'number' && isFinite(v)) ? Math.min(hi, Math.max(lo, v)) : dflt;
 
-const TYPES = new Set(['app', 'url', 'file', 'command', 'macro', 'sys']);
+const TYPES = new Set(['app', 'url', 'file', 'command', 'macro', 'sys', 'folder']);
 const HOTKEY_RE = /^[a-z0-9+ ]{1,40}$/;
 
 function validate(raw) {
@@ -121,10 +131,11 @@ function validate(raw) {
   for (const k of ['edge', 'stroke', 'shadow', 'sheen']) if (HEX.test(colorsIn[k] || '')) colors[k] = colorsIn[k];
   if (colorsIn.mode === 'dark' || colorsIn.mode === 'light') colors.mode = colorsIn.mode;
 
-  const cleanItem = (it, i) => {
+  const cleanItem = (it, i, depth = 0) => {
     it = it && typeof it === 'object' ? it : {};
     let type = String(it.type || 'app').toLowerCase();
     if (!TYPES.has(type)) type = 'app';
+    const isFolder = type === 'folder';
     return {
       id: typeof it.id === 'string' && it.id ? it.id : nid(),
       label: String(it.label ?? `Item ${i + 1}`).slice(0, 40),
@@ -137,7 +148,9 @@ function validate(raw) {
         return custom || require('./dashboard-icons').sanitizeSlug(it.iconImage) || '';
       })(),
       type,
-      value: String(it.value ?? '').slice(0, 2048),
+      // A folder launches nothing — its whole payload is the sub-menu, so the
+      // action slots are wiped instead of lingering invisibly across a switch.
+      value: isFolder ? '' : String(it.value ?? '').slice(0, 2048),
       // Launch parameters for `app` items (the Settings "Arguments" box),
       // tokenized by src/main/args.js at launch. Kept only for `app` so a
       // stale string can't ride across a type switch.
@@ -148,10 +161,15 @@ function validate(raw) {
       hideLabel: !!it.hideLabel,
       // Optional parameter slot; currently only the sys `explorer` action
       // consumes it (the folder Explorer opens in). Inert on other types.
-      dir: typeof it.dir === 'string' ? it.dir.trim().slice(0, 2048) : ''
+      dir: !isFolder && typeof it.dir === 'string' ? it.dir.trim().slice(0, 2048) : '',
+      // Folder sub-menu tree, pruned at the caps above. Deeper folders simply
+      // lose their own children (they render as empty sub-menus).
+      children: isFolder && depth < MAX_FOLDER_DEPTH
+        ? (Array.isArray(it.children) ? it.children.slice(0, MAX_CHILDREN) : []).map((c, k) => cleanItem(c, k, depth + 1))
+        : []
     };
   };
-  const cleanRing = (arr) => Array.isArray(arr) ? arr.slice(0, 24).map(cleanItem) : [];
+  const cleanRing = (arr) => Array.isArray(arr) ? arr.slice(0, 24).map((it, i) => cleanItem(it, i, 0)) : [];
 
   /* Rings arrive keyed by numeric strings; normalize to a contiguous 1..N
      (ascending key order, renumbered, capped at MAX_RINGS, floor of two keys
@@ -226,6 +244,7 @@ function validate(raw) {
       reTriggerToggles: bhvIn.reTriggerToggles !== false,
       // Fail-closed on purpose: junk/absent means "swallow the click", the safe default.
       mouseClickThrough: bhvIn.mouseClickThrough === true,
+      flyoutDwellMs: clamp(bhvIn.flyoutDwellMs, 0, 600, base.behavior.flyoutDwellMs),
       gameMode: require('./gamemode').sanitizeGameMode(bhvIn.gameMode)
     },
     theme: {
@@ -236,6 +255,34 @@ function validate(raw) {
     userThemes,
     rings
   };
+}
+
+/* Sanitize ONE renderer-supplied item (the Settings preview button) through
+   the exact cleanItem pipeline the store uses: type whitelist, the 2048-char
+   value/args/dir caps, folder slots wiped non-executable. Nothing is
+   executed before this runs — a compromised page can at worst preview a
+   bounds-capped copy of what it sent (audit: action:preview drift). */
+function sanitizeItem(raw) {
+  const src = raw && typeof raw === 'object' ? raw : {};
+  return validate({ rings: { '1': [src] } }).rings['1'][0];
+}
+
+/* Walk every configured item — each ring's items and, depth-first, the
+   children of every folder at any stored depth. Returning false from fn stops
+   the whole walk. Used by anything treating "every item" as one pool: the
+   segment-click id match (ipc.js), icon prefetch, the settings renderer's
+   helpers. */
+function walkItems(cfg, fn) {
+  const rings = (cfg && cfg.rings && typeof cfg.rings === 'object') ? cfg.rings : {};
+  const down = (arr, depth) => {
+    for (const it of Array.isArray(arr) ? arr : []) {
+      if (!it || typeof it !== 'object') continue;
+      if (fn(it, depth) === false) return false;
+      if (Array.isArray(it.children) && it.children.length && down(it.children, depth + 1) === false) return false;
+    }
+    return true;
+  };
+  for (const k of Object.keys(rings)) if (down(rings[k], 0) === false) return;
 }
 
 /* Map the old Python wheel_config.json (flat items[] with ring field) into v1. */
@@ -402,4 +449,4 @@ class ConfigStore extends EventEmitter {
   }
 }
 
-module.exports = { ConfigStore, validate, defaults, VERSION, MAX_RINGS };
+module.exports = { ConfigStore, validate, defaults, sanitizeItem, walkItems, VERSION, MAX_RINGS, MAX_CHILDREN, MAX_FOLDER_DEPTH };

@@ -8,8 +8,18 @@ const apps = require('./apps');
 const dashboardIcons = require('./dashboard-icons');
 const customIcons = require('./custom-icons');
 const sys = require('./sys');
+const { walkItems, sanitizeItem } = require('./config');
 const log = require('./logger');
 const { supportsVibrancy } = require('./windows');
+
+/* Version string for the UI: app.getVersion() plus the dist build number when
+   one has been stamped (log.buildNumber() reads the generated build-info.js
+   and returns null for the seed/dev tree, so those displays stay plain). */
+function displayVersion() {
+  const bn = log.buildNumber();
+  const v = app.getVersion();
+  return bn ? `${v} (build ${bn})` : v;
+}
 
 /**
  * deps = { store, hotkeyMgr, overlay, settings, welcome, tray, getState, setState,
@@ -39,10 +49,20 @@ function registerIpc(deps) {
     // pick-image opens a modal on the Settings window and reads the chosen path
     // in main, so it is gated like every other privileged channel.
     'icons:pick-image': ['settings'], 'icons:add-url': ['settings'],
+    // Downloads and log-folder operations have hard-coded targets (fixed CDN
+    // host, fixed log dir) — but they still touch network/disk, so they are
+    // gated like every other channel. Only Settings bridges these; the wheel
+    // resolves its art through icons:data-url, which lists 'wheel' as well.
+    'icons:search': ['settings'], 'icons:fetch': ['settings'],
+    'icons:data-url': ['settings', 'wheel'],
+    'log:open-folder': ['settings'], 'logs:tail': ['settings'],
     'wheel:segment-click': ['wheel'], 'wheel:dismiss': ['wheel'],
+    // growCanvas lets an opened flyout ask for more transparent window; the
+    // value is geometry only — clamped and re-centered in Overlay.grow.
+    'wheel:grow': ['wheel'],
     'welcome:done': ['welcome'], 'settings:close': ['settings'], 'app:quit': ['settings']
   };
-  const SEND_CHANNELS = new Set(['config:flush', 'wheel:segment-click', 'wheel:dismiss', 'welcome:done', 'settings:close', 'app:quit']);
+  const SEND_CHANNELS = new Set(['config:flush', 'wheel:segment-click', 'wheel:dismiss', 'wheel:grow', 'welcome:done', 'settings:close', 'app:quit']);
   const refused = (ch, ev) => {
     log.warn(`refused ${ch} from an untrusted frame`);
     return SEND_CHANNELS.has(ch) ? undefined : { ok: false, error: 'untrusted frame' };
@@ -59,14 +79,24 @@ function registerIpc(deps) {
   /* ---- wheel overlay events ---- */
   guardOn('wheel:dismiss', () => overlay.hide());
 
+  /* A branch-open flyout may reach past the wheel's outer radius (folders on
+     the outermost ring). One geometry-only message asks the window to grow
+     around itself; main owns all clamping. */
+  guardOn('wheel:grow', (e, reachPx) => {
+    const n = Number(reachPx);
+    if (Number.isFinite(n) && n > 0 && n <= 2048) overlay.grow(n);
+  });
+
   guardOn('wheel:segment-click', async (e, item) => {
     overlay.hide();
     /* The overlay payload is renderer-supplied — never execute it as-is.
        Match the clicked item against the LIVE config by id so a bugged or
-       compromised renderer cannot inject an arbitrary action payload. */
-    const live = item && typeof item === 'object' && item.id
-      ? Object.values(store.get().rings || {}).flat().find((x) => x && x.id === item.id)
-      : null;
+       compromised renderer cannot inject an arbitrary action payload. The
+       walk is recursive: flyout children live inside folder items. */
+    let live = null;
+    if (item && typeof item === 'object' && item.id) {
+      walkItems(store.get(), (x) => { if (x && x.id === item.id) { live = x; return false; } });
+    }
     if (!live) { log.warn('ignored segment click for unknown item', item && item.id); return; }
     item = live;
     // sys.ALIAS forms (volup, clipboard, …) canonicalize through the same map
@@ -217,7 +247,9 @@ function registerIpc(deps) {
     } catch (err) {
       return { ok: false, error: String(err && err.message || err) };
     }
-    return { ok: true, verified: r.verified };
+    // skipped ('foreign'/'absent'/'unverified'): the disable left a value it
+    // does not own (or could not read) — report ok; config stays the truth.
+    return { ok: true, verified: r.verified, skipped: r.skipped || null };
   });
 
   /* ---- icon images (logos + custom artwork for wheel items) ----
@@ -226,8 +258,11 @@ function registerIpc(deps) {
      rows and the live preview share a single lookup. */
   dashboardIcons.configure(path.join(app.getPath('userData'), 'icons', 'dashboard'));
   customIcons.configure(path.join(app.getPath('userData'), 'icons', 'custom'));
-  const ringItems = (cfg) => (cfg && cfg.rings ? Object.values(cfg.rings) : [])
-    .flatMap((a) => Array.isArray(a) ? a : []);
+  const ringItems = (cfg) => {
+    const out = [];
+    walkItems(cfg, (it) => { out.push(it); });
+    return out;
+  };
   const resolveIconImage = (key) => customIcons.isCustomKey(key)
     ? customIcons.dataUrlFor(key)
     : dashboardIcons.dataUrlFor(key);
@@ -290,7 +325,14 @@ function registerIpc(deps) {
     return r.canceled ? null : r.filePaths[0];
   });
 
-  guardHandle('action:preview', async (ev, item) => {
+  guardHandle('action:preview', async (ev, raw) => {
+    // Run the SANITIZED item — the same discipline wheel:segment-click applies
+    // against the live config. Without it a bugged or compromised settings
+    // page could hand executeAction (and through it the SendInput macro
+    // engine) an unbounded, unvalidated payload. validate() only enforces the
+    // bounds a saved config already obeys, so legitimate previews are
+    // untouched.
+    const item = sanitizeItem(raw);
     try {
       await actions.executeAction(item, { quit: () => deps.quitApp() });
       return { ok: true };
@@ -309,7 +351,7 @@ function registerIpc(deps) {
     return {
       hotkey: cfg.hotkey,
       hotkeyError: store.hotkeyError || null,
-      version: app.getVersion(),
+      version: displayVersion(),
       importedFrom: store.importedFrom || null,
       hasWheel,
       ftuSeen: !!deps.getState('ftuSeen', false),
@@ -329,7 +371,11 @@ function registerIpc(deps) {
       ? payload.applyAutostart : null;
     welcome.close();
     if (first && apply !== null && autostart.allowed()) {
-      try { autostart.set(apply); }
+      try {
+        const r = autostart.set(apply);
+        if (r && !r.ok) log.warn('autostart from welcome failed:', r.error);
+        else if (r && r.ok && r.enabled) log.info(r.verified ? 'login item registered from welcome (verified)' : 'login item written from welcome (verification fell back)');
+      }
       catch (err) { log.warn('autostart from welcome failed:', err && err.message); }
       try {
         const cur = JSON.parse(JSON.stringify(store.get()));
@@ -347,7 +393,7 @@ function registerIpc(deps) {
 
   guardHandle('sys:catalog', () => sys.CATALOG);
   guardHandle('apps:list', (ev, force) => apps.listApps(!!force));
-  guardHandle('app:version', () => app.getVersion());
+  guardHandle('app:version', () => displayVersion());
   guardHandle('env:get', () => ({ vibrant: supportsVibrancy() }));
   guardOn('settings:close', () => settings.close());
   guardOn('app:quit', () => deps.quitApp());

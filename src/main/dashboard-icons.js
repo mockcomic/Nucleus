@@ -15,6 +15,7 @@
    are unit-testable under plain node (tests/unit/dashboard-icons.test.js). */
 const fs = require('fs');
 const path = require('path');
+const { readCapped } = require('./capped-fetch');
 
 const REPO = 'homarr-labs/dashboard-icons';
 const METADATA_URL = 'https://raw.githubusercontent.com/' + REPO + '/main/metadata.json';
@@ -203,9 +204,10 @@ async function fetchBuffer(url, maxBytes) {
   if (!res.ok) return null;
   const len = Number(res.headers.get('content-length'));
   if (len > maxBytes) return null;
-  const buf = Buffer.from(await res.arrayBuffer());
-  if (!buf.length || buf.length > maxBytes) return null;
-  return buf;
+  // Cap enforced while streaming, not after buffering (see capped-fetch.js).
+  const got = await readCapped(res, maxBytes);
+  if (!got.buf || !got.buf.length) return null;
+  return got.buf;
 }
 
 let metaMem = null;                        // { at, data }
@@ -287,8 +289,9 @@ async function fetchIcon(slugRaw) {
         if (!ctype.startsWith(MIME[kind])) continue;
         const len = Number(res.headers.get('content-length'));
         if (len > ICON_MAX_BYTES) continue;
-        const buf = Buffer.from(await res.arrayBuffer());
-        if (!buf.length || buf.length > ICON_MAX_BYTES) continue;
+        const got = await readCapped(res, ICON_MAX_BYTES);
+        const buf = got.buf;
+        if (!buf || !buf.length) continue;   // overflow, mid-stream failure, or empty
         writeCache(slug, kind, buf);
         return { ok: true, slug, kind, dataUrl: dataUrl(kind, buf) };
       } catch { /* try the next format / report below */ }
