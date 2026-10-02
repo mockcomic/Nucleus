@@ -49,6 +49,7 @@ class WelcomeWindow {
       }
     });
     this.win.setMenuBarVisibility(false);
+    require('./windows').attachLogHooks(this.win, 'welcome');
     this.win.loadFile(path.join(__dirname, '..', 'renderer', 'welcome', 'index.html'));
     this.win.once('ready-to-show', () => {
       if (this.win && !this.win.isDestroyed()) { this.win.show(); this.win.focus(); }

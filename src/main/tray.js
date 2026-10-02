@@ -2,6 +2,7 @@
 /* System tray: resident icon, quick menu, error balloons. */
 const { Tray, Menu, nativeImage, app } = require('electron');
 const hotkeys = require('./hotkeys');
+const log = require('./logger');
 
 class TrayManager {
   constructor(icons, handlers) {
@@ -10,7 +11,7 @@ class TrayManager {
     if (this.image.isEmpty()) {
       // A blank tray icon is the only visible symptom of a missing/corrupt
       // PNG under userData — make noise in the log, and stay functional.
-      console.warn('[radial-wheel] tray icon missing or empty:', icons && icons.tray32);
+      log.warn('tray icon missing or empty:', icons && icons.tray32);
     }
     this.tray = null;
     this.paused = false;
@@ -50,6 +51,7 @@ class TrayManager {
       { label: 'Show welcome…', click: () => this.handlers.onShowWelcome() },
       { type: 'separator' },
       { label: 'Reload config from disk', click: () => this.handlers.onReload() },
+      { label: 'Open logs…', click: () => this.handlers.onOpenLogs && this.handlers.onOpenLogs() },
       { label: 'Pause hotkey', type: 'checkbox', checked: this.paused, click: (mi) => { this.paused = mi.checked; this.handlers.onPauseToggle(mi.checked); } }
     ];
     // Gaming mode shows itself (and why) but needs no interaction — "Show wheel"

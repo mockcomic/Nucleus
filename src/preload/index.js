@@ -46,6 +46,7 @@ const settingsSurface = {
   importConfig: invoke('config:import'),
   resetConfig: invoke('config:reset'),
   openConfigFolder: invoke('config:open-folder'),
+  openLogsFolder: invoke('log:open-folder'),
   sysCatalog: invoke('sys:catalog'),
   appVersion: invoke('app:version'),
   env: invoke('env:get'),
@@ -75,3 +76,52 @@ if (on('welcome')) {
     onReset: (cb) => ipcRenderer.on('welcome:reset', () => cb())
   });
 }
+
+/* ---- renderer diagnostics → main's log file ----
+   A packaged app has no console anyone can read; page console.* and thrown
+   errors would evaporate. The real console methods stay untouched — pages
+   call window.console.error etc., so we swap those properties with thin
+   shims that forward a stringified line to main ('log:line') and delegate
+   to the original. Runs in the main world, so it can inspect page values
+   (Error stacks); everything is try/caught: diagnostics never break the UI,
+   and send() is synchronous so crash-time lines still land. Chromium's own
+   console-message events (uncaught exceptions, network errors) are hooked
+   separately on the webContents side. */
+(() => {
+  const page = ((location.pathname.match(/renderer\/(\w+)\//) || [])[1]) || 'page';
+  const fmt = (v, d) => {
+    try {
+      if (typeof v === 'string') return v;
+      if (v instanceof Error) return v.stack || (v.name + ': ' + v.message);
+      if (v === undefined) return 'undefined';
+      if (typeof v === 'function') return '[Function]';
+      if (typeof v === 'object' && v !== null) {
+        if (d > 1) return Array.isArray(v) ? '[Array]' : '[Object]';
+        return JSON.stringify(v, (_k, x) => (typeof x === 'bigint' ? String(x) : x)) ?? String(v);
+      }
+      return String(v);
+    } catch { return '[unformattable]'; }
+  };
+  const send = (level, args) => {
+    try {
+      ipcRenderer.send('log:line', {
+        level, page,
+        args: Array.prototype.map.call(args, (a) => fmt(a, 0)).join(' ').slice(0, 1500)
+      });
+    } catch { /* diagnostics are never allowed to break the page */ }
+  };
+  const hook = (win) => {
+    try {
+      const c = win.console; if (!c || c.__rwHooked) return;
+      c.__rwHooked = true;
+      for (const m of ['log', 'info', 'warn', 'error', 'debug']) {
+        const orig = typeof c[m] === 'function' ? c[m].bind(c) : null;
+        c[m] = (...a) => {
+          send(m === 'log' ? 'info' : m, a);   // page console.log is info-level
+          if (orig) { try { orig(...a); } catch { /* ignore */ } }
+        };
+      }
+    } catch { /* frozen console etc. — stay silent */ }
+  };
+  hook(window);
+})();

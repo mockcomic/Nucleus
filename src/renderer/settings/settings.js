@@ -259,7 +259,7 @@ function renderSegments() {
     const sec = el('div', 'ring-sec', {}, host);
     const head = el('div', 'ring-head', {}, sec);
     el('h3', null, { text: ringTitle(ring, N) }, head);
-    el('span', 'muted', { text: `${cfg.rings[ring].length} segment(s)` }, head);
+    el('span', 'muted', { text: `${cfg.rings[ring].length} segment${cfg.rings[ring].length === 1 ? '' : 's'}` }, head);
     const add = el('button', 'btn small', { text: '+ Add' }, head);
     add.onclick = () => {
       const item = { id: crypto.randomUUID(), label: 'New item', icon: '', iconImage: '', type: 'app', value: '', color: null };
@@ -455,12 +455,15 @@ function sysEntry(id) {
   return (sysCatalogCache || []).find((x) => x.id === id) || null;
 }
 
-/* Row caption: the File Explorer action additionally shows the picked folder's
-   leaf name, so a wheel with several Explorer segments stays readable. */
+/* Row caption: a folder-capable sys action (File Explorer) additionally shows
+   the picked folder's leaf name, so a wheel with several Explorer segments
+   stays readable. The leaf mirrors main's normalizeFolder() — quotes and
+   trailing separators never reach the caption. */
 function sysDisplayText(item) {
   const label = sysLabel(item.value);
-  if (item.value === 'explorer' && item.dir) {
-    const leaf = String(item.dir).replace(/[\\/]+$/, '').split(/[\\/]/).pop();
+  if (item.dir && (sysEntry(item.value) || {}).hasDir) {
+    const leaf = String(item.dir).trim().replace(/^["']+|["']+$/g, '')
+      .replace(/[\\/]+$/, '').split(/[\\/]/).pop();
     if (leaf) return `${label} — ${leaf}`;
   }
   return label;
@@ -496,20 +499,27 @@ function segEditor(ring, item) {
     if (val) val.textContent = rowValueText(item);
   };
 
-  el('label', null, { text: 'Label', for: uid + '-label' }, f);
-  const labelBox = el('div', null, { style: 'display:flex;align-items:center;gap:12px;min-width:0' }, f);
+  /* One form row = label cell + control cell; every control shares one left
+     anchor (CSS owns .f-label/.f-ctl/.f-hint). The old 4-column grid assumed
+     a double-width pane and shoved Type/Color off the card edge. */
+  const field = (labelText, forId) => {
+    if (labelText) el('label', 'f-label', forId ? { text: labelText, for: forId } : { text: labelText }, f);
+    else el('span', 'f-label', {}, f);
+    return el('div', 'f-ctl', {}, f);
+  };
+  const hint = (o) => el('div', 'f-hint', o, f);
+
+  const cLabel = field('Label', uid + '-label');
   const inLabel = bind(el('input', null, { type: 'text', maxlength: '40', value: item.label, id: uid + '-label' }), (e) => item.label = e.value);
-  inLabel.style.flex = '1';
-  inLabel.style.minWidth = '0';
-  labelBox.appendChild(inLabel);
-  const hideLb = el('label', 'chk', { title: 'Show this segment as icon only — hides its label on the wheel' }, labelBox);
+  cLabel.appendChild(inLabel);
+  const hideLb = el('label', 'chk', { title: 'Show this segment as icon only — hides its label on the wheel' }, cLabel);
   const chkHide = el('input', null, { type: 'checkbox', 'aria-label': 'Hide label on wheel' }, hideLb);
   el('span', null, { text: 'Hide label' }, hideLb);
   chkHide.checked = !!item.hideLabel;
   chkHide.addEventListener('change', () => { item.hideLabel = chkHide.checked; touch(false); });
 
-  el('label', null, { text: 'Type', for: uid + '-type' }, f);
-  const selType = el('select', null, { id: uid + '-type' }, f);
+  const cType = field('Type', uid + '-type');
+  const selType = el('select', null, { id: uid + '-type' }, cType);
   for (const [v, t] of TYPE_OPTIONS) el('option', null, { value: v, text: t }, selType);
   selType.value = item.type;
   selType.addEventListener('change', () => {
@@ -533,10 +543,9 @@ function segEditor(ring, item) {
     ed?.querySelector('select')?.focus();        // keep the keyboard in the editor
   });
 
-  const labTarget = el('label', null, { text: TARGET_LABELS[item.type] || 'Target' }, f);
   if (item.type === 'sys') {
-    const sel = el('select', null, { id: uid + '-target' }, f);
-    labTarget.setAttribute('for', uid + '-target');
+    const cTarget = field(TARGET_LABELS.sys, uid + '-target');
+    const sel = el('select', null, { id: uid + '-target' }, cTarget);
     for (const c of (sysCatalogCache || [])) el('option', null, { value: c.id, text: `${c.group} — ${c.label}` }, sel);
     sel.value = item.value;
     sel.addEventListener('change', () => {
@@ -550,35 +559,30 @@ function segEditor(ring, item) {
       if (isDir !== wasDir) touch(); else touch(false);
     });
     if ((sysEntry(item.value) || {}).hasDir) {
-      el('label', null, { text: 'Folder', for: uid + '-dir' }, f);
-      const rowd = el('div', null, { style: 'display:flex;gap:6px;grid-column:span 2' }, f);
+      const cDir = field('Folder', uid + '-dir');
       const inD = bind(el('input', null, {
         type: 'text', value: item.dir || '', id: uid + '-dir',
-        placeholder: 'Leave empty for the default (Quick access)'
+        placeholder: 'e.g. C:\\Users\\you\\Downloads — empty opens Quick access',
+        spellcheck: 'false'
       }), (e) => item.dir = e.value);
-      inD.style.flex = '1';
-      inD.style.minWidth = '0';
-      rowd.appendChild(inD);
-      const bd = el('button', 'btn small', { text: 'Browse…' }, rowd);
+      cDir.appendChild(inD);
+      const bd = el('button', 'btn small', { text: 'Browse…' }, cDir);
       bd.onclick = async (ev) => {
         ev.stopPropagation();
         const p = await api.pickFile({ title: 'Choose a folder', directory: true });
         if (p) { item.dir = p; syncRowText(); touch(); }
       };
-      const hint = el('div', 'hint', {
-        text: 'The folder File Explorer opens in. Empty opens the default view.'
-      }, f);
-      hint.style.gridColumn = '1 / -1';
-      hint.style.marginTop = '-2px';
+      hint({
+        text: 'The folder File Explorer opens in — paths with spaces, %VARIABLES%, ~/Name, or a shell: verb. Empty opens the default view.'
+      });
     }
   } else {
-    const rowv = el('div', null, { style: 'display:flex;gap:6px;grid-column:span 2' }, f);
+    const cTarget = field(TARGET_LABELS[item.type] || 'Target', uid + '-target');
     const inV = bind(el('input', null, { type: 'text', value: item.value, placeholder: valueHint(item.type), id: uid + '-target' }), (e) => item.value = e.value);
-    labTarget.setAttribute('for', uid + '-target');
-    rowv.appendChild(inV);
+    cTarget.appendChild(inV);
     const browseOpts = BROWSE_OPTS[item.type];
     if (browseOpts) {
-      const b = el('button', 'btn small', { text: 'Browse…' }, rowv);
+      const b = el('button', 'btn small', { text: 'Browse…' }, cTarget);
       b.onclick = async (ev) => {
         ev.stopPropagation();
         const p = await api.pickFile(browseOpts);
@@ -586,54 +590,42 @@ function segEditor(ring, item) {
       };
     }
     if (item.type === 'app') {
-      el('label', null, { text: 'Arguments', for: uid + '-args' }, f);
-      const rowa = el('div', null, { style: 'display:flex;gap:6px;grid-column:span 2' }, f);
+      const cArgs = field('Arguments', uid + '-args');
       const inA = bind(el('input', null, {
         type: 'text', value: item.args || '', maxlength: '2048',
         placeholder: valueHint('args'), id: uid + '-args',
         'aria-label': 'Launch parameters passed to the program'
       }), (e) => item.args = e.value);
-      inA.style.flex = '1';
-      inA.style.minWidth = '0';
-      rowa.appendChild(inA);
-      const hintA = el('div', 'hint', {
-        text: 'Passed to the program when it starts — quote parameters that contain spaces.'
-      }, f);
-      hintA.style.gridColumn = '1 / -1';
-      hintA.style.marginTop = '-2px';
+      cArgs.appendChild(inA);
+      hint({ text: 'Passed to the program when it starts — quote parameters that contain spaces.' });
     }
     if (item.type === 'command') {
       // Say what the box takes — cmd.exe syntax vs. a picked script file.
-      const hint = el('div', 'hint', {
+      hint({
         html: 'Type it exactly as in <b>Command Prompt</b>, or use Browse… to pick a <code>.bat</code> / <code>.cmd</code> / <code>.ps1</code> file — the chosen path runs like a double-click.'
-      }, f);
-      hint.style.gridColumn = '1 / -1';
-      hint.style.marginTop = '-2px';
+      });
     }
     if (item.type === 'app') appCombo(item, inV, f);
   }
 
-  el('label', null, { text: 'Icon' }, f);
-  const iconBox = el('div', null, { style: 'display:flex;align-items:center;gap:8px' }, f);
-  const iconPrev = el('span', 'seg-ico', {}, iconBox);
+  const cIcon = field('Icon');
+  const iconPrev = el('span', 'seg-ico' + (item.icon || item.iconImage ? '' : ' none'), {}, cIcon);
   registerIconSpan(iconPrev, item, item.icon || '—');
-  iconPrev.style.color = item.icon ? 'var(--accent)' : 'var(--dim)';
-  const pick = el('button', 'btn small', { text: 'Choose…' }, iconBox);
+  const pick = el('button', 'btn small', { text: 'Choose…' }, cIcon);
   pick.onclick = () => openIconModal(item, pick);
-  const clr = el('button', 'btn small glyph', { text: '\uE894', title: 'Clear icon', 'aria-label': 'Clear icon' }, iconBox);
+  const clr = el('button', 'btn small glyph', { text: '\uE894', title: 'Clear icon', 'aria-label': 'Clear icon' }, cIcon);
   clr.onclick = () => { item.icon = ''; renderSegments(); touch(); };
 
-  el('label', null, { text: 'Color' }, f);
-  const colorBox = el('div', null, { style: 'display:flex;align-items:center;gap:8px' }, f);
-  const chkAuto = el('input', null, { type: 'checkbox' }, colorBox);
+  const cColor = field('Color');
+  const chkAuto = el('input', null, { type: 'checkbox' }, cColor);
   chkAuto.checked = !item.color;
-  el('span', 'muted', { text: 'auto' }, colorBox).style.fontSize = '12px';
-  const colIn = el('input', null, { type: 'color', value: item.color || cfg.appearance.colors[Number(ring) % 2 === 1 ? 'ring1' : 'ring2'] }, colorBox);
+  el('span', 'muted ctl-note', { text: 'auto' }, cColor);
+  const colIn = el('input', null, { type: 'color', value: item.color || cfg.appearance.colors[Number(ring) % 2 === 1 ? 'ring1' : 'ring2'] }, cColor);
   chkAuto.addEventListener('change', () => { item.color = chkAuto.checked ? null : colIn.value; touch(false); });
   colIn.addEventListener('input', () => { if (!chkAuto.checked) { item.color = colIn.value; touch(false); } });
 
-  el('label', null, { text: 'Ring' }, f);
-  const ringBox = el('div', null, { style: 'display:flex;gap:12px;align-items:center;flex-wrap:wrap' }, f);
+  const cRing = field('Ring');
+  const ringBox = el('div', 'ring-pick', {}, cRing);
   const allKeys = ringKeys();
   for (const r of allKeys) {
     const lb = el('label', 'chk', {}, ringBox);
@@ -693,11 +685,10 @@ function segEditor(ring, item) {
 let appsCache = null;   // { loading, items }
 
 function appCombo(item, inV, f) {
-  const host = el('div', null, { style: 'grid-column:1 / -1;position:relative' }, f);
-  const row = el('div', 'row-line', { style: 'margin-top:2px' }, host);
-  el('span', 'muted', { text: 'Installed programs' }, row).style.fontSize = '12px';
+  const host = el('div', 'f-full', {}, f);
+  const row = el('div', 'row-line', {}, host);
+  el('span', 'muted ctl-note', { text: 'Installed programs' }, row);
   const search = el('input', null, { type: 'text', placeholder: 'Start typing to search…  (▾ opens the full list)', 'aria-label': 'Search installed programs', role: 'combobox', 'aria-autocomplete': 'list', 'aria-controls': `list-${item.id}` }, row);
-  search.style.flex = '1';
   const ddBtn = el('button', 'btn small', { title: 'Show all installed programs', 'aria-label': 'Show all installed programs' }, row);
   el('span', 'g', { text: '\uE70D' }, ddBtn);   // ChevronDown
   const scanBtn = el('button', 'btn small', { title: 'Re-scan the installed programs list', 'aria-label': 'Re-scan the installed programs list' }, row);
@@ -1406,6 +1397,10 @@ async function wireAdvanced() {
     } else if (!r.canceled) toast(r.error, true);
   };
   $('#btn-openfolder').onclick = () => api.openConfigFolder();
+  $('#btn-openlogs').onclick = async () => {
+    const r = await safe(() => api.openLogsFolder());
+    if (r && r.ok === false) toast(r.error || 'Could not open the logs folder', true);
+  };
   /* Quit is the highest-stakes click in this window — answer it in-brand,
      with the same armed second-click the theme delete and guarded Try use.
      A native confirm() is Windows chrome wearing none of this system's voice. */

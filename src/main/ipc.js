@@ -7,6 +7,7 @@ const autostart = require('./autostart');
 const apps = require('./apps');
 const dashboardIcons = require('./dashboard-icons');
 const sys = require('./sys');
+const log = require('./logger');
 const { supportsVibrancy } = require('./windows');
 
 /**
@@ -39,7 +40,7 @@ function registerIpc(deps) {
   };
   const SEND_CHANNELS = new Set(['config:flush', 'wheel:segment-click', 'wheel:dismiss', 'welcome:done', 'settings:close', 'app:quit']);
   const refused = (ch, ev) => {
-    console.warn(`[radial-wheel] refused ${ch} from an untrusted frame`);
+    log.warn(`refused ${ch} from an untrusted frame`);
     return SEND_CHANNELS.has(ch) ? undefined : { ok: false, error: 'untrusted frame' };
   };
   const guardHandle = (ch, fn) => ipcMain.handle(ch, PRIVILEGED[ch]
@@ -62,7 +63,7 @@ function registerIpc(deps) {
     const live = item && typeof item === 'object' && item.id
       ? Object.values(store.get().rings || {}).flat().find((x) => x && x.id === item.id)
       : null;
-    if (!live) { console.warn('[radial-wheel] ignored segment click for unknown item', item && item.id); return; }
+    if (!live) { log.warn('ignored segment click for unknown item', item && item.id); return; }
     item = live;
     // sys.ALIAS forms (volup, clipboard, …) canonicalize through the same map
     // sys.run() uses, so aliased key-actions get the focus-regain wait too.
@@ -74,7 +75,7 @@ function registerIpc(deps) {
       await actions.executeAction(item, { quit: () => deps.quitApp() });
     } catch (err) {
       if (tray) tray.balloon(`${item && item.label ? item.label : 'Action'} failed`, String(err && err.message || err), 'error');
-      else console.error('[radial-wheel] action failed:', item && item.label, err && err.message);
+      log.error('action failed:', item && item.label, (err && (err.stack || err.message)) || err);
     }
   });
 
@@ -107,7 +108,7 @@ function registerIpc(deps) {
   guardOn('config:flush', (ev, cfg) => {
     if (!cfg || typeof cfg !== 'object') return;
     try { store.set(cfg); store.broken = false; }
-    catch (err) { console.error('[radial-wheel] exit-flush save failed:', err && err.message); }
+    catch (err) { log.error('exit-flush save failed:', err && err.message); }
   });
 
   guardHandle('config:export', async (ev) => {
@@ -151,6 +152,32 @@ function registerIpc(deps) {
   });
 
   guardHandle('config:open-folder', () => shell.openPath(path.dirname(store.file())));
+
+  /* ---- logs ----
+     'log:line' is deliberately NOT frame-gated: the preload console hook is a
+     fire-and-forget send() that must survive page teardown (crash-time logs),
+     and its payload is sanitized + clamped inside the logger. The renderer can
+     write log lines, nothing else. */
+  ipcMain.on('log:line', (ev, payload) => log.forwardRenderer(payload));
+  guardHandle('log:open-folder', () => {
+    const d = log.dir();
+    if (!d) return { ok: false, error: 'log folder unavailable' };
+    try { fs.mkdirSync(d, { recursive: true }); } catch { /* openPath reports the failure */ }
+    return shell.openPath(d).then((err) => (err ? { ok: false, error: err } : { ok: true }));
+  });
+  guardHandle('logs:tail', (ev, n) => {
+    const d = log.dir();
+    if (!d) return { ok: false, error: 'log folder unavailable', lines: [] };
+    try {
+      const files = fs.readdirSync(d).filter((f) => /^radial-wheel-\d{4}-\d{2}-\d{2}\.log$/.test(f)).sort();
+      if (!files.length) return { ok: true, lines: [], file: null };
+      const file = files[files.length - 1];
+      const lines = fs.readFileSync(path.join(d, file), 'utf8').split(/\r?\n/).filter(Boolean);
+      return { ok: true, file, lines: lines.slice(-Math.max(1, Math.min(n | 0 || 200, 1000))) };
+    } catch (err) {
+      return { ok: false, error: String(err && err.message || err), lines: [] };
+    }
+  });
 
   /* ---- hotkey ---- */
   guardHandle('hotkey:set', (ev, spec) => {

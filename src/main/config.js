@@ -4,6 +4,7 @@ const { app } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const EventEmitter = require('events');
+const log = require('./logger');
 const { themes, themeById, themeBySignature, signature } = require('./themes');
 
 const VERSION = 2;
@@ -315,7 +316,7 @@ class ConfigStore extends EventEmitter {
       } catch (err2) {
         // Disk unavailable on a fresh install: run from the in-memory config,
         // stay resident, and let the Settings banner (broken flag) say so.
-        console.error('[radial-wheel] could not write initial config:', err2 && err2.message);
+        log.error('could not write initial config:', err2 && err2.message);
         this.broken = true;
       }
       if (err.message === 'missing' && !legacy) {

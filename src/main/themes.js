@@ -10,6 +10,8 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
+const log = require('./logger');
+
 const FILE = path.join(__dirname, 'themes.mjs');
 
 function loadThemes() {
@@ -27,7 +29,7 @@ function themes() {
       THEMES = loadThemes();
       if (!Array.isArray(THEMES) || !THEMES.length) throw new Error('empty catalog');
     } catch (err) {
-      console.error('[themes] catalog load failed, using fallback:', err && err.message);
+      log.error('catalog load failed, using fallback:', err && err.message);
       THEMES = [{ id: 'midnight', name: 'Midnight', colors: {
         bg: '#0f1419', ring1: '#1b2733', ring2: '#16202b', hover: '#2e7dd1',
         accent: '#4c9ff0', text: '#e8eef4', center: '#0a0e12',

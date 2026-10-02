@@ -1,5 +1,5 @@
 'use strict';
-const { app, Menu, nativeTheme } = require('electron');
+const { app, Menu, nativeTheme, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -14,6 +14,9 @@ const { GameModeWatcher } = require('./gamemode');
 const macro = require('./macro');
 const mousehook = require('./mousehook');
 const autostart = require('./autostart');
+const log = require('./logger');
+/* The logger is safe to call from here on — it degrades to console-only until
+   init() pins the userData log file (done once the app is ready, below). */
 
 let quitting = false;
 let store, hotkeyMgr, overlay, settingsWin, welcome, tray, gameWatcher;
@@ -83,14 +86,14 @@ function applyHotkeyState() {
       // actually installed right now?" is the first question when a button
       // trigger misbehaves. Keyboard registration is already covered by the
       // tray tooltip and the startup marker.
-      if (res.mouse) console.log(`[radial-wheel] mouse trigger '${store.get().hotkey}' ${res.ok ? (mousehook.active() ? 'hook armed' : 'registered but hook NOT armed') : 'FAILED: ' + res.error}`);
+      if (res.mouse) log.info(`mouse trigger '${store.get().hotkey}' ${res.ok ? (mousehook.active() ? 'hook armed' : 'registered but hook NOT armed') : 'FAILED: ' + res.error}`);
       if (!res.ok && tray) tray.balloon('Hotkey could not be registered', res.error, 'error');
     }
   } else {
     const wasMouse = !!(hotkeyMgr.current && hotkeyMgr.current.mouse);
     const wasArmed = mousehook.active();
     hotkeyMgr.unregister();
-    if (wasMouse && wasArmed) console.log('[radial-wheel] mouse hook released (hotkey paused)');
+    if (wasMouse && wasArmed) log.info('mouse hook released (hotkey paused)');
     if (overlay) overlay.hide();
     store.hotkeyError = null; // the hotkey is deliberately off — no stale error
   }
@@ -148,7 +151,7 @@ function bootstrap() {
   } catch (err) {
     // Unwritable userData must not abort bootstrap — a windowless,
     // hotkey-less resident process is far worse than a tray-less one.
-    console.error('[radial-wheel] runtime icon prep failed:', (err && err.message) || err);
+    log.error('runtime icon prep failed:', (err && err.stack) || (err && err.message) || err);
     icons = null;
   }
 
@@ -166,6 +169,7 @@ function bootstrap() {
       onOpenSettings: () => settingsWin.open(),
       onShowWelcome: () => welcome.open(),
       onReload: () => { store.reload(); },
+      onOpenLogs: () => { const d = log.dir(); if (d) { try { fs.mkdirSync(d, { recursive: true }); } catch {} shell.openPath(d); } },
       onPauseToggle: (paused) => { manualPaused = paused; applyHotkeyState(); },
       getGameMode: () => ({ active: gamePaused, reason: gameReason }),
       onQuit: quitApp
@@ -173,7 +177,7 @@ function bootstrap() {
     tray.build(() => store.get());
   } else {
     tray = null;
-    console.error('[radial-wheel] continuing WITHOUT a tray icon — nothing writable under ' + app.getPath('userData') + '?');
+    log.error('continuing WITHOUT a tray icon — nothing writable under ' + app.getPath('userData') + '?');
   }
 
   /* Gaming mode: pause the hotkey while a fullscreen / listed app owns the foreground. */
@@ -182,13 +186,13 @@ function bootstrap() {
     gamePaused = true;
     gameReason = reason || 'game';
     applyHotkeyState();
-    console.log(`[radial-wheel] game mode: paused (${gameReason})`);
+    log.info(`game mode: paused (${gameReason})`);
   });
   gameWatcher.on('resume', () => {
     gamePaused = false;
     gameReason = null;
     applyHotkeyState();
-    console.log('[radial-wheel] game mode: resumed');
+    log.info('game mode: resumed');
   });
   gameWatcher.configure();
 
@@ -222,7 +226,7 @@ function bootstrap() {
 
   if (process.argv.includes('--show-wheel')) setTimeout(() => toggleWheel(true), 400);
 
-  console.log(`[radial-wheel] ready — hotkey '${store.get().hotkey}' ${res.ok ? 'registered' : 'FAILED: ' + res.error}` +
+  log.info(`ready — hotkey '${store.get().hotkey}' ${res.ok ? 'registered' : 'FAILED: ' + res.error}` +
     (res.mouse ? ` [mouse hook ${mousehook.active() ? 'armed' : 'NOT ARMED'}]` : '') +
     (store.importedFrom ? ` (imported ${store.importedFrom})` : '') +
     (store.broken ? ' (config.json was corrupt — defaults in use, see config.json.bad)' : '') +
@@ -239,7 +243,7 @@ function bootstrap() {
     const t = setInterval(() => {
       if (!mousehook.active()) { clearInterval(t); return; }
       const s = JSON.stringify(mousehook.getStats());
-      if (s !== last) { last = s; console.log(`[radial-wheel] mouse hook ${s}`); }
+      if (s !== last) { last = s; log.info(`mouse hook ${s}`); }
       if (++samples > 3600) clearInterval(t);          // an hour of headroom
     }, 400);
   }
@@ -247,6 +251,9 @@ function bootstrap() {
 
 /* ------------------------------ app lifecycle ------------------------------ */
 if (!app.requestSingleInstanceLock()) {
+  /* Second launch: say so in the log — an exe double-click that "does nothing"
+     is otherwise indistinguishable from a crash. */
+  log.warn('another instance already holds the single-instance lock — this launch exits');
   app.quit();
 } else {
   app.setAppUserModelId('local.radialwheel');
@@ -263,7 +270,7 @@ if (!app.requestSingleInstanceLock()) {
      never take the launcher down. Individual sites still handle their own
      errors; this only turns a process death into a loud log + balloon. */
   const survives = (where) => (err) => {
-    console.error(`[radial-wheel] ${where}:`, (err && (err.stack || err.message)) || err);
+    log.error(`${where}:`, (err && (err.stack || err.message)) || err);
     try { tray && tray.balloon('Radial Wheel recovered from an internal error', String((err && err.message) || err), 'error'); } catch { /* best effort */ }
   };
   process.on('uncaughtException', survives('uncaughtException'));
@@ -274,7 +281,15 @@ if (!app.requestSingleInstanceLock()) {
     else if (!argv.includes('--hidden')) settingsWin.open();
   });
 
-  app.whenReady().then(bootstrap);
+  /* A bootstrap throw is the silent-death case: no window, no tray, no clue —
+     and uncaughtException never sees a rejected whenReady promise. Log it and
+     exit non-zero so `npm start` surfaces the failure too. */
+  app.whenReady()
+    .then(() => { log.init(); log.banner(); bootstrap(); })
+    .catch((err) => {
+      log.error('fatal — startup failed:', (err && (err.stack || err.message)) || err);
+      process.exit(1);
+    });
 
   app.on('before-quit', () => { quitting = true; });
 

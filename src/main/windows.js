@@ -8,6 +8,32 @@ const { execFileSync } = require('child_process');
 
 const PRELOAD = path.join(__dirname, '..', 'preload', 'index.js');
 const WHEEL_PAD = 26; // room for drop-shadow + hover lift
+const log = require('./logger');
+
+/* Renderer diagnostics → the log file. console.* rides the preload hook, but
+   these webContents events catch what no page console call reports: Chromium's
+   own network errors, a crashed render process, failed page loads. Idempotent
+   per webContents so overlay re-ensure / window reuse never double-listens. */
+function attachLogHooks(win, name) {
+  const wc = win && win.webContents;
+  if (!wc || wc.__rwLogHooks) return;
+  wc.__rwLogHooks = true;
+  const LEVELS = { logging: 'debug', verbose: 'debug', info: 'info', warning: 'warn', error: 'error' };
+  wc.on('console-message', (e) => {
+    // Older Electron shape: (event, level 0-3, message, line, sourceId).
+    const d = (e && e.params) || e || {};
+    const lvl = typeof d.level === 'string' ? (LEVELS[d.level] || 'info')
+      : (Number(d.level) >= 3 ? 'error' : Number(d.level) === 2 ? 'warn' : Number(d.level) === 1 ? 'info' : 'debug');
+    log.forwardRenderer({ level: lvl, page: name, args: d.message, source: d.sourceId || '', line: d.line });
+  });
+  wc.on('render-process-gone', (ev, d) => {
+    log.error(`renderer '${name}' process gone: ${d && d.reason} (exit code ${d && d.exitCode})`);
+  });
+  wc.on('did-fail-load', (ev, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    if (isMainFrame) log.error(`renderer '${name}' failed to load: ${errorCode} ${errorDescription} (${validatedURL})`);
+    else log.warn(`renderer '${name}' subresource failed: ${errorCode} ${errorDescription} (${validatedURL})`);
+  });
+}
 
 /* Settings-window vibrancy gate: DWM acrylic needs Windows 11 22H2 (build 22621)
    with the OS "transparency effects" toggle on. Fail-soft — any doubt (old OS,
@@ -48,6 +74,7 @@ class Overlay {
       }
     });
     this.win.setAlwaysOnTop(true, 'screen-saver');
+    attachLogHooks(this.win, 'wheel');
     this._loaded = false;
     this.win.webContents.on('did-finish-load', () => { this._loaded = true; });
     this.win.loadFile(path.join(__dirname, '..', 'renderer', 'wheel', 'index.html'));
@@ -152,6 +179,7 @@ class SettingsWindow {
       opts.show = false;   // avoid a bare-backdrop flash before the page paints
     }
     this.win = new BrowserWindow(opts);
+    attachLogHooks(this.win, 'settings');
     if (vibrant) {
       this.win.once('ready-to-show', () => {
         if (this.win && !this.win.isDestroyed()) this.win.show();
@@ -182,4 +210,4 @@ class SettingsWindow {
   destroy() { if (this.win && !this.win.isDestroyed()) this.win.destroy(); this.win = null; }
 }
 
-module.exports = { Overlay, SettingsWindow, supportsVibrancy };
+module.exports = { Overlay, SettingsWindow, supportsVibrancy, attachLogHooks };

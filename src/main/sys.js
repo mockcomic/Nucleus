@@ -1,5 +1,8 @@
 'use strict';
 /* Built-in Windows actions. `run(id)` executes; the CATALOG drives the settings dropdown. */
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const { shell } = require('electron');
 const { spawn } = require('child_process');
 const macro = require('./macro');
@@ -22,7 +25,9 @@ const CATALOG = [
   { id: 'volume_down', label: 'Volume down', icon: '\uE993', group: 'Audio' },
   { id: 'sound', label: 'Sound settings', icon: '\uE767', group: 'Audio' },
   /* hasDir: the action accepts an optional folder in the item's `dir` field
-     (surfaced as a Folder input + Browse… in the settings editor). */
+     (surfaced as a Folder input + Browse… in the settings editor). Anything
+     Explorer's address bar takes works — absolute paths, `%VAR%\…`, `~/Downloads`,
+     a bare known-folder name, and `shell:` / `::{CLSID}` verbs. */
   { id: 'explorer', label: 'File Explorer', icon: '\uE8B7', group: 'Files', hasDir: true },
   { id: 'recycle_bin', label: 'Recycle Bin', icon: '\uE74D', group: 'Files' },
   { id: 'settings', label: 'Windows Settings', icon: '\uE713', group: 'Settings' },
@@ -55,6 +60,57 @@ function spawnDetached(cmd, args) {
   });
 }
 
+/* The sys `explorer` action's optional folder parameter.
+   Launching it as `explorer.exe <path>` does NOT work: Node quotes any argument
+   containing a space for CreateProcess, and explorer.exe's hand-rolled
+   command-line parser drops such a path (and any path written with forward
+   slashes) back to its default view — the Folder box silently did nothing.
+   ShellExecute via shell.openPath is the double-click semantics: spaces, UNC
+   paths and long paths all resolve the way Explorer itself resolves them. */
+async function openExplorer(dir) {
+  const target = normalizeFolder(dir);
+  if (!target) return spawnDetached('explorer.exe', []);          // default view
+  if (isShellVerb(target)) {                                       // shell:…, ::{CLSID}
+    const err = await shell.openPath(target);
+    if (err) throw new Error(`${target}: ${err}`);
+    return;
+  }
+  let st = null;
+  try { st = fs.statSync(target); } catch { /* reported below */ }
+  if (!st) throw new Error(`folder not found: ${target}`);
+  if (!st.isDirectory()) {                     // a file was typed in — reveal it instead
+    shell.showItemInFolder(target);
+    return;
+  }
+  const err = await shell.openPath(target);
+  if (err) throw new Error(`${target}: ${err}`);
+}
+
+/* Accept what Explorer's own address bar accepts: surrounding quotes (pasted
+   out of a shell), %VARIABLES%, `~/…` and a bare `Downloads`-style name
+   (resolved against the profile), forward slashes, trailing separators. */
+function normalizeFolder(dir) {
+  let s = String(dir || '').trim().replace(/^["']+|["']+$/g, '').trim();
+  if (!s) return '';
+  s = s.replace(/%([A-Za-z_][A-Za-z0-9_]*)%/g, (m, k) => {
+    const v = process.env[k];
+    return v === undefined ? m : v;
+  });
+  s = s.trim();
+  if (isShellVerb(s)) return s;
+  s = s.replace(/\//g, '\\');                                // pasted with forward slashes
+  s = s.replace(/\\+$/, '');                                 // trailing separator trips ShellExecute
+  if (/^[A-Za-z]:$/.test(s)) s += '\\';                      // drive root needs its slash back
+  if (/^~(?:\\|$)/.test(s)) s = path.win32.join(os.homedir(), s.slice(1).replace(/^\\+/, ''));
+  else if (!path.win32.isAbsolute(s)) s = path.win32.resolve(os.homedir(), s);
+  return s;
+}
+
+function isShellVerb(s) {
+  const t = String(s).replace(/^["']+|["']+$/g, '');
+  return /^shell:/i.test(t) || /^::\{[0-9a-f-]+\}/i.test(t);
+}
+
 async function run(id, ctx = {}, opts = {}) {
   const key = ALIAS[String(id || '').toLowerCase()] || String(id || '').toLowerCase();
   switch (key) {
@@ -69,7 +125,7 @@ async function run(id, ctx = {}, opts = {}) {
     case 'volume_down': return macro.sendVk(0xAE);
     case 'task_manager': return spawnDetached('taskmgr.exe', []);
     // A user-picked folder opens directly; empty dir keeps the default view.
-    case 'explorer': return spawnDetached('explorer.exe', opts.dir ? [opts.dir] : []);
+    case 'explorer': return openExplorer(opts.dir);
     case 'recycle_bin': {
       const err = await shell.openPath('shell:RecycleBinFolder');
       if (err) throw new Error(err);
@@ -95,4 +151,4 @@ async function openSettingsUri(uri) {
   if (err) throw new Error(`${uri}: ${err}`);
 }
 
-module.exports = { CATALOG, IDS, ALIAS, run };
+module.exports = { CATALOG, IDS, ALIAS, run, normalizeFolder, openExplorer };
