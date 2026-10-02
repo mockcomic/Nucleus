@@ -58,7 +58,8 @@ Open from the tray (double-click icon → **Open Settings**). Four tabs:
 
 - **Segments** — add / edit / reorder / delete items on any ring, **+ Add ring**
   grows the wheel outward (up to 4 rings; remove the outermost anytime),
-  icon picker (Segoe Fluent glyphs), per-item color, live “try this action” button,
+  icon picker (Segoe Fluent glyphs, a [Dashboard Icons](https://dashboardicons.com)
+  logo, or your own image), per-item color, live “try this action” button,
   file browse for apps, and an **installed-programs dropdown** when type is `app`:
   type to search the Start Menu + registry program list, click to fill the target
   (entries launch exactly like double-clicking their Start Menu shortcut; ↻ re-scans).
@@ -117,6 +118,15 @@ To launch from source with no console (e.g. a Startup entry during development):
   hibernates instead (that's Windows, not the app).
 - Icons come from **Segoe Fluent Icons** (Win 11) with **Segoe MDL2 Assets**
   (Win 10) fallback; the picker shows exactly what a glyph will look like.
+- **Custom segment images**: in the icon picker, **Browse image…** takes a local
+  **PNG, JPG, GIF, WebP, BMP, ICO** or **SVG** file (up to 2 MB), or paste an
+  image **URL** and hit **Use URL**. The bytes are stored once, content-addressed,
+  under `%APPDATA%\Radial Wheel\icons\custom` and `config.json` keeps only a
+  `custom:<hash>.<ext>` key — so configs stay small and shareable. A pasted URL is
+  downloaded once and kept, so the wheel shows it offline too; a URL-sourced icon
+  re-downloads itself on a new machine, while one picked from disk falls back to
+  that segment's glyph. Either way nothing renders blank. Files are validated by
+  their bytes, not their extension, and an `<img>`-loaded SVG cannot run script.
 - No acrylic/backdrop blur behind the overlay (a transparent Electron window can
   only blur its own content) — depth comes from shadows + tuned fills.
 - If a global hotkey fails to register at startup (taken by another app), the app

@@ -40,6 +40,10 @@ const settingsSurface = {
   searchIcons: invoke('icons:search'),
   fetchIcon: invoke('icons:fetch'),
   iconDataUrl: invoke('icons:data-url'),
+  // Custom segment art: both answer the installed {ok, key, dataUrl} so the row
+  // can paint immediately. The open dialog lives in main, not here.
+  pickIconImage: invoke('icons:pick-image'),
+  addIconFromUrl: invoke('icons:add-url'),
   previewAction: invoke('action:preview'),
   testWheel: invoke('overlay:show'),
   exportConfig: invoke('config:export'),

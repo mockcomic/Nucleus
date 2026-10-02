@@ -85,3 +85,30 @@ test('validate round-trips the rest of the item shape alongside args', () => {
   assert.equal(it.label, 'L');
   assert.equal(it.id, 'x');
 });
+
+/* ------------------------- iconImage: two key families --------------------- */
+/* The slot carries a Dashboard Icons slug OR custom-artwork keys; whichever
+   family main's resolver routes on, validate must not be the thing that
+   silently blanks the user's art. */
+const CUSTOM = 'custom:' + 'a'.repeat(16) + '.png';
+
+test('validate keeps a custom-artwork key and a dashboard slug alike', () => {
+  assert.equal(clean({ iconImage: CUSTOM }).iconImage, CUSTOM);
+  assert.equal(clean({ iconImage: 'firefox' }).iconImage, 'firefox');
+  assert.equal(clean({ iconImage: CUSTOM.toUpperCase() }).iconImage, CUSTOM, 'case folds, like sanitizeSlug');
+  assert.equal(clean({ iconImage: '  ' + CUSTOM + '  ' }).iconImage, CUSTOM, 'whitespace trims');
+});
+
+test('validate blanks iconImage for anything neither family recognises', () => {
+  for (const junk of ['', null, undefined, 42, {}, [], 'custom:../../windows.png',
+    'custom:' + 'a'.repeat(16) + '.exe', 'custom:not-a-hash.png', 'file:///C:/a.png',
+    'https://example.com/a.png']) {
+    assert.equal(clean({ iconImage: junk }).iconImage, '', JSON.stringify(junk));
+  }
+});
+
+test('icon and iconImage are independent slots', () => {
+  const it = clean({ icon: '\uE713', iconImage: CUSTOM });
+  assert.equal(it.icon, '\uE713');
+  assert.equal(it.iconImage, CUSTOM);
+});

@@ -789,6 +789,24 @@ function setModalInert(on) {
   }
 }
 
+/* Shared status line for the modal's three sources (logo search / own image /
+   glyph wall) — the cancel paths repaint it instead of leaving a stale result. */
+function iconModalHint(item) {
+  const term = ((item && item.label) || '').trim();
+  return term
+    ? `Press Enter or “Search” to look for a “${term}” logo, or pick a glyph below.`
+    : 'Type a term and press Enter to search for a logo, or pick a glyph below.';
+}
+
+/* Every status write goes through here so a failure can wear the danger voice
+   and the next neutral message can take it back off. */
+function diStatus(msg, isErr = false) {
+  const s = $('#di-status');
+  if (!s) return;
+  s.textContent = msg;
+  s.classList.toggle('is-error', !!isErr);
+}
+
 function openIconModal(item, opener) {
   iconModalTarget = item;
   iconModalOpener = opener || null;
@@ -805,9 +823,7 @@ function openIconModal(item, opener) {
   // The offline, zero-latency glyph picker is the front door — the network
   // search waits for an explicit Enter/Search (fast brand promise; the
   // first frame is never a spinner, and never a failure line).
-  $('#di-status').textContent = (item.label || '').trim()
-    ? `Press Enter or “Search” to look for a “${(item.label || '').trim()}” logo, or pick a glyph below.`
-    : 'Type a term and press Enter to search for a logo, or pick a glyph below.';
+  diStatus(iconModalHint(item));
 }
 function closeIconModal() {
   iconModal.classList.add('hidden');
@@ -866,23 +882,22 @@ let diSeq = 0;
 async function runDiSearch() {
   const q = $('#di-query').value.trim();
   const grid = $('#di-grid');
-  const status = $('#di-status');
   const my = ++diSeq;
   grid.innerHTML = '';
   if (!q) {
-    status.textContent = 'Type a search term (usually the app name) and press Enter.';
+    diStatus('Type a search term (usually the app name) and press Enter.');
     grid.classList.add('hidden');
     return;
   }
-  status.textContent = 'Searching dashboardicons.com…';
+  diStatus('Searching dashboardicons.com…');
   grid.classList.remove('hidden');
   let r = null;
   try { r = await api.searchIcons(q); } catch { /* surfaced below */ }
   if (my !== diSeq) return;                     // a newer search won the race
-  if (!r || !r.ok) { status.textContent = 'Search failed — check the connection and retry.'; return; }
+  if (!r || !r.ok) { diStatus('Search failed — check the connection and retry.', true); return; }
   const results = r.results || [];
-  if (!results.length) { status.textContent = `No icons match “${q}” — try a different term.`; return; }
-  status.textContent = `${results.length} match${results.length > 1 ? 'es' : ''}${r.offline ? ' (cached catalog)' : ''} — click one to use it.`;
+  if (!results.length) { diStatus(`No icons match “${q}” — try a different term.`); return; }
+  diStatus(`${results.length} match${results.length > 1 ? 'es' : ''}${r.offline ? ' (cached catalog)' : ''} — click one to use it.`);
   for (const res of results) {
     const cell = el('button', 'icon-cell di-cell', { 'aria-label': `Use the ${res.slug} logo` }, grid);
     const im = el('img', 'di-thumb', { src: res.url, alt: '', loading: 'lazy' }, cell);
@@ -896,10 +911,10 @@ let pickSeq = 0;
 async function pickDashboardIcon(res) {
   if (!iconModalTarget) return;
   const my = ++pickSeq;
-  $('#di-status').textContent = `Downloading “${res.slug}”…`;
+  diStatus(`Downloading “${res.slug}”…`);
   const r = await safe(() => api.fetchIcon(res.slug));
   if (my !== pickSeq) return;                     // a newer click won the race — don't resurrect this pick
-  if (!r.ok) { $('#di-status').textContent = r.error || 'Download failed — try again.'; return; }
+  if (!r.ok) { diStatus(r.error || 'Download failed — try again.', true); return; }
   imgCache.set(res.slug, r.dataUrl);
   const t = modalTarget();
   if (t) t.iconImage = res.slug;
@@ -917,8 +932,55 @@ $('#di-clear-img').onclick = () => {
   if (t) t.iconImage = '';
   closeIconModal();
   touch();
-  toast('Logo removed — the glyph shows instead');
+  toast('Image removed — the glyph shows instead');
 };
+
+/* ------------------- custom artwork (picked file · pasted URL) -------------------
+   Both flows answer with the installed {key, kind, dataUrl}: seeding imgCache
+   from that data URL paints the segment row and the preview on the spot, so a
+   pick is never followed by a spinner or a glyph-only interim frame. */
+function applyCustomIcon(r) {
+  if (!r || !r.ok) { diStatus((r && r.error) || 'Could not use that image — try another.', true); return; }
+  const t = modalTarget();
+  if (!t) return;
+  imgCache.set(r.key, r.dataUrl);
+  failedAt.delete(r.key);                    // a stale resolve failure must not suppress the new art
+  t.iconImage = r.key;
+  closeIconModal();
+  touch();
+  toast(`Custom image set — ${String(r.kind || '').toUpperCase() || 'artwork'}`);
+}
+
+/* The native dialog and the download each outlive a single click: the trigger
+   disables while in flight, and a result arriving after the modal closed is
+   dropped rather than resurrecting a write to a stale target. */
+$('#ci-pick').onclick = async () => {
+  const btn = $('#ci-pick');
+  if (btn.disabled) return;
+  btn.disabled = true;
+  const r = await safe(() => api.pickIconImage());
+  btn.disabled = false;
+  if (!iconModalTarget) return;
+  if (r.canceled) { diStatus(iconModalHint(modalTarget())); return; }
+  applyCustomIcon(r);
+};
+
+async function runCustomUrl() {
+  const btn = $('#ci-url-go'), input = $('#ci-url');
+  if (btn.disabled) return;
+  const url = input.value.trim();
+  if (!url) { diStatus('Paste an image URL first, or use Browse image…'); input.focus(); return; }
+  btn.disabled = true;
+  diStatus('Downloading that image…');
+  const r = await safe(() => api.addIconFromUrl(url));
+  btn.disabled = false;
+  if (!iconModalTarget) return;
+  applyCustomIcon(r);
+}
+$('#ci-url-go').onclick = runCustomUrl;
+$('#ci-url').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); runCustomUrl(); }   // Enter submits the box, never the modal
+});
 
 /* ------------------------------- appearance ------------------------------- */
 const SLIDERS = [

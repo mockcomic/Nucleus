@@ -129,9 +129,13 @@ function validate(raw) {
       id: typeof it.id === 'string' && it.id ? it.id : nid(),
       label: String(it.label ?? `Item ${i + 1}`).slice(0, 40),
       icon: typeof it.icon === 'string' ? Array.from(it.icon).slice(0, 2).join('') : '',
-      // Dashboard Icons logo slug (see dashboard-icons.js); anything invalid
-      // degrades to '' so the glyph fallback above keeps working.
-      iconImage: require('./dashboard-icons').sanitizeSlug(it.iconImage) || '',
+      // Logo/artwork slot: a Dashboard Icons slug or a `custom:<hash>.<kind>`
+      // key (see dashboard-icons.js and custom-icons.js). Anything neither
+      // family recognises degrades to '' so the glyph fallback above works.
+      iconImage: (() => {
+        const custom = require('./custom-icons').sanitizeKey(it.iconImage);
+        return custom || require('./dashboard-icons').sanitizeSlug(it.iconImage) || '';
+      })(),
       type,
       value: String(it.value ?? '').slice(0, 2048),
       // Launch parameters for `app` items (the Settings "Arguments" box),

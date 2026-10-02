@@ -6,6 +6,7 @@ const actions = require('./actions');
 const autostart = require('./autostart');
 const apps = require('./apps');
 const dashboardIcons = require('./dashboard-icons');
+const customIcons = require('./custom-icons');
 const sys = require('./sys');
 const log = require('./logger');
 const { supportsVibrancy } = require('./windows');
@@ -35,6 +36,9 @@ function registerIpc(deps) {
     'hotkey:set': ['settings', 'welcome'], 'autostart:set': ['settings'],
     'action:preview': ['settings'], 'overlay:show': ['settings', 'welcome'],
     'dialog:pick-file': ['settings'],
+    // pick-image opens a modal on the Settings window and reads the chosen path
+    // in main, so it is gated like every other privileged channel.
+    'icons:pick-image': ['settings'], 'icons:add-url': ['settings'],
     'wheel:segment-click': ['wheel'], 'wheel:dismiss': ['wheel'],
     'welcome:done': ['welcome'], 'settings:close': ['settings'], 'app:quit': ['settings']
   };
@@ -216,16 +220,54 @@ function registerIpc(deps) {
     return { ok: true, verified: r.verified };
   });
 
-  /* ---- dashboard icons (logos for wheel items) ---- */
+  /* ---- icon images (logos + custom artwork for wheel items) ----
+     item.iconImage is either a dashboardicons slug or a `custom:<hash>.<kind>`
+     key. Both families resolve through ONE channel so the overlay, the Settings
+     rows and the live preview share a single lookup. */
   dashboardIcons.configure(path.join(app.getPath('userData'), 'icons', 'dashboard'));
+  customIcons.configure(path.join(app.getPath('userData'), 'icons', 'custom'));
   const ringItems = (cfg) => (cfg && cfg.rings ? Object.values(cfg.rings) : [])
     .flatMap((a) => Array.isArray(a) ? a : []);
+  const resolveIconImage = (key) => customIcons.isCustomKey(key)
+    ? customIcons.dataUrlFor(key)
+    : dashboardIcons.dataUrlFor(key);
+
   guardHandle('icons:search', (ev, query) => dashboardIcons.searchIcons(query));
   guardHandle('icons:fetch', (ev, slug) => dashboardIcons.fetchIcon(slug));
-  guardHandle('icons:data-url', (ev, slug) => dashboardIcons.dataUrlFor(slug));
-  // Prime the disk cache so the wheel never has to wait on a download to show a logo.
-  dashboardIcons.warm(ringItems(store.get()).map((it) => it.iconImage));
-  store.on('changed', ({ config }) => dashboardIcons.warm(ringItems(config).map((it) => it.iconImage)));
+  guardHandle('icons:data-url', (ev, key) => resolveIconImage(key));
+
+  /* The dialog and the read are a single round trip: a renderer can never name
+     a path for main to read, only accept or cancel what this window shows. */
+  guardHandle('icons:pick-image', async () => {
+    const r = await dialog.showOpenDialog(settings.win, {
+      title: 'Choose an icon image',
+      properties: ['openFile'],
+      filters: [
+        { name: 'Images', extensions: customIcons.PICK_EXTENSIONS },
+        { name: 'All files', extensions: ['*'] }
+      ]
+    });
+    if (r.canceled || !r.filePaths[0]) return { ok: false, canceled: true };
+    const got = customIcons.addFile(r.filePaths[0]);
+    if (!got.ok) log.warn('custom icon rejected:', got.error);
+    return got;
+  });
+
+  guardHandle('icons:add-url', async (ev, url) => {
+    const got = await customIcons.addUrl(url);
+    if (!got.ok) log.warn('custom icon URL rejected:', got.error);
+    return got;
+  });
+
+  // Prime both disk caches so the wheel never has to wait on a download. Each
+  // module ignores keys outside its own family, so one list serves both.
+  const warmIcons = (cfg) => {
+    const keys = ringItems(cfg).map((it) => it.iconImage);
+    dashboardIcons.warm(keys);
+    customIcons.warm(keys);
+  };
+  warmIcons(store.get());
+  store.on('changed', ({ config }) => warmIcons(config));
 
   /* ---- misc ---- */
   guardHandle('dialog:pick-file', async (ev, opts) => {

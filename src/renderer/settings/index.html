@@ -146,8 +146,14 @@
       <div class="di-row">
         <input id="di-query" type="text" maxlength="60" placeholder="Search dashboardicons.com…  (name or any term you like)" aria-label="Dashboard Icons search term">
         <button id="di-go" class="btn small">Search</button>
-        <button id="di-clear-img" class="btn small hidden" title="Remove the photo logo and fall back to the glyph">Remove logo</button>
+        <button id="di-clear-img" class="btn small hidden" title="Remove the logo or custom image and fall back to the glyph">Remove image</button>
       </div>
+      <div class="di-row custom-row">
+        <button id="ci-pick" class="btn small">Browse image…</button>
+        <input id="ci-url" type="text" maxlength="2000" placeholder="…or paste an image URL — https://example.com/logo.png" aria-label="Custom icon image URL">
+        <button id="ci-url-go" class="btn small">Use URL</button>
+      </div>
+      <div class="di-hint muted">Your own artwork: <b>PNG, JPG, GIF, WebP, BMP, ICO</b> or <b>SVG</b>, up to 2&nbsp;MB. A pasted URL is downloaded once and kept locally, so the wheel still shows it offline.</div>
       <div id="di-status" class="di-status muted" aria-live="polite"></div>
       <div id="di-grid" class="icon-grid di-grid hidden"></div>
       <div class="di-subhead muted">Or pick a system glyph: <button class="btn mini" id="glyph-all" type="button">Show all</button></div>
