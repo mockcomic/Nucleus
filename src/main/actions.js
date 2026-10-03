@@ -151,6 +151,11 @@ async function executeAction(item, ctx = {}) {
       // wheel renderer shouldn't send them either. Loudly refuse (defense in
       // depth behind the recursive live-config match in ipc.js).
       throw new Error('a folder segment cannot be launched');
+    case 'recent':
+      // Same discipline: a recent segment's fan is resolved in main from
+      // usage data at summon time; the container itself executes nothing
+      // (clicks on its children carry the real items' ids).
+      throw new Error('a recent segment cannot be launched');
     default:
       throw new Error(`unknown action type '${type}'`);
   }

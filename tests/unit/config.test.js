@@ -112,3 +112,100 @@ test('icon and iconImage are independent slots', () => {
   assert.equal(it.icon, '\uE713');
   assert.equal(it.iconImage, CUSTOM);
 });
+
+/* -------------------------------- profiles --------------------------------- */
+const profs = (raw) => validate(raw).profiles;
+const one = (p) => profs({ profiles: [p] })[0];
+
+test('profiles default to an empty array and drop junk entries', () => {
+  assert.deepEqual(profs({}), []);
+  assert.deepEqual(profs({ profiles: 'nope' }), []);
+  assert.deepEqual(profs({ profiles: [null, 42, 'x', []] }), []);
+});
+
+test('profile caps: MAX_PROFILES slices the list', () => {
+  const many = Array.from({ length: 12 }, (_, i) => ({ name: 'P' + i }));
+  assert.equal(profs({ profiles: many }).length, 8);
+});
+
+test('profile name: control chars stripped, blank becomes "Profile", capped at 40', () => {
+  assert.equal(one({ name: 'VS Code' }).name, 'VS Code');
+  assert.equal(one({ name: 'be\u0000ep\u0001' }).name, 'beep');
+  assert.equal(one({ name: '   ' }).name, 'Profile');
+  assert.equal(one({}).name, 'Profile');
+  assert.equal(one({ name: 'x'.repeat(90) }).name.length, 40);
+});
+
+test('profile apps reuse the gaming-mode basename normalizer (dedupe + junk drop)', () => {
+  const p = one({ apps: ['C:\\Games\\FOO.exe', 'foo.exe', ' bar.exe ', 'bad|name', 42, ''] });
+  assert.deepEqual(p.apps, ['foo.exe', 'bar.exe']);
+});
+
+test('profile rings normalize exactly like the default wheel (contiguous 1..N, items cleaned)', () => {
+  const p = one({ rings: { '3': [{ id: 'x', label: 'Deep', type: 'url', value: 'https://a' }], '9': [] } });
+  assert.deepEqual(Object.keys(p.rings).sort(), ['1', '2']);
+  assert.equal(p.rings['1'][0].label, 'Deep');
+});
+
+test('an ALL-EMPTY profile is allowed (it simply never activates) — unlike the default wheel', () => {
+  const p = one({ name: 'Empty', rings: { 1: [], 2: [] } });
+  assert.deepEqual(p.rings['1'], []);                       // no defaults injected into a profile
+  assert.ok(profs({ rings: { 1: [], 2: [] } }).length >= 0); // top level keeps its own never-empty guard
+  assert.ok(validate({ rings: { 1: [], 2: [] } }).rings['1'].length > 0);
+});
+
+test('profile ids survive when well-formed and regenerate when junk', () => {
+  assert.equal(one({ id: 'p-42' }).id, 'p-42');
+  assert.equal(one({ id: 'x'.repeat(90) }).id.length, 40);
+  assert.ok(one({ id: 7 }).id, 'junk id → fresh nid');
+});
+
+/* ------------------------------ recent items ------------------------------- */
+test('recent is a container type: action slots and hand-carried children wiped', () => {
+  const it = clean({ type: 'recent', value: 'notepad.exe', args: '--sneaky', dir: 'C:\\x', children: [{ id: 'k', type: 'app', value: 'evil.exe' }] });
+  assert.equal(it.type, 'recent');
+  assert.equal(it.value, '');
+  assert.equal(it.args, '');
+  assert.equal(it.dir, '');
+  assert.deepEqual(it.children, []);
+});
+
+/* ----------------------------- behavior flags ------------------------------ */
+test('new behavior flags: defaults', () => {
+  const b = validate({}).behavior;
+  assert.equal(b.profilesEnabled, false,   // off unless explicitly true (probing is opt-in)
+  );
+  assert.equal(b.markingSelect, true);
+  assert.equal(b.typeToFilter, true);
+  assert.equal(b.recentsCount, 8);
+});
+
+test('profilesEnabled is true ONLY for a real true; the other two are opt-out', () => {
+  assert.equal(bhv({ behavior: { profilesEnabled: true } }).profilesEnabled, true);
+  for (const junk of ['yes', 1, {}]) assert.equal(bhv({ behavior: { profilesEnabled: junk } }).profilesEnabled, false);
+  assert.equal(bhv({ behavior: { markingSelect: false } }).markingSelect, false);
+  assert.equal(bhv({ behavior: { markingSelect: 'off' } }).markingSelect, true, 'junk does not switch the feature off');
+  assert.equal(bhv({ behavior: { typeToFilter: false } }).typeToFilter, false);
+});
+
+test('recentsCount clamps to 3..12 and heals junk', () => {
+  assert.equal(bhv({ behavior: { recentsCount: 99 } }).recentsCount, 12);
+  assert.equal(bhv({ behavior: { recentsCount: 0 } }).recentsCount, 3);
+  assert.equal(bhv({ behavior: { recentsCount: 'eight' } }).recentsCount, 8);
+});
+
+/* ----------------------------- walkItems coverage --------------------------- */
+test('walkItems reaches into profile rings AND nested folder children', () => {
+  const cfg = validate({
+    rings: { 1: [{ id: 'top', type: 'app', value: 'a' }], 2: [] },
+    profiles: [{
+      id: 'p', name: 'P',
+      rings: { 1: [{ id: 'pp', type: 'folder', children: [{ id: 'kk', type: 'app', value: 'b' }] }], 2: [] }
+    }]
+  });
+  const ids = [];
+  const { walkItems } = require('../../src/main/config.js');
+  walkItems(cfg, (it) => { ids.push(it.id); });
+  assert.ok(ids.includes('top') && ids.includes('pp') && ids.includes('kk'),
+    'profile segments must satisfy the overlay live-id match just like the default wheel');
+});

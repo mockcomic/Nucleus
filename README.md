@@ -34,6 +34,16 @@ in Settings. Replay the guide anytime from tray → **Show welcome…**.
   it clamps into view and shrinks to fit).
 - Hover: segment highlights, the hub shows its icon + label.
 - Select: left-click a segment. Dismiss: right-click, Esc, click the hub, or re-press the shortcut.
+- **Drag to select** (Behavior, on by default): press, sweep across the wheel — folder fans
+  branch as you pass — and release on a segment to fire it. Releasing off the wheel cancels.
+  A plain click still works exactly as before (press + release on the same plate fires).
+  Note: marking rides *left-button* presses; your summon trigger's own button (Middle/Back,
+  when swallowed by the hook) is consumed before the wheel exists, so sweep-select from
+  there starts with the next press.
+- **Type to filter** (Behavior, on by default): with the wheel open, just start typing —
+  non-matching segments fade back, the selection jumps to the best match (folder contents
+  included; fans branch to reach them) and Enter fires it. Backspace edits, Esc clears the
+  query first and dismisses on the second press.
 - Mouse-button shortcut: by default the wheel **swallows** that click, so it behaves like a
   real hotkey and the app underneath never sees it (Middle click stops pasting while it is
   your summon key). Behavior → **Let the mouse button through to the app under the cursor**
@@ -48,6 +58,8 @@ in Settings. Replay the guide anytime from tray → **Show welcome…**.
 | `command` | `taskkill /f /im foo.exe` | detached shell command |
 | `macro` | `ctrl+c, wait=0.2, ctrl+v` · `type:hello` | real SendInput keys |
 | `sys` | `lock`, `mute`, `screenshot`, `wifi`, … | built-in Windows actions |
+| `folder` | — (no value) | sub-menu that branches outward on hover |
+| `recent` | — (no value) | self-filling sub-menu of your most-used segments; you edit only its label/icon |
 
 `sys` values: `lock sleep screenshot show_desktop task_manager exit_app mute volume_up
 volume_down sound explorer recycle_bin settings wifi bluetooth notifications night_light
@@ -64,6 +76,10 @@ Open from the tray (double-click icon → **Open Settings**). Four tabs:
   file browse for apps, and an **installed-programs dropdown** when type is `app`:
   type to search the Start Menu + registry program list, click to fill the target
   (entries launch exactly like double-clicking their Start Menu shortcut; ↻ re-scans).
+  At the top, an **Editing** bar switches the whole editor + live preview between the
+  **default wheel** and any **app profile** — a profile owns its own rings and its own
+  comma-separated exe list, and takes over the wheel whenever one of those apps has
+  focus (enable under Hotkey & Behavior; up to 8 profiles, first match wins).
 - **Appearance** — hub/wheel size, ring split (two-ring layouts; three or more
   rings divide equally), rotation, gaps, label size, pop
   animation, colors + 14 theme presets, center label. Live preview uses the exact
@@ -74,14 +90,23 @@ Open from the tray (double-click icon → **Open Settings**). Four tabs:
   time, mouse replaces the keyboard combo and vice versa), with **Let the mouse button
   through to the app under the cursor** to choose between swallowing the click and
   detect-only. Start-with-Windows toggle,
-  dismiss options, and **Gaming mode**: the wheel turns itself off (hotkey
+  dismiss options, **Drag to select** / **Type to filter** wheel gestures,
+  a **Recent items show** slider (how full a `recent` fan gets), and
+  **Use a different wheel per app** — the app-profile master switch.
+  Plus **Gaming mode**: the wheel turns itself off (hotkey
   included) while the focused app covers a whole monitor — exclusive or
   borderless-fullscreen games — or while one of your listed programs
   (comma-separated exe names, e.g. `fortnite.exe`) has focus. It switches back
   on when the app closes or you alt-tab away; the tray tooltip and menu say
   why the hotkey is off, and tray → **Show wheel** still works as an override.
-- **Advanced** — export / import / reset config, open the config folder, action
-  type reference, exit.
+  Profiles reuse this same focus probe — sampled once per wheel opening, nothing
+  runs in the background while both features are off.
+- **Advanced** — export / import config, **Export package… (with icons)** — one
+  JSON file carrying the config plus the bytes of every custom segment image, so
+  a shared setup arrives fully decorated (import accepts either format; icon
+  payloads are content-address-verified on the way in, mismatched art is skipped
+  to the glyph fallback), **Clear recent-items data**, open the config folder,
+  action type reference, exit.
 
 All edits autosave (debounced) to:
 
@@ -155,6 +180,24 @@ To launch from source with no console (e.g. a Startup entry during development):
   name from a non-elevated app, in which case the app-list match can't fire but
   fullscreen detection still does. If the Win32 probe is unavailable the wheel
   simply never pauses (fail-open).
+- **App profiles** resolve at the moment of summon — ONE foreground probe per wheel
+  opening (no polling at all while the switch is off), the same probe and fail-open
+  doctrine as Gaming mode: no match / no probe / our own window focused → the
+  default wheel. An empty profile never activates for the same reason. Profile
+  rings live inside config.json — export, import, and the live file-watch all apply
+  to them like any other setting.
+- **Recent segments** are filled by main at summon time from a usage sidecar
+  (`state.json` — never config.json, so exports, packages and shares carry zero
+  statistics). Only REAL wheel clicks count; Settings "Try" runs don't pollute
+  recents. Clicking an item inside a recent fan executes the real segment with
+  that id (every click passes the same live-config id match); the container
+  itself launches nothing. In the live preview a recent plate shows as its
+  glyph + label — contents appear on the real wheel.
+- **Export packages** embed only custom (disk-picked) icon bytes — Dashboard logos
+  and URL-sourced art re-download themselves, so they stay out of the file. Every
+  payload is re-hashed on import against its claimed content-addressed key; a
+  tampered entry is skipped, and its segment falls back to the glyph rather than
+  rendering someone else's art.
 
 ## Development
 
@@ -193,4 +236,23 @@ app's hook took it first). Dev builds only — inert once packaged.
 8. Edit config.json in a text editor → running wheel reflects it within a second.
 9. Break config.json (`{oops`) → app survives on last-good config; file saved as `.bad` on next reload attempt.
 10. Run `npm start` again → Settings window focuses, no second tray icon.
+11. Profiles: Settings → Segments → **+ Profile**; name it, list `notepad.exe`, add
+    segments to its rings. Behavior → **Use a different wheel per app** on → focus
+    Notepad, summon → the PROFILE wheel pops; focus anything else → the default.
+    Switch the master off → always default. Restart → persisted; hand-edit the
+    profile's rings in config.json → the running wheel picks it up.
+12. Marking: press on a plate, drag across others (folder fans branch as you sweep),
+    release → the plate under release fires; release off the wheel → nothing happens.
+    A plain click still fires. Turning **Drag to select** off restores press-time firing.
+13. Type to filter: summon, type `calc` → non-matches dim, Calculator selected,
+    Enter launches it; Backspace edits the query; Esc once clears it, Esc again dismisses
+    (and honors the Esc-dismiss setting). A match inside a closed folder opens the fan.
+14. Recents: add a **recent** segment; fire several actions from the real wheel;
+    re-summon → its fan holds the most-used items (hover to branch, click to run —
+    macro timing intact). `state.json` keeps the counts; config.json stays clean.
+    Advanced → **Clear recent-items data** → the fan goes empty until you use the wheel again.
+15. Package: pick a disk image as a segment icon → Advanced → **Export package…**:
+    the file carries config + icon. Delete/rename `%APPDATA%\Radial Wheel\icons\custom`,
+    then **Import…** the package → icons come back with no network (plain-exported
+    configs still import exactly as before, minus the art).
 ```

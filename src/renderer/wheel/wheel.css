@@ -52,6 +52,18 @@ html, body {
 .wheel-root .seg.occluded { opacity: .35; transition: opacity .12s ease; }  /* under the fan, not gone */
 .seg-chevron { pointer-events: none; }
 
+/* ── type-to-filter ───────────────────────────────────────────────────────
+   Non-matching plates fade back (after .hovered in the cascade on purpose:
+   an off-query plate the pointer grazes stays visually quiet). The query
+   itself lives in the hub; the hub-report layers stand down while it's up. */
+.wheel-root .seg.filtered { opacity: .16; }
+.wheel-root.any-hover .seg.filtered { opacity: .16; }
+.wheel-root.any-hover .seg.hovered.filtered { opacity: .4; transform: none; }
+.wheel-root.filtering .hub-icon,
+.wheel-root.filtering .hub-label,
+.wheel-root.filtering .hub-img { visibility: hidden; }
+.filter-text { pointer-events: none; }
+
 .hub { transition: fill .1s ease; }
 .hub-icon, .hub-label, .center-label { pointer-events: none; }
 
@@ -60,7 +72,7 @@ html, body {
 
 /* reduced motion: state changes land instantly; hover fill + hub report keep the affordance */
 @media (prefers-reduced-motion: reduce) {
-  .seg, .seg path, .hub, .seg.occluded, .seg.hovered .seg-icon { transition: none; }
+  .seg, .seg path, .hub, .seg.occluded, .seg.hovered .seg-icon, .seg.filtered { transition: none; }
   .flyout { animation: none; }
   .wheel-root.any-hover .seg.hovered { transition: none; transform: none; }
 }

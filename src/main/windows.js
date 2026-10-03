@@ -58,7 +58,14 @@ class Overlay {
   constructor(deps) {
     this.deps = deps; // { getConfig }
     this.win = null;
+    /* Type-to-filter state, reported by the renderer over wheel:filter.
+       While a query is on screen, Esc must CLEAR the query first — the page's
+       own keydown does that — so main's before-input-event dismiss stands down.
+       Reset on every summon; it can only ever be true while the wheel is up. */
+    this._filtering = false;
   }
+
+  setFiltering(on) { this._filtering = !!on; }
 
   ensure() {
     if (this.win && !this.win.isDestroyed()) return this.win;
@@ -88,9 +95,13 @@ class Overlay {
     });
     this.win.webContents.on('before-input-event', (e, input) => {
       if (input.type === 'keyDown' && (input.key === 'Escape' || input.key === 'Cancel')) {
+        // A live type-to-filter query owns Esc: stand down (WITHOUT swallowing
+        // the event) so the page's keydown clears the query first; the second
+        // Esc — with the flag already cleared by the renderer — dismisses.
+        if (this._filtering) return;
         // Esc-dismiss is a user setting (Behavior → Dismiss with Esc); the live
         // config is the source of truth at the moment the key arrives.
-        const bh = (this.deps.getConfig() || {}).behavior || {};
+        const bh = (this.deps.getBehavior && this.deps.getBehavior()) || (this.deps.getConfig() || {}).behavior || {};
         if (bh.dismissOnEscape === false) return;
         this.hide();
         e.preventDefault();
@@ -103,6 +114,7 @@ class Overlay {
 
   showAtCursor() {
     const win = this.ensure();
+    this._filtering = false;   // a new summon never inherits a stale filter query state
     const cfg = this.deps.getConfig();
     const ap = cfg.appearance;
     const cur = screen.getCursorScreenPoint();

@@ -11,6 +11,8 @@ const { TrayManager } = require('./tray');
 const { ensureRuntimeIcons } = require('./icon-gen');
 const { registerIpc } = require('./ipc');
 const { GameModeWatcher } = require('./gamemode');
+const profiles = require('./profiles');
+const usage = require('./usage');
 const macro = require('./macro');
 const mousehook = require('./mousehook');
 const autostart = require('./autostart');
@@ -65,6 +67,31 @@ function registerHotkey(spec, opts = {}) {
 }
 
 const hotkeyActive = () => !manualPaused && !gamePaused;
+
+/* The wheel's view of the config, resolved once per summon:
+   1. app profile — when enabled, ONE foreground probe picks the first profile
+      whose exe list matches the focused app and swaps its rings in
+      (profiles.pickProfile; fail-open to the default wheel on any probe error);
+   2. recent segments — every `recent` container's sub-menu is filled from the
+      usage sidecar (usage.resolveRecents; zero cost — same reference back —
+      when the wheel has none).
+   Everything else (hotkeys, game mode, autostart, tray) reads the STORE —
+   profiles only ever replace the ring payload of the popped wheel. */
+function effectiveConfig() {
+  const base = store.get();
+  let eff = base;
+  if (base.behavior.profilesEnabled && Array.isArray(base.profiles) && base.profiles.length) {
+    let probe = null;
+    try { probe = macro.foregroundProbe(); } catch { probe = null; }   // fail-open, same doctrine as game mode
+    const p = profiles.pickProfile(base, probe, process.pid);
+    if (p) {
+      eff = JSON.parse(JSON.stringify(base));
+      eff.rings = JSON.parse(JSON.stringify(p.rings));
+      log.info(`wheel: profile '${p.name}' (${probe && probe.exe})`);
+    }
+  }
+  return usage.resolveRecents(eff, getState('usage', {}) || {}, base.behavior.recentsCount);
+}
 
 /* Per-registration options from the LIVE config. A mouse-button trigger either
    swallows its own press (default, so Middle click doesn't also paste) or hands
@@ -159,7 +186,7 @@ function bootstrap() {
   const init = store.init();
   hotkeyMgr = new HotkeyManager();
 
-  overlay = new Overlay({ getConfig: () => store.get(), isQuitting });
+  overlay = new Overlay({ getConfig: effectiveConfig, getBehavior: () => store.get().behavior, isQuitting });
   settingsWin = new SettingsWindow({ isQuitting, getState, setState, bgColor: () => store.get().appearance.colors.bg });
   welcome = new WelcomeWindow({ getConfig: () => store.get(), isQuitting });
 

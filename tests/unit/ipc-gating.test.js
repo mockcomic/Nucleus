@@ -63,7 +63,8 @@ test('the only raw (un-guarded) registration is log:line', () => {
 test('side-effect surfaces sit on their legitimate pages only', () => {
   // Privileged writes stay settings-only...
   for (const ch of ['config:set', 'config:flush', 'config:import', 'config:reset',
-    'autostart:set', 'dialog:pick-file', 'action:preview', 'icons:add-url', 'icons:pick-image'])
+    'autostart:set', 'dialog:pick-file', 'action:preview', 'icons:add-url', 'icons:pick-image',
+    'config:export-bundle', 'usage:clear'])
     assert.deepEqual(gated.get(ch), ['settings'], `${ch} owner drift`);
   // ...welcome appears only where the FTU contract needs it.
   assert.deepEqual(gated.get('hotkey:set'), ['settings', 'welcome']);

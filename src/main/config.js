@@ -28,6 +28,12 @@ const MAX_RINGS = 4;
 const MAX_CHILDREN = 12;
 const MAX_FOLDER_DEPTH = 3;
 
+/* App-specific wheel profiles: each profile carries its own rings plus the
+   exe basenames that activate it. Caps mirrored by the settings renderer. */
+const MAX_PROFILES = 8;
+const MAX_PROFILE_APPS = 64;
+const MAX_PROFILE_NAME = 40;
+
 /* Optional persona fields on a palette; malformed entries are dropped, never
    defaulted (see themes.mjs sanitizePalette for the renderer-side mirror). */
 function cleanPalette(raw) {
@@ -87,10 +93,24 @@ function defaults() {
       /* Dwell (ms) on a folder segment before its sub-menu branches open.
          0 = branch instantly on hover. */
       flyoutDwellMs: 180,
-      gameMode: { enabled: false, apps: [] }
+      gameMode: { enabled: false, apps: [] },
+      /* App-specific wheels: when on, a summon probes the foreground app once
+         and swaps in the first profile whose apps list matches (profiles.js).
+         Off by default — zero probing while unused. */
+      profilesEnabled: false,
+      /* Press-drag-release selection (pie-menu marking). On by default: a
+         plain click still fires (press and release land on the same plate),
+         releasing off the wheel cancels instead of firing. */
+      markingSelect: true,
+      /* Typing while the wheel is open dims non-matching segments; Enter
+         fires the best match. */
+      typeToFilter: true,
+      /* How many items the `recent` segment's auto-filled sub-menu shows. */
+      recentsCount: 8
     },
     theme: { id: DEFAULT_THEME_ID, customized: false, colors: { ...DEFAULT_COLORS } },
     userThemes: [],
+    profiles: [],
     rings: {
       1: [
         { id: nid(), label: 'Browser', icon: '\uE774', type: 'url', value: 'https://google.com', color: null },
@@ -116,7 +136,7 @@ const HEX = /^#[0-9a-fA-F]{6}$/;
 const clamp = (v, lo, hi, dflt) =>
   (typeof v === 'number' && isFinite(v)) ? Math.min(hi, Math.max(lo, v)) : dflt;
 
-const TYPES = new Set(['app', 'url', 'file', 'command', 'macro', 'sys', 'folder']);
+const TYPES = new Set(['app', 'url', 'file', 'command', 'macro', 'sys', 'folder', 'recent']);
 const HOTKEY_RE = /^[a-z0-9+ ]{1,40}$/;
 
 function validate(raw) {
@@ -136,6 +156,9 @@ function validate(raw) {
     let type = String(it.type || 'app').toLowerCase();
     if (!TYPES.has(type)) type = 'app';
     const isFolder = type === 'folder';
+    // `recent` is a container too — its sub-menu is main-resolved at summon
+    // time, so every action slot AND any hand-carried children are wiped.
+    const isContainer = isFolder || type === 'recent';
     return {
       id: typeof it.id === 'string' && it.id ? it.id : nid(),
       label: String(it.label ?? `Item ${i + 1}`).slice(0, 40),
@@ -148,9 +171,10 @@ function validate(raw) {
         return custom || require('./dashboard-icons').sanitizeSlug(it.iconImage) || '';
       })(),
       type,
-      // A folder launches nothing — its whole payload is the sub-menu, so the
-      // action slots are wiped instead of lingering invisibly across a switch.
-      value: isFolder ? '' : String(it.value ?? '').slice(0, 2048),
+      // Container segments launch nothing — folders carry the whole payload in
+      // the sub-menu, recents resolve theirs at summon — so the action slots
+      // are wiped instead of lingering invisibly across a switch.
+      value: isContainer ? '' : String(it.value ?? '').slice(0, 2048),
       // Launch parameters for `app` items (the Settings "Arguments" box),
       // tokenized by src/main/args.js at launch. Kept only for `app` so a
       // stale string can't ride across a type switch.
@@ -161,7 +185,7 @@ function validate(raw) {
       hideLabel: !!it.hideLabel,
       // Optional parameter slot; currently only the sys `explorer` action
       // consumes it (the folder Explorer opens in). Inert on other types.
-      dir: !isFolder && typeof it.dir === 'string' ? it.dir.trim().slice(0, 2048) : '',
+      dir: !isContainer && typeof it.dir === 'string' ? it.dir.trim().slice(0, 2048) : '',
       // Folder sub-menu tree, pruned at the caps above. Deeper folders simply
       // lose their own children (they render as empty sub-menus).
       children: isFolder && depth < MAX_FOLDER_DEPTH
@@ -174,18 +198,26 @@ function validate(raw) {
   /* Rings arrive keyed by numeric strings; normalize to a contiguous 1..N
      (ascending key order, renumbered, capped at MAX_RINGS, floor of two keys
      so the UI always has an inner + outer list). Empty rings are legal —
-     the renderer skips them when laying out bands. */
-  const ringsIn = (src.rings && typeof src.rings === 'object') ? src.rings : {};
-  const ringArrays = Object.keys(ringsIn)
-    .map((k) => ({ n: Number(k), arr: ringsIn[k] }))
-    .filter((r) => Number.isInteger(r.n) && r.n >= 1)
-    .sort((a, b) => a.n - b.n)
-    .slice(0, MAX_RINGS)
-    .map((r) => cleanRing(r.arr));
-  const rings = {};
-  const nRings = Math.max(2, ringArrays.length);
-  for (let i = 0; i < nRings; i++) rings[String(i + 1)] = ringArrays[i] || [];
-  if (!ringArrays.some((a) => a.length)) rings['1'] = defaults().rings[1];  // never ship an empty wheel
+     the renderer skips them when laying out bands. Shared by the top-level
+     wheel and every profile's rings. */
+  const cleanRings = (ringsIn, { neverEmpty = false } = {}) => {
+    const srcRings = (ringsIn && typeof ringsIn === 'object') ? ringsIn : {};
+    const ringArrays = Object.keys(srcRings)
+      .map((k) => ({ n: Number(k), arr: srcRings[k] }))
+      .filter((r) => Number.isInteger(r.n) && r.n >= 1)
+      .sort((a, b) => a.n - b.n)
+      .slice(0, MAX_RINGS)
+      .map((r) => cleanRing(r.arr));
+    const rings = {};
+    const nRings = Math.max(2, ringArrays.length);
+    for (let i = 0; i < nRings; i++) rings[String(i + 1)] = ringArrays[i] || [];
+    // The default wheel must never ship empty; a profile MAY be empty (it is
+    // then skipped at activation — see profiles.pickProfile).
+    if (neverEmpty && !ringArrays.some((a) => a.length)) rings['1'] = defaults().rings[1];
+    return rings;
+  };
+
+  const rings = cleanRings(src.rings, { neverEmpty: true });
 
   const bhvIn = src.behavior || {};
   const hotkey = HOTKEY_RE.test(String(src.hotkey ?? '').toLowerCase().trim())
@@ -196,6 +228,31 @@ function validate(raw) {
   const userThemes = (Array.isArray(src.userThemes) ? src.userThemes : [])
     .slice(0, MAX_USER_THEMES)
     .map((it) => cleanUserTheme(it, takenNames))
+    .filter(Boolean);
+
+  /* --- app-specific wheel profiles (activated by the foreground app) ---- */
+  const profiles = (Array.isArray(src.profiles) ? src.profiles.slice(0, MAX_PROFILES) : [])
+    .map((p) => {
+      if (!p || typeof p !== 'object' || Array.isArray(p)) return null;                       // junk profiles dropped, never defaulted
+      let name = String(p.name ?? '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, MAX_PROFILE_NAME);
+      if (!name) name = 'Profile';
+      // Same exe-basename normalizer gaming mode uses ("C:\Games\Foo.exe" -> "foo.exe").
+      const cleanApp = require('./gamemode').cleanAppName;
+      const apps = [];
+      const seenApp = new Set();
+      for (const it of (Array.isArray(p.apps) ? p.apps.slice(0, MAX_PROFILE_APPS) : [])) {
+        const n = cleanApp(it);
+        if (!n || seenApp.has(n)) continue;
+        seenApp.add(n);
+        apps.push(n);
+      }
+      return {
+        id: typeof p.id === 'string' && p.id ? p.id.slice(0, 40) : nid(),
+        name,
+        apps,
+        rings: cleanRings(p.rings)     // may be all-empty — such a profile never activates
+      };
+    })
     .filter(Boolean);
 
   const thIn = src.theme && typeof src.theme === 'object' ? src.theme : {};
@@ -245,7 +302,15 @@ function validate(raw) {
       // Fail-closed on purpose: junk/absent means "swallow the click", the safe default.
       mouseClickThrough: bhvIn.mouseClickThrough === true,
       flyoutDwellMs: clamp(bhvIn.flyoutDwellMs, 0, 600, base.behavior.flyoutDwellMs),
-      gameMode: require('./gamemode').sanitizeGameMode(bhvIn.gameMode)
+      gameMode: require('./gamemode').sanitizeGameMode(bhvIn.gameMode),
+      // Off unless explicitly true — activation probes the foreground, so an
+      // absent/junk flag must not cost the summon that call.
+      profilesEnabled: bhvIn.profilesEnabled === true,
+      // Both opt-out only: absent/junk keeps the feature ON (plain clicks
+      // still fire under marking; the filter never interferes with chords).
+      markingSelect: bhvIn.markingSelect !== false,
+      typeToFilter: bhvIn.typeToFilter !== false,
+      recentsCount: clamp(bhvIn.recentsCount, 3, 12, base.behavior.recentsCount)
     },
     theme: {
       id: themeId,
@@ -253,6 +318,7 @@ function validate(raw) {
       colors: baseline
     },
     userThemes,
+    profiles,
     rings
   };
 }
@@ -271,9 +337,15 @@ function sanitizeItem(raw) {
    children of every folder at any stored depth. Returning false from fn stops
    the whole walk. Used by anything treating "every item" as one pool: the
    segment-click id match (ipc.js), icon prefetch, the settings renderer's
-   helpers. */
+   helpers. Profile rings are part of the same pool — a profile's segment must
+   satisfy the overlay's live-id match and warm its icons just like the default
+   wheel's. */
 function walkItems(cfg, fn) {
-  const rings = (cfg && cfg.rings && typeof cfg.rings === 'object') ? cfg.rings : {};
+  const groups = [];
+  if (cfg && cfg.rings && typeof cfg.rings === 'object') groups.push(cfg.rings);
+  if (cfg && Array.isArray(cfg.profiles)) {
+    for (const p of cfg.profiles) if (p && p.rings && typeof p.rings === 'object') groups.push(p.rings);
+  }
   const down = (arr, depth) => {
     for (const it of Array.isArray(arr) ? arr : []) {
       if (!it || typeof it !== 'object') continue;
@@ -282,7 +354,9 @@ function walkItems(cfg, fn) {
     }
     return true;
   };
-  for (const k of Object.keys(rings)) if (down(rings[k], 0) === false) return;
+  for (const rings of groups) {
+    for (const k of Object.keys(rings)) if (down(rings[k], 0) === false) return;
+  }
 }
 
 /* Map the old Python wheel_config.json (flat items[] with ring field) into v1. */
@@ -449,4 +523,4 @@ class ConfigStore extends EventEmitter {
   }
 }
 
-module.exports = { ConfigStore, validate, defaults, sanitizeItem, walkItems, VERSION, MAX_RINGS, MAX_CHILDREN, MAX_FOLDER_DEPTH };
+module.exports = { ConfigStore, validate, defaults, sanitizeItem, walkItems, VERSION, MAX_RINGS, MAX_CHILDREN, MAX_FOLDER_DEPTH, MAX_PROFILES, MAX_PROFILE_APPS };

@@ -5,8 +5,10 @@ const path = require('path');
 const actions = require('./actions');
 const autostart = require('./autostart');
 const apps = require('./apps');
+const bundle = require('./bundle');
 const dashboardIcons = require('./dashboard-icons');
 const customIcons = require('./custom-icons');
+const usage = require('./usage');
 const sys = require('./sys');
 const { walkItems, sanitizeItem } = require('./config');
 const log = require('./logger');
@@ -60,9 +62,15 @@ function registerIpc(deps) {
     // growCanvas lets an opened flyout ask for more transparent window; the
     // value is geometry only — clamped and re-centered in Overlay.grow.
     'wheel:grow': ['wheel'],
+    // The filter-query flag only decides whether main or the page owns Esc
+    // while the wheel is visible — UI state, never data.
+    'wheel:filter': ['wheel'],
+    // Packages are the export dialog with icon bytes attached; usage:clear
+    // empties the recents sidecar. Both Settings-only like every writer.
+    'config:export-bundle': ['settings'], 'usage:clear': ['settings'],
     'welcome:done': ['welcome'], 'settings:close': ['settings'], 'app:quit': ['settings']
   };
-  const SEND_CHANNELS = new Set(['config:flush', 'wheel:segment-click', 'wheel:dismiss', 'wheel:grow', 'welcome:done', 'settings:close', 'app:quit']);
+  const SEND_CHANNELS = new Set(['config:flush', 'wheel:segment-click', 'wheel:dismiss', 'wheel:grow', 'wheel:filter', 'welcome:done', 'settings:close', 'app:quit']);
   const refused = (ch, ev) => {
     log.warn(`refused ${ch} from an untrusted frame`);
     return SEND_CHANNELS.has(ch) ? undefined : { ok: false, error: 'untrusted frame' };
@@ -87,6 +95,10 @@ function registerIpc(deps) {
     if (Number.isFinite(n) && n > 0 && n <= 2048) overlay.grow(n);
   });
 
+  /* Renderer → main: "a type-to-filter query is on screen". While true, Esc
+     belongs to the page (it clears the query before it dismisses). */
+  guardOn('wheel:filter', (e, on) => overlay.setFiltering(!!on));
+
   guardOn('wheel:segment-click', async (e, item) => {
     overlay.hide();
     /* The overlay payload is renderer-supplied — never execute it as-is.
@@ -99,6 +111,15 @@ function registerIpc(deps) {
     }
     if (!live) { log.warn('ignored segment click for unknown item', item && item.id); return; }
     item = live;
+    /* Usage sidecar: fires from the REAL wheel only (never action:preview —
+       test runs must not pollute recents). Feeds the `recent` segment's
+       auto-filled fan via usage.resolveRecents on the next summon. Best-
+       effort: a state.json write failure must never cost the actual action. */
+    try {
+      const u = deps.getState('usage', {}) || {};
+      usage.record(u, item.id);
+      deps.setState('usage', u);
+    } catch (err) { log.warn('usage record failed:', err && err.message); }
     // sys.ALIAS forms (volup, clipboard, …) canonicalize through the same map
     // sys.run() uses, so aliased key-actions get the focus-regain wait too.
     const sysKey = sys.ALIAS[String(item.value || '').toLowerCase()] || String(item.value || '').toLowerCase();
@@ -159,16 +180,58 @@ function registerIpc(deps) {
     return { ok: true, path: r.filePath };
   });
 
+  guardHandle('config:export-bundle', async (ev) => {
+    const w = settings.win;
+    const r = await dialog.showSaveDialog(w, {
+      title: 'Export package (config + icons)', defaultPath: 'radial-wheel-package.json',
+      filters: [{ name: 'Radial Wheel package', extensions: ['json'] }]
+    });
+    if (r.canceled || !r.filePath) return { ok: false, canceled: true };
+    let built;
+    try {
+      built = bundle.buildBundle(store.get());
+    } catch (err) {
+      return { ok: false, error: 'Could not build the package: ' + String(err && err.message || err) };
+    }
+    if (!built.ok) return built;   // over-cap error names the counts — never a silently truncated package
+    const json = JSON.stringify(built.bundle, null, 1);
+    try {
+      const tmp = r.filePath + '.tmp';
+      fs.writeFileSync(tmp, json, 'utf8');
+      fs.renameSync(tmp, r.filePath);   // same atomic discipline as the config store
+    } catch (err) {
+      try { fs.unlinkSync(r.filePath + '.tmp'); } catch { /* best effort */ }
+      return { ok: false, error: 'Could not write the package: ' + String(err && err.message || err) };
+    }
+    log.info(`package exported: ${built.icons} icons (${built.skipped.length} missing) -> ${r.filePath}`);
+    return { ok: true, path: r.filePath, icons: built.icons, skipped: built.skipped.length };
+  });
+
   guardHandle('config:import', async () => {
     const r = await dialog.showOpenDialog(settings.win, {
-      title: 'Import config', filters: [{ name: 'JSON', extensions: ['json'] }], properties: ['openFile']
+      title: 'Import config or package',
+      filters: [{ name: 'JSON', extensions: ['json'] }], properties: ['openFile']
     });
     if (r.canceled || !r.filePaths[0]) return { ok: false, canceled: true };
     try {
+      const st = fs.statSync(r.filePaths[0]);
+      if (!st.isFile() || st.size > bundle.BUNDLE_FILE_MAX) {
+        return { ok: false, error: 'That file is too large to import (limit ' + ((bundle.BUNDLE_FILE_MAX / 1048576) | 0) + ' MB)' };
+      }
       const raw = JSON.parse(fs.readFileSync(r.filePaths[0], 'utf8'));
-      const merged = store.set(raw);
+      /* A package (config + icon bytes) installs its icons FIRST so the first
+         summon after the config lands already finds its art. Per-icon failures
+         are skips, never aborts — the config import proceeds regardless. */
+      const isBundle = bundle.looksLikeBundle(raw);
+      let icons = null;
+      if (isBundle) {
+        const got = bundle.importIcons(raw);
+        icons = { installed: got.installed, skipped: got.skipped.length };
+        log.info(`package imported: ${got.installed} icons (${got.skipped.length} skipped)`);
+      }
+      const merged = store.set(isBundle ? raw.config : raw);
       store.broken = false;
-      return { ok: true, config: merged, rev: store.rev, hotkeyError: store.hotkeyError || null };
+      return { ok: true, config: merged, rev: store.rev, hotkeyError: store.hotkeyError || null, icons };
     } catch (err) {
       return { ok: false, error: 'Import failed: ' + (err.message || err) };
     }
@@ -185,6 +248,17 @@ function registerIpc(deps) {
   });
 
   guardHandle('config:open-folder', () => shell.openPath(path.dirname(store.file())));
+
+  /* Recents live in the state.json sidecar, not the config — clearing them
+     never touches the user's segments. */
+  guardHandle('usage:clear', () => {
+    try {
+      deps.setState('usage', {});
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: String(err && err.message || err) };
+    }
+  });
 
   /* ---- logs ----
      'log:line' is deliberately NOT frame-gated: the preload console hook is a

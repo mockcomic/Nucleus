@@ -153,6 +153,18 @@ function readCache(keyRaw) {
 
 function onDisk(keyRaw) { return !!existingFile(filePath(keyRaw)); }
 
+/* Raw bytes for the export-package builder (bundle.js): the cache file, but
+   only if the SNIFF still passes — a foreign/corrupt file in the cache is a
+   miss, never smuggled into a package. */
+function readBytes(keyRaw) {
+  const p = filePath(keyRaw);
+  if (!p) return null;
+  try {
+    const buf = fs.readFileSync(p);
+    return sniffImage(buf) ? buf : null;
+  } catch { return null; }
+}
+
 function writeStore(keyRaw, buf) {
   const p = filePath(keyRaw);
   if (!p) return false;
@@ -373,6 +385,8 @@ function warm(keys) {
 
 module.exports = {
   configure, addFile, addUrl, dataUrlFor, warm, install,
+  // read-side helpers for the export-package builder (bundle.js)
+  readBytes, sourceFor,
   // pure, exported for tests
   sanitizeKey, isCustomKey, keyFor, sniffImage, validateUrl, looksLikeSvg, KINDS,
   PREFIX, FILE_MAX_BYTES, DIR_TOTAL_MAX, PICK_EXTENSIONS, FETCH_TIMEOUT

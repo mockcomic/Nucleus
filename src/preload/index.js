@@ -16,13 +16,16 @@ const on = (name) => page.includes('/renderer/' + name + '/');
 const invoke = (ch) => (...args) => ipcRenderer.invoke(ch, ...args);
 const send = (ch) => (...args) => ipcRenderer.send(ch, ...args);
 
-/* The overlay's whole surface — four channels, nothing more. */
+/* The overlay's whole surface — a handful of channels, nothing more. */
 const wheelSurface = {
   onShow: (cb) => ipcRenderer.on('overlay:show', (_e, payload) => cb(payload)),
   clickSegment: (item) => ipcRenderer.send('wheel:segment-click', item),
   dismiss: () => ipcRenderer.send('wheel:dismiss'),
   // Ask main to enlarge the transparent window (flyout beyond the outer ring).
   growCanvas: (reachPx) => ipcRenderer.send('wheel:grow', reachPx),
+  // "A type-to-filter query is on screen" — while true, main lets Esc reach
+  // the page so the first press clears the query instead of dismissing.
+  setFiltering: (on) => ipcRenderer.send('wheel:filter', !!on),
   iconDataUrl: invoke('icons:data-url')
 };
 
@@ -49,8 +52,10 @@ const settingsSurface = {
   previewAction: invoke('action:preview'),
   testWheel: invoke('overlay:show'),
   exportConfig: invoke('config:export'),
+  exportBundle: invoke('config:export-bundle'),
   importConfig: invoke('config:import'),
   resetConfig: invoke('config:reset'),
+  clearUsage: invoke('usage:clear'),
   openConfigFolder: invoke('config:open-folder'),
   openLogsFolder: invoke('log:open-folder'),
   sysCatalog: invoke('sys:catalog'),

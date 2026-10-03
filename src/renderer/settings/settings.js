@@ -19,22 +19,47 @@ const MAX_RINGS = 4;
 /* Keep in sync with src/main/config.js — the renderer cannot require it. */
 const MAX_CHILDREN = 12;        // segments inside one folder sub-menu
 const MAX_FOLDER_DEPTH = 3;     // folder-in-folder-in-folder
+const MAX_PROFILES = 8;         // app profiles (config.js MAX_PROFILES)
+
+/* Which ring tree the editor shows: the default wheel, or one app profile's.
+   activeProfileId rides the session only (not config) — opening Settings
+   always lands back on the default wheel. */
+let activeProfileId = null;
+function profileById(id) {
+  if (!id || !cfg || !Array.isArray(cfg.profiles)) return null;
+  return cfg.profiles.find((p) => p && p.id === id) || null;
+}
+function activeProfile() {
+  const p = profileById(activeProfileId);
+  if (!p) activeProfileId = null;          // profile vanished (external reload / reset)
+  return p;
+}
+/* The rings object every segment UI reads and writes: profile rings when one
+   is selected, the default wheel otherwise. */
+function ringsModel(c = cfg) {
+  const p = (c === cfg) ? activeProfile() : null;
+  return (p ? p.rings : (c && c.rings)) || {};
+}
 
 function ringKeys(c = cfg) {
-  const ns = Object.keys((c && c.rings) || {})
+  const src = ringsModel(c);
+  const ns = Object.keys(src || {})
     .map(Number)
     .filter((n) => Number.isInteger(n) && n >= 1)
     .sort((a, b) => a - b);
   return (ns.length ? ns : [1, 2]).map(String);
 }
 function ringItems(c = cfg) {
-  return ringKeys(c).flatMap((k) => (c.rings && Array.isArray(c.rings[k]) ? c.rings[k] : []));
+  const src = ringsModel(c);
+  return ringKeys(c).flatMap((k) => (Array.isArray(src[k]) ? src[k] : []));
 }
 /* Mirror of config.js walkItems: every item INCLUDING folder children,
-   depth-first. Anything treating "every item" as one pool (icon prefetch,
-   modal target lookup) uses this, not ringItems(). */
+   depth-first, of the EDITED ring tree (active profile or default). Anything
+   treating "every item" as one pool (icon prefetch, modal target lookup)
+   uses this, not ringItems(). */
 function allItems(c = cfg) {
   const out = [];
+  const src = ringsModel(c);
   const down = (arr, d) => {
     for (const it of Array.isArray(arr) ? arr : []) {
       if (!it || typeof it !== 'object') continue;
@@ -42,7 +67,7 @@ function allItems(c = cfg) {
       if (Array.isArray(it.children) && it.children.length && d < MAX_FOLDER_DEPTH) down(it.children, d + 1);
     }
   };
-  for (const k of ringKeys(c)) down(c.rings[k], 0);
+  for (const k of ringKeys(c)) down(src[k], 0);
   return out;
 }
 function ringTitle(n, N) {
@@ -252,7 +277,8 @@ function ensureAllIcons() {
 const TYPE_OPTIONS = [
   ['app', 'app — launch program'], ['url', 'url — open link'], ['file', 'file — open file'],
   ['command', 'command — shell command / script'], ['macro', 'macro — keystrokes'], ['sys', 'sys — Windows action'],
-  ['folder', 'folder — sub-menu that branches on hover']
+  ['folder', 'folder — sub-menu that branches on hover'],
+  ['recent', 'recent — auto-filled fan of your most-used segments']
 ];
 
 /* What goes in the value box, per type — a single "Target" label asked the user
@@ -270,20 +296,21 @@ function renderSegments() {
   liveIconSpans.length = 0;
   const host = $('#ring-lists');
   host.innerHTML = '';
+  const R = ringsModel();                       // the default wheel — or the selected profile's rings
   const keys = ringKeys();
   const N = keys.length;
   let createdRing = false;
   for (const ring of keys) {
-    if (!cfg.rings[ring]) { cfg.rings[ring] = []; createdRing = true; }
+    if (!R[ring]) { R[ring] = []; createdRing = true; }
     const sec = el('div', 'ring-sec', {}, host);
     const head = el('div', 'ring-head', {}, sec);
     el('h3', null, { text: ringTitle(ring, N) }, head);
-    el('span', 'muted', { text: `${cfg.rings[ring].length} segment${cfg.rings[ring].length === 1 ? '' : 's'}` }, head);
+    el('span', 'muted', { text: `${R[ring].length} segment${R[ring].length === 1 ? '' : 's'}` }, head);
     const add = el('button', 'btn small', { text: '+ Add' }, head);
     add.onclick = () => {
       const item = newSegItem();
-      cfg.rings[ring].push(item);
-      openEditorKey = `${ring}-${cfg.rings[ring].length - 1}`;
+      R[ring].push(item);
+      openEditorKey = `${ring}-${R[ring].length - 1}`;
       touch();
       // touch() rerendered synchronously — land the caret in the new row's Label box
       // so the user can type the name right away (and pre-select "New item" to replace it).
@@ -294,12 +321,12 @@ function renderSegments() {
       const rm = el('button', 'btn small glyph', { text: '\uE75D', title: 'Remove this ring', 'aria-label': 'Remove ' + ringTitle(ring, N) }, head);
       rm.onclick = () => removeRing(ring);
     }
-    if (!cfg.rings[ring].length) {
+    if (!R[ring].length) {
       el('div', 'empty-hint muted', { text: 'Empty — this ring won\u2019t render.' }, sec);
       continue;
     }
     const list = el('div', 'seg-list', {}, sec);
-    cfg.rings[ring].forEach((item, i) => list.appendChild(segRow({ ring, owner: cfg.rings[ring], item, i, key: `${ring}-${i}`, depth: 0 })));
+    R[ring].forEach((item, i) => list.appendChild(segRow({ ring, owner: R[ring], item, i, key: `${ring}-${i}`, depth: 0 })));
   }
   // renderSegments created a missing ring array — model mutated in render;
   // flag it (preview-only touch) so the repair reaches disk without a keystroke.
@@ -308,11 +335,11 @@ function renderSegments() {
     const addRing = el('button', 'btn', { text: '+ Add ring', title: `Add ring ${N + 1} (outermost)` }, host);
     addRing.style.marginTop = '4px';
     addRing.onclick = () => {
-      cfg.rings[String(N + 1)] = [];
+      R[String(N + 1)] = [];
       touch();
       toast(`Ring ${N + 1} added — its segments sit outside the current outer ring`, false, () => {
-        if ((cfg.rings[String(N + 1)] || []).length) return;   // in use — keep it
-        delete cfg.rings[String(N + 1)];
+        if ((R[String(N + 1)] || []).length) return;   // in use — keep it
+        delete R[String(N + 1)];
         touch();
       });
     };
@@ -324,23 +351,25 @@ function renderSegments() {
 /* Remove the outermost ring: items migrate inward if the neighbour can take
    them (the 24-per-ring cap holds); removal undo restores ring + items. */
 function removeRing(ring) {
-  const items = cfg.rings[ring] || [];
-  const inner = cfg.rings[String(Number(ring) - 1)];
+  const R = ringsModel();
+  const items = R[ring] || [];
+  const inner = R[String(Number(ring) - 1)];
   if (items.length && inner.length + items.length > 24) {
     toast(`Can\u2019t fold ${items.length} segments into the ring below (max 24) — move or delete some first`, true);
     return;
   }
-  delete cfg.rings[ring];
+  delete R[ring];
   inner.push(...items);
   if (openEditorKey && openEditorKey.startsWith(ring + '-')) openEditorKey = null;
   touch();
   const moved = items.slice();
   toast(`Removed ${ringTitle(ring, ringKeys().length + 1)}`, false, () => {
+    const R2 = ringsModel();
     for (const it of moved) {
       const k = inner.indexOf(it);
       if (k >= 0) inner.splice(k, 1);        // pull the migrated items back
     }
-    cfg.rings[ring] = moved;                  // and re-raise the ring
+    R2[ring] = moved;                        // and re-raise the ring (on the model being edited)
     touch();
   });
 }
@@ -383,7 +412,7 @@ function segRow(ctx) {
   el('span', 'g', { text: '\uE70D' }, disc);   // ChevronDown
 
   const icoSpan = el('span', 'seg-ico', {}, main);
-  registerIconSpan(icoSpan, item, item.icon || (item.type === 'folder' ? '\uE838' : item.type === 'sys' ? '\uE713' : '\uE76C'));
+  registerIconSpan(icoSpan, item, item.icon || (item.type === 'folder' ? '\uE838' : item.type === 'recent' ? '\uE823' : item.type === 'sys' ? '\uE713' : '\uE76C'));
   el('span', 'seg-name', { text: item.label || '(no name)' }, main);
   el('span', 'seg-type', { text: item.type }, main);
   el('span', 'seg-val', { text: rowValueText(item) }, main);
@@ -430,8 +459,9 @@ function segRow(ctx) {
   el('span', 'act-sep', { 'aria-hidden': 'true' }, acts);
   // Play can fire arbitrary shell commands, injected keystrokes, or lock/sleep
   // — those require a deliberate second click, not a slip from Delete.
-  if (item.type !== 'folder') {
-    // A folder executes nothing (main refuses it too) — no Play affordance to dangle.
+  if (item.type !== 'folder' && item.type !== 'recent') {
+    // A folder/recents container executes nothing (main refuses them too) —
+    // no Play affordance to dangle.
     let armed = false, armTimer = null;
     const runBtn = mini('\uE9A1', 'Try this action now', async () => {   // Play — E768 renders the catalog's Mic glyph
       if (GUARDED_TYPES.has(item.type) && !armed) {
@@ -470,7 +500,8 @@ function segRow(ctx) {
     toast(`Removed “${item.label}”`, false, () => {
       // Re-fetch the live array: an external-config swap replaces ring arrays
       // wholesale; a folder's children array rides on its parent item.
-      const cur = depth === 0 ? (cfg.rings[ctx.ring] || (cfg.rings[ctx.ring] = [])) : owner;
+      const RM = ringsModel();
+      const cur = depth === 0 ? (RM[ctx.ring] || (RM[ctx.ring] = [])) : owner;
       if (cur.some((x) => x.id === item.id)) return;   // already restored meanwhile
       cur.splice(Math.min(idx, cur.length), 0, item);
       touch();
@@ -529,6 +560,7 @@ function rowValueText(item) {
     return n ? `${n} segment${n === 1 ? '' : 's'} inside` : 'empty sub-menu';
   }
   if (item.type === 'sys') return sysDisplayText(item);
+  if (item.type === 'recent') return 'fills itself from your most-used segments';
   if (item.type === 'app' && String(item.args || '').trim()) return item.value + '  ' + String(item.args).trim();
   return item.value;
 }
@@ -594,8 +626,14 @@ function segEditor(ctx, withFields = true) {
       item.dir = '';                                 // folders execute nothing
       if (!Array.isArray(item.children)) item.children = [];
       if (!item.icon && !item.iconImage) item.icon = '\uE838';   // open-folder glyph
-    } else if (oldType === 'folder') {
-      item.children = [];                            // the sub-menu slot is folder-only
+    } else if (item.type === 'recent') {
+      item.value = '';
+      item.args = '';
+      item.dir = '';
+      item.children = [];                            // main fills the fan at summon time
+      if (!item.icon && !item.iconImage) item.icon = '\uE823';   // history-clock glyph
+    } else if (oldType === 'folder' || oldType === 'recent') {
+      item.children = [];                            // the sub-menu slot is container-only
     } else if (item.type === 'sys') {
       if (!(sysCatalogCache || []).some((c) => c.id === item.value)) {
         item.value = (sysCatalogCache && sysCatalogCache[0] && sysCatalogCache[0].id) || '';
@@ -614,6 +652,11 @@ function segEditor(ctx, withFields = true) {
     const cKids = field('Sub-menu');
     cKids.classList.add('kid-ctl');
     folderManager(ctx, cKids);
+  } else if (item.type === 'recent') {
+    const cAuto = field('Contents');
+    el('div', 'f-hint', {
+      text: 'Fills itself at every wheel opening with your most-used segments — the count is set in Hotkey & Behavior. Nothing to edit here; clicks inside the fan run the real segments.'
+    }, cAuto);
   } else if (item.type === 'sys') {
     const cTarget = field(TARGET_LABELS.sys, uid + '-target');
     sysActionCombo(item, cTarget, `${uid}-list`, syncRowText);
@@ -693,16 +736,17 @@ function segEditor(ctx, withFields = true) {
     rb.checked = String(ring) === r;
     rb.addEventListener('change', () => {
       if (rb.checked && String(ring) !== r) {
-        if (cfg.rings[r].length >= 24) {   // config.js cleanRing cap
+        const RM = ringsModel();           // re-resolved at click time — profile may have changed
+        if (RM[r].length >= 24) {   // config.js cleanRing cap
           const cur = ringBox.querySelector(`input[value="${ring}"]`);
           if (cur) cur.checked = true;
           toast(`Ring ${r} holds at most 24 segments`, true);
           return;
         }
-        const from = cfg.rings[ring];
+        const from = RM[ring];
         const idx = from.indexOf(item);
         from.splice(idx, 1);
-        cfg.rings[r].push(item);
+        RM[r].push(item);
         openEditorKey = null;
         touch();
         // Inverse-op undo — returns the item to its old ring and position;
@@ -710,11 +754,12 @@ function segEditor(ctx, withFields = true) {
         const t = ringRadioLabel(r, allKeys);
         const dest = (t === 'inner' || t === 'outer') ? `the ${t} ring` : t;
         toast(`Moved “${item.label || '(no name)'}” to ${dest}`, false, () => {
-          const cur = cfg.rings[r];
+          const R2 = ringsModel();
+          const cur = R2[r];
           const k = cur.indexOf(item);
           if (k < 0) return;                        // moved on — inverse op is a no-op
           cur.splice(k, 1);
-          const back = cfg.rings[ring] || (cfg.rings[ring] = []);
+          const back = R2[ring] || (R2[ring] = []);
           back.splice(Math.min(idx, back.length), 0, item);
           touch();
         });
@@ -723,7 +768,7 @@ function segEditor(ctx, withFields = true) {
     rb.value = r;
     lb.appendChild(document.createTextNode(ringRadioLabel(r, allKeys)));
   }
-  makeDupButton(ringBox, cfg.rings[ring], 24, item, 'A ring holds at most 24 segments');
+  makeDupButton(ringBox, ringsModel()[ring], 24, item, 'A ring holds at most 24 segments');
   } else {
     // Duplicate is the only child-level placement control (the ring radios are
     // root-only); no label needed — the button names itself.
@@ -796,6 +841,101 @@ function folderManager(ctx, host) {
   const listBox = el('div', 'kid-list', {}, host);
   kids.forEach((kid, j) => listBox.appendChild(segRow({ owner: kids, item: kid, i: j, key: `${ctx.key}/${j}`, depth: d + 1 })));
   addButtons(el('div', 'row-line kid-add', {}, host));
+}
+
+/* ------------------------------ profiles bar -------------------------------
+   The Segments tab edits the DEFAULT wheel or one APP PROFILE at a time —
+   picking a chip retargets the entire ring editor + live preview (ringsModel),
+   so profile authoring reuses the segment UI exactly instead of cloning it. */
+function renderProfileBar() {
+  const bar = $('#profile-bar');
+  if (!bar) return;
+  bar.innerHTML = '';
+  if (!Array.isArray(cfg.profiles)) cfg.profiles = [];
+  const list = cfg.profiles;
+  const p = activeProfile();                       // self-heals a vanished selection
+  const card = el('div', 'card profile-card', {}, bar);
+  const row = el('div', 'row-line wrap', {}, card);
+  el('span', 'card-title', { text: 'Editing' }, row);
+  const chip = (label, on, onclick, title) => {
+    const b = el('button', 'btn small' + (on ? ' primary' : ''), { text: label, type: 'button', title: title || '' }, row);
+    b.setAttribute('aria-pressed', String(on));
+    b.onclick = onclick;
+    return b;
+  };
+  chip('Default wheel', !p, () => {
+    if (p) { activeProfileId = null; renderProfileBar(); renderSegments(); renderPreview(); }
+  }, 'The wheel every app gets');
+  for (const pr of list) {
+    chip(pr.name || 'Profile', p === pr, () => {
+      if (p !== pr) { activeProfileId = pr.id; renderProfileBar(); renderSegments(); renderPreview(); }
+    }, (pr.apps && pr.apps.length) ? 'Apps: ' + pr.apps.join(', ') : 'No apps listed — this profile never activates');
+  }
+  if (list.length < MAX_PROFILES) {
+    const add = el('button', 'btn small', { text: '+ Profile', type: 'button', title: 'Add an app profile' }, row);
+    add.onclick = () => {
+      const np = { id: crypto.randomUUID(), name: 'Profile ' + (list.length + 1), apps: [], rings: { 1: [], 2: [] } };
+      list.push(np);
+      activeProfileId = np.id;
+      touch();                       // persists + rerenders; the new profile starts empty (shows nothing until filled)
+      renderProfileBar();
+    };
+  } else {
+    el('span', 'muted', { text: `Profile limit (${MAX_PROFILES}).` }, row);
+  }
+
+  if (p) {
+    const grid = el('div', 'row-line wrap', {}, card);
+    grid.style.marginTop = '8px';
+    const nameIn = el('input', null, { type: 'text', maxlength: '40', value: p.name || '', 'aria-label': 'Profile name', style: 'width:190px' }, grid);
+    nameIn.oninput = () => { p.name = nameIn.value; touch(false); };
+    nameIn.onchange = () => renderProfileBar();     // chip label follows the committed text
+    el('label', 'hint muted', { text: 'Activate when these apps have focus:' }, grid);
+    const appsIn = el('input', null, {
+      type: 'text', maxlength: '500', value: (p.apps || []).join(', '),
+      placeholder: 'e.g. code.exe, blender.exe',
+      'aria-label': 'Apps that activate this profile, comma-separated',
+      style: 'flex:1;min-width:220px'
+    }, grid);
+    appsIn.onchange = () => {
+      p.apps = parseAppList(appsIn.value);
+      appsIn.value = p.apps.join(', ');             // reflect normalization, like the gaming-mode list
+      touch(false);
+    };
+    const del = el('button', 'btn small danger', { text: 'Delete profile', type: 'button' }, grid);
+    let armed = false, armTimer = null;
+    del.onclick = () => {
+      if (!armed) {
+        armed = true;
+        del.textContent = 'Click again to delete';
+        clearTimeout(armTimer);
+        armTimer = setTimeout(() => { if (del.isConnected) { armed = false; del.textContent = 'Delete profile'; } }, 3000);
+        return;
+      }
+      const idx = list.indexOf(p);
+      list.splice(idx, 1);
+      activeProfileId = null;
+      touch();
+      renderProfileBar();
+      toast(`Deleted profile “${p.name || 'Profile'}”`, false, () => {
+        list.splice(Math.min(idx, list.length), 0, p);
+        activeProfileId = p.id;
+        touch();
+        renderProfileBar();
+      });
+    };
+    if (!(p.apps || []).length) {
+      el('div', 'hint muted', { text: 'No apps listed — this profile can never activate. Comma-separated exe names; full paths are fine.' }, card);
+    }
+  }
+
+  // Falling-back hint: an active profile with nothing in it shows the default wheel instead.
+  if (p && !Object.values(p.rings || {}).some((a) => Array.isArray(a) && a.length)) {
+    el('div', 'hint muted', { text: 'This wheel is empty — until it has segments, the app it matches keeps showing the DEFAULT wheel.' }, card);
+  }
+  if (!cfg.behavior || !cfg.behavior.profilesEnabled) {
+    el('div', 'hint muted', { text: 'Profiles are OFF — turn on “Use a different wheel per app” under Hotkey & Behavior to activate them.' }, card);
+  }
 }
 
 /* ---------------- installed-programs dropdown (type: app) ----------------- */
@@ -1393,7 +1533,7 @@ function miniWheel(host, colors) {
       startAngle: cfg.appearance.startAngle,
     }),
     rings: Object.fromEntries(
-      ringKeys().map((k, i) => [k, ring(cfg.rings && cfg.rings[k], i === 0 ? 6 : 10)])
+      (() => { const RM = ringsModel(); return ringKeys().map((k, i) => [k, ring(RM && RM[k], i === 0 ? 6 : 10)]); })()
     ),
   };
   buildWheel(host, mini, { preview: true, scale: 1, pad: CHIP_PAD, shadowBlur: 3, shadowDy: 1 });
@@ -1652,12 +1792,18 @@ function wireBehaviorCheckboxes() {
     'bh-right': ['behavior', 'dismissOnRightClick'],
     'bh-retrigger': ['behavior', 'reTriggerToggles'],
     // Only meaningful while the trigger's main key is a mouse button (dimmed then).
-    'bh-mouse-through': ['behavior', 'mouseClickThrough']
+    'bh-mouse-through': ['behavior', 'mouseClickThrough'],
+    // Marking + type-to-filter default ON; both are opt-out (validate mirrors this).
+    'bh-marking': ['behavior', 'markingSelect'],
+    'bh-filter': ['behavior', 'typeToFilter'],
+    // Master switch for the Segments tab's profile chips.
+    'bh-profiles': ['behavior', 'profilesEnabled']
   };  for (const [id, [sec, key]] of Object.entries(map)) {
     const c = $('#' + id);
     c.checked = cfg[sec][key];
     c.onchange = async () => {
       cfg[sec][key] = c.checked;
+      if (sec === 'behavior' && key === 'profilesEnabled') renderProfileBar();   // OFF-hint follows the switch
       if (sec === 'behavior' && key === 'autostart') {
         let r = null;
         try { r = await api.setAutostart(c.checked); } catch (err) { r = { ok: false, error: String((err && err.message) || err) }; }
@@ -1688,6 +1834,17 @@ function wireBehaviorCheckboxes() {
     fill();
     fly.addEventListener('input', () => { if (flyOut) flyOut.textContent = fly.value + ' ms'; fill(); });
     fly.addEventListener('change', () => { cfg.behavior.flyoutDwellMs = Number(fly.value) || 0; touch(false); });
+  }
+  /* Recents fan size: how many most-used segments a `recent` segment shows. */
+  const rc = $('#bh-recents'), rcOut = $('#bh-recents-out');
+  if (rc) {
+    const fillRc = () => rc.style.setProperty('--fill', (Math.min(12, Math.max(3, Number(rc.value)) - 3) / 9 * 100) + '%');
+    const curRc = Number(cfg.behavior && cfg.behavior.recentsCount);
+    rc.value = String(Number.isFinite(curRc) ? Math.min(12, Math.max(3, Math.round(curRc))) : 8);
+    if (rcOut) rcOut.textContent = rc.value;
+    fillRc();
+    rc.addEventListener('input', () => { if (rcOut) rcOut.textContent = rc.value; fillRc(); });
+    rc.addEventListener('change', () => { cfg.behavior.recentsCount = Number(rc.value) || 8; touch(false); });
   }
   /* Gaming mode: master toggle + comma-separated always-off app list. */
   if (!cfg.behavior.gameMode) cfg.behavior.gameMode = { enabled: false, apps: [] };
@@ -1751,10 +1908,18 @@ async function wireAdvanced() {
     const r = await safe(() => api.importConfig());
     if (r.ok) {
       cfg = clone(r.config); dirty = false;
+      activeProfileId = null;                       // an imported graph is a different world — start on the default wheel
       if (typeof r.rev === 'number') storeRev = r.rev;
+      /* A package just installed fresh icon bytes in main — drop the local
+         resolution caches so the rows/preview re-resolve them (a previously
+         failed key must retry, not sit in its cooldown). */
+      if (r.icons) { imgCache.clear(); failedAt.clear(); }
       renderAll();
       showHkError(r.hotkeyError || null);          // never let the chip claim a combo that failed to register
-      toast('Config imported', false, async () => { await restoreConfig(snapshot); });
+      const msg = r.icons
+        ? `Package imported — ${r.icons.installed} icon${r.icons.installed === 1 ? '' : 's'} carried over${r.icons.skipped ? `, ${r.icons.skipped} skipped (glyph fallback)` : ''}`
+        : 'Config imported';
+      toast(msg, false, async () => { await restoreConfig(snapshot); });
     } else if (!r.canceled) toast(r.error, true);
   };
   $('#btn-reset').onclick = async () => {
@@ -1769,6 +1934,18 @@ async function wireAdvanced() {
     } else if (!r.canceled) toast(r.error, true);
   };
   $('#btn-openfolder').onclick = () => api.openConfigFolder();
+  $('#btn-export-pkg').onclick = async () => {
+    const r = await safe(() => api.exportBundle());
+    if (r.ok) {
+      const miss = r.skipped ? ` — ${r.skipped} icon${r.skipped === 1 ? '' : 's'} missing from the cache (those segments travel as glyphs)` : '';
+      toast(`Package exported with ${r.icons} icon${r.icons === 1 ? '' : 's'}${miss}`);
+    } else if (!r.canceled) toast('Export failed: ' + r.error, true);
+  };
+  $('#btn-clear-usage').onclick = async () => {
+    const r = await safe(() => api.clearUsage());
+    if (r.ok) toast('Recent-items data cleared — recent segments will refill as you use the wheel');
+    else toast(r.error || 'Could not clear recent-items data', true);
+  };
   $('#btn-openlogs').onclick = async () => {
     const r = await safe(() => api.openLogsFolder());
     if (r && r.ok === false) toast(r.error || 'Could not open the logs folder', true);
@@ -1847,7 +2024,7 @@ function renderPreview() {
   const avail = Math.min(host.clientWidth, host.clientHeight) - 20;
   const need = cfg.appearance.outerRadius * 2 + 52;
   const scale = Math.min(1, Math.max(0.3, avail / need));
-  previewBuilt = buildWheel(host, cfg, { preview: true, scale, iconImages: imgCache });
+  previewBuilt = buildWheel(host, { ...cfg, rings: ringsModel() }, { preview: true, scale, iconImages: imgCache });
   previewNav = createFlyoutNavigator(previewBuilt, {
     dwellMs: cfg.behavior && cfg.behavior.flyoutDwellMs,
     // The preview box may need to breathe past the wheel rim when a fan
@@ -1860,6 +2037,7 @@ function renderPreview() {
 /* ---------------------------------- boot ----------------------------------- */
 function renderAll() {
   ensureAllIcons();
+  renderProfileBar();
   renderSegments();
   renderAppearance();
   applyChrome();

@@ -73,6 +73,46 @@ export function fanSpans(parentDeg, n) {
   return { span, step: span / n };
 }
 
+/* ── marking selection (press → drag → release), pure verdict ────────────────
+   The overlay arms on left-press and decides on release; this is the whole
+   decision, exported so node tests cover the table without a DOM.
+     onHub     — the release landed on the hub (back-out / dismiss semantics)
+     releaseSeg— the segment under the pointer at release (null = off the wheel)
+   A release on the SAME plate as the press is an ordinary click and fires —
+   which is why marking can default ON without changing click behavior. */
+export function decideMarking({ pressSeg = null, releaseSeg = null, onHub = false } = {}) {
+  void pressSeg;                       // kept in the contract for callers/tests; today the release alone decides
+  if (onHub) return 'dismiss';
+  if (!releaseSeg) return 'cancel';    // flung off the wheel: nothing fires, the wheel stays open
+  if (releaseSeg.item && releaseSeg.item.type === 'folder') return 'toggle';
+  return 'fire';
+}
+
+/* ── type-to-filter ranking, pure ────────────────────────────────────────────
+   Case-insensitive substring over label (prefix first — the best match should
+   win ties of length) then over value; junk entries and an empty query yield
+   no matches. Returns the matched ITEM objects in rank order. */
+export function rankMatches(items, query) {
+  const q = String(query || '').toLowerCase().trim();
+  if (!q) return [];
+  const score = (it) => {
+    if (!it || typeof it !== 'object') return -1;
+    const label = String(it.label || '').toLowerCase();
+    const value = String(it.value || '').toLowerCase();
+    if (label.startsWith(q)) return 0;
+    if (label.includes(q)) return 1;
+    if (value && value.includes(q)) return 2;
+    return -1;
+  };
+  const out = [];
+  for (const it of Array.isArray(items) ? items : []) {
+    const s = score(it);
+    if (s >= 0) out.push({ it, s });
+  }
+  out.sort((a, b) => a.s - b.s);
+  return out.map((o) => o.it);
+}
+
 function svgEl(tag, attrs = {}) {
   const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
   for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
@@ -293,7 +333,16 @@ export function buildWheel(container, cfg, opts = {}) {
     fill: ap.colors.text, 'fill-opacity': 0.85, class: 'center-label'
   });
   centerLabel.textContent = ap.centerLabel || '';
+  /* Type-to-filter readout: the query lives in the hub while typing (CSS
+     hides the hub-report layers under .wheel-root.filtering so they can't
+     collide with it). */
+  const filterText = svgEl('text', {
+    x: cx, y: cy, 'text-anchor': 'middle', 'dominant-baseline': 'central',
+    'font-family': UI_FONT, 'font-size': Math.max(13, ap.fontSize + 2), 'font-weight': 600, 'letter-spacing': '0.6',
+    fill: ap.colors.accent, visibility: 'hidden', class: 'filter-text'
+  });
   root.appendChild(hubIcon); root.appendChild(hubImg); root.appendChild(hubLabel); root.appendChild(centerLabel);
+  root.appendChild(filterText);
 
   const prefersReducedMotion = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
   if (ap.animationMs > 0 && !opts.preview && !prefersReducedMotion) {
@@ -468,13 +517,34 @@ export function buildWheel(container, cfg, opts = {}) {
     return null;
   }
 
+  /* Type-to-filter display. The host (overlay only) re-applies after any fan
+     open/close — freshly created flyout plates need their dim class too.
+     state: null = clear; { query, segs:Set<seg> } = dim everything unlisted. */
+  function applyFilter(state) {
+    const on = !!(state && String(state.query || '').length);
+    root.classList.toggle('filtering', on);
+    for (const seg of segments) {
+      const dim = on && !(state.segs && state.segs.has(seg));
+      seg.el.classList.toggle('filtered', dim);
+    }
+    if (on) {
+      filterText.textContent = String(state.query);
+      filterText.setAttribute('visibility', 'visible');
+      centerLabel.setAttribute('fill-opacity', '0');
+    } else {
+      filterText.textContent = '';
+      filterText.setAttribute('visibility', 'hidden');
+      centerLabel.setAttribute('fill-opacity', ap.centerLabel ? '0.85' : '0');
+    }
+  }
+
   // Force the "nothing hovered" hub reset once at build time — the
   // hovered===seg guard would otherwise skip it (hovered already starts as
   // null, so a plain setHover(null) was a dead no-op; harmless only while the
   // build-time defaults below coincided with this reset).
   hovered = undefined;
   setHover(null);
-  return { cfg: s, size, segments, setHover, hitTest, flyout, center: { cx, cy }, outerRadius: ap.outerRadius };
+  return { cfg: s, size, segments, setHover, hitTest, flyout, applyFilter, center: { cx, cy }, outerRadius: ap.outerRadius };
 }
 
 /**
