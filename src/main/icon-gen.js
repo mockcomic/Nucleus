@@ -165,4 +165,28 @@ function ensureProjectIcons(assetsDir) {
   return path.join(assetsDir, 'tray.ico');
 }
 
-module.exports = { ensureRuntimeIcons, ensureProjectIcons, drawTray, encodePng, buildIco };
+/* ------------------------- the app's own icon as segment art ---------------
+   `builtin:app` is a reserved iconImage key: the wheel art above, served as a
+   data URL through the SAME icons:data-url lookup as dashboard/custom icons
+   (ipc.js intercepts it before both families). The colon keeps it outside
+   dashboard's SLUG_RE and custom's `custom:<hex>.<kind>` shape, so it can
+   never be mistaken for — or prefetched as — a downloadable icon. */
+const APP_ICON_KEY = 'builtin:app';
+let _appIconCache = null;   // { dir, dataUrl } — one render per process
+
+function appIconDataUrl(dir) {
+  if (_appIconCache && _appIconCache.dir === dir) return _appIconCache.dataUrl;
+  fs.mkdirSync(dir, { recursive: true });
+  const p = path.join(dir, 'app-icon-128.png');
+  // Same repair discipline as ensureRuntimeIcons: a 0-byte leftover from an
+  // interrupted first run must not mean a permanently blank segment.
+  let usable = false;
+  try { usable = fs.statSync(p).size > 0; } catch {}
+  if (!usable) fs.writeFileSync(p, drawTray(128));
+  const buf = fs.readFileSync(p);
+  const dataUrl = 'data:image/png;base64,' + buf.toString('base64');
+  _appIconCache = { dir, dataUrl };
+  return dataUrl;
+}
+
+module.exports = { ensureRuntimeIcons, ensureProjectIcons, drawTray, encodePng, buildIco, APP_ICON_KEY, appIconDataUrl };

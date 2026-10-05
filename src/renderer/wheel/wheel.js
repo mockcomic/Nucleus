@@ -1,7 +1,13 @@
 import { buildWheel, createFlyoutNavigator, decideMarking, rankMatches } from '../shared/wheel-core.js';
+import { computePanelLayout, mixerRowKey, isMixerItem } from '../shared/wheel-mixer.js';
+import { createWheelSound } from '../shared/wheel-sound.js';
 
 const api = window.wheelAPI;
 const rootEl = document.getElementById('root');
+
+/* Soft hover/select ticks (behavior.wheelSound, opt-in). The factory is lazy:
+   no AudioContext exists until the setting is on AND something plays. */
+const sound = createWheelSound();
 
 let built = null;
 let lastPayload = null;
@@ -97,6 +103,287 @@ function requestRoom(reachPx) {
   api.growCanvas(need);
 }
 
+/* ── volume-mixer flyout card (the `mixer` segment) ─────────────────────────
+   A click on a mixer segment executes nothing: the wheel FREEZES and this
+   card pops out just beyond the plate — master output + microphone rows, then
+   one slider + mute per app owning an audio session (Windows-volume-flyout
+   shape). All state is read back from Windows through the frame-gated audio
+   channels (clamped in main before any of it reaches Core Audio), poll-refreshed
+   every MX_POLL_MS like the Settings tab, and never overwritten mid-drag
+   (per-row busy claim). Geometry is the pure computePanelLayout helper
+   (shared/wheel-mixer.js); the window grows over the same wheel:grow path the
+   folder fans use, and Esc ownership rides the existing type-to-filter flag:
+   the first Esc closes the card, the next one dismisses the wheel. */
+const mixer = {
+  el: null, sessionsEl: null, noteEl: null,
+  ownerSeg: null, rows: new Map(), poll: null,
+  masterOut: null, masterIn: null,
+  probe: null                  // availability: null = not probed, false+why = dead
+};
+const MX_POLL_MS = 2000;
+const MX_MAX_ROWS = 12;
+let mxSeq = 0;                 // newest-load-wins guard on the async refreshes
+let mxNoteTimer = null;
+
+function h(tag, cls, props, parent) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (props) for (const k of Object.keys(props)) {
+    if (k === 'text') n.textContent = props[k];
+    else n.setAttribute(k, props[k]);
+  }
+  if (parent) parent.appendChild(n);
+  return n;
+}
+const apiCall = (fn) => Promise.resolve().then(fn).catch(() => null);
+
+const mixerOpen = () => !!mixer.el;
+const mixerHit = (e) => !!(mixer.el && e && mixer.el.contains(e.target));
+
+function mxNote(text, isError) {
+  const n = mixer.noteEl;
+  if (!n) return;
+  clearTimeout(mxNoteTimer);
+  n.textContent = String(text || '');
+  n.classList.toggle('mx-err', !!isError);
+}
+
+function mxSetDisabled(on) {
+  if (!mixer.el) return;
+  mixer.el.querySelectorAll('input, button').forEach((n) => { n.disabled = !!on; });
+  mixer.el.classList.toggle('mx-off', !!on);
+}
+
+/* One slider row: glyph, name, range 0–100, % readout, mute toggle. `st.set`
+   is the poll path (never yanks a dragged slider); `st.update` is the session
+   row refresh. The commit rhythm mirrors the Settings Audio tab exactly:
+   input claims the row (1.5 s idle release), change commits after 160 ms. */
+function mxRow(host, { icon, label, aria, onVolume, onMute }) {
+  const row = h('div', 'mx-row', null, host);
+  h('span', 'mx-ico g', { text: icon, 'aria-hidden': 'true' }, row);
+  const name = h('span', 'mx-name', {}, row);
+  name.textContent = label;
+  const slider = h('input', 'mx-slider', { type: 'range', min: '0', max: '100', step: '1', 'aria-label': aria }, row);
+  const pct = h('span', 'mx-pct', { text: '—' }, row);
+  const mute = h('button', 'mx-mute', { type: 'button', 'aria-pressed': 'false', title: label + ' — click to mute', 'aria-label': 'Mute ' + label }, row);
+  h('span', 'g', { text: '\uE74E' }, mute);           // speaker-off glyph
+  const st = { row, name, slider, pct, mute, busy: false, idle: null, lastLabel: label };
+
+  slider.addEventListener('input', () => {
+    st.busy = true;
+    clearTimeout(st.idle);
+    pct.textContent = slider.value + '%';
+    slider.style.setProperty('--fill', slider.value + '%');   // accent fill under the thumb
+    st.idle = setTimeout(() => { st.busy = false; }, 1500);   // a gesture that never commits releases the claim
+  });
+  slider.addEventListener('change', () => {
+    const v = +slider.value;
+    clearTimeout(st.idle);
+    st.idle = setTimeout(async () => {
+      const r = await apiCall(() => onVolume(v));
+      st.busy = false;
+      if (r && r.ok === false) mxNote(r.error || 'Volume change failed', true);   // row resyncs on the next poll
+    }, 160);
+  });
+  mute.addEventListener('click', async () => {
+    const want = mute.getAttribute('aria-pressed') !== 'true';
+    const r = await apiCall(() => onMute(want));
+    if (r && r.ok === false) mxNote(r.error || 'Mute change failed', true);
+    else mute.setAttribute('aria-pressed', String(want));
+  });
+
+  st.set = (volume, muted) => {
+    if (!st.busy) {
+      slider.value = String(volume);
+      pct.textContent = volume + '%';
+      slider.style.setProperty('--fill', volume + '%');
+    }
+    mute.setAttribute('aria-pressed', String(!!muted));
+    mute.title = label + (muted ? ' — click to unmute' : ' — click to mute');
+  };
+  st.update = (text, muted, count) => {
+    // Unconditional assignment — it resets the badge host, so the ×N span
+    // below never accumulates across polls (the Settings tab does the same).
+    const t = text || st.lastLabel || label;
+    name.textContent = t;
+    st.lastLabel = t;
+    if (count > 1) h('span', 'mx-count', { text: '\u00d7' + count }, name);
+    slider.setAttribute('aria-label', 'Volume for ' + t);
+    mute.setAttribute('aria-label', 'Mute ' + t);
+    mute.title = t + (muted ? ' — click to unmute' : ' — click to mute');
+    st.set(+slider.value || 0, muted);
+    if (!st.busy) pct.textContent = slider.value + '%';
+  };
+  st.destroy = () => { clearTimeout(st.idle); row.remove(); };
+  return st;
+}
+
+/* Diff the live session list into the rows Map (keyed by pid / system-sounds,
+   same identity as the Settings tab) — a vanished app's row drops on the next
+   poll, an app the user is dragging is left alone. */
+function mxDiffSessions(sessions) {
+  const host = mixer.sessionsEl;
+  if (!host) return;
+  const seen = new Set();
+  let created = 0, extra = 0;
+  for (const s of Array.isArray(sessions) ? sessions : []) {
+    const key = mixerRowKey(s);
+    if (!key) continue;
+    seen.add(key);
+    let st = mixer.rows.get(key);
+    if (!st) {
+      if (created >= MX_MAX_ROWS) { extra++; continue; }
+      const pid = s.pid;
+      st = mxRow(host, {
+        icon: '\uE767', label: s.label || 'audio session ' + pid,
+        aria: 'Volume for ' + (s.label || 'audio session ' + pid),
+        onVolume: (v) => api.audioSetSession(pid, { volume: v }),
+        onMute: (m) => api.audioSetSession(pid, { muted: m })
+      });
+      st.row.classList.toggle('mx-system', !!s.isSystem);
+      mixer.rows.set(key, st);
+      created++;
+    }
+    st.update(s.label || 'audio session ' + pid, s.muted, s.sessions);
+  }
+  for (const [key, st] of [...mixer.rows]) {
+    if (!seen.has(key)) { st.destroy(); mixer.rows.delete(key); }
+  }
+  if (!mixer.rows.size) mxNote('Nothing is playing audio right now.');
+  else if (extra > 0) mxNote('\u2026and ' + extra + ' more');
+}
+
+async function mxRefresh() {
+  if (!mixer.el) return;
+  const seq = ++mxSeq;
+  if (mixer.probe === null) {
+    const av = await apiCall(() => api.audioAvailable());
+    mixer.probe = !!(av && av.ok !== false) ? true : ((av && (av.reason || av.error)) || 'Audio control is unavailable');
+    if (mixer.probe !== true) { mxNote(String(mixer.probe), true); mxSetDisabled(true); return; }
+  }
+  if (mixer.probe !== true) return;
+  const [rs, ro, ri] = await Promise.all([
+    apiCall(() => api.audioSessions()),
+    apiCall(() => api.audioLevels('render')),
+    apiCall(() => api.audioLevels('capture'))
+  ]);
+  if (seq !== mxSeq || !mixer.el) return;             // a newer load (or a close) won
+  if (ro && ro.ok !== false && mixer.masterOut) mixer.masterOut.set(ro.volume, ro.muted);
+  if (ri && ri.ok !== false && mixer.masterIn) mixer.masterIn.set(ri.volume, ri.muted);
+  if (!rs || rs.ok === false) { mxNote((rs && rs.error) || 'Could not read the app volume list.', true); return; }
+  mxNote('');                                          // a good read clears the stale error line
+  mxDiffSessions(rs.sessions);
+}
+
+function mxPollTick() {
+  if (!mixer.el || document.hidden) return;            // main hid the window: the page idles, not polls
+  mxRefresh();
+}
+
+function buildMixerCard(seg) {
+  const ap = (lastPayload && lastPayload.config && lastPayload.config.appearance) || {};
+  const colors = ap.colors || {};
+  const card = h('div', 'mixer-panel');
+  card.setAttribute('role', 'dialog');
+  card.setAttribute('aria-label', 'Volume mixer');
+  card.style.setProperty('--mx-bg', colors.center || '#0a0e12');
+  card.style.setProperty('--mx-text', colors.text || '#e8eef4');
+  card.style.setProperty('--mx-accent', colors.accent || '#4c9ff0');
+  card.style.setProperty('--mx-edge', colors.edge || 'rgba(255,255,255,0.08)');
+  card.style.setProperty('--mx-hover', colors.hover || '#2e7dd1');
+
+  const head = h('div', 'mx-head', null, card);
+  h('span', 'mx-title', { text: (seg.item && seg.item.label) || 'Volume mixer' }, head);
+  const refresh = h('button', 'mx-btn', { type: 'button', title: 'Refresh the volume list', 'aria-label': 'Refresh the volume list' }, head);
+  h('span', 'g', { text: '\uE72C' }, refresh);          // Refresh glyph
+  refresh.addEventListener('click', () => { mxRefresh(); });
+  const close = h('button', 'mx-btn mx-close', { type: 'button', title: 'Close', 'aria-label': 'Close the volume mixer' }, head);
+  h('span', 'g', { text: '\uE8BB' }, close);            // ChromeClose glyph
+  close.addEventListener('click', () => closeMixer());
+
+  const body = h('div', 'mx-body', null, card);
+  mixer.masterOut = mxRow(body, {
+    icon: '\uE767', label: 'System volume', aria: 'Master output volume',
+    onVolume: (v) => api.audioSetVolume('render', { volume: v }),
+    onMute: (m) => api.audioSetVolume('render', { muted: m })
+  });
+  mixer.masterIn = mxRow(body, {
+    icon: '\uE720', label: 'Microphone', aria: 'Microphone volume',
+    onVolume: (v) => api.audioSetVolume('capture', { volume: v }),
+    onMute: (m) => api.audioSetVolume('capture', { muted: m })
+  });
+  h('div', 'mx-rule', { 'aria-hidden': 'true' }, body);
+  mixer.sessionsEl = h('div', 'mx-sessions', { 'aria-label': 'App volumes' }, body);
+  mixer.noteEl = h('div', 'mx-note', null, card);
+  return card;
+}
+
+/* Place the card along the owner plate's ray, ask main for the window the
+   layout needs, then clamp against the CURRENT viewport (before the grow
+   lands it centers itself; the resize event re-runs this with room to
+   spare, so it settles into the anchored position). */
+function positionMixer() {
+  if (!mixer.el || !mixer.ownerSeg || !built) return;
+  const w = window.innerWidth || 1, hh = window.innerHeight || 1;
+  const args = {
+    centerDeg: mixer.ownerSeg.center, outerRadius: built.outerRadius,
+    panelW: mixer.el.offsetWidth, panelH: mixer.el.offsetHeight,
+    cx: w / 2, cy: hh / 2
+  };
+  const ideal = computePanelLayout({ ...args, halfSize: 0 });
+  requestRoom(ideal.reachPx);
+  const lay = computePanelLayout({ ...args, halfSize: Math.min(w, hh) / 2 });
+  mixer.el.style.left = Math.round(lay.x) + 'px';
+  mixer.el.style.top = Math.round(lay.y) + 'px';
+}
+
+function openMixer(seg) {
+  if (mixer.ownerSeg === seg) { closeMixer(); return; }    // second click on the plate closes it
+  closeMixer();
+  const card = buildMixerCard(seg);
+  mixer.el = card;
+  mixer.ownerSeg = seg;
+  document.body.appendChild(card);
+  if (nav) nav.reset();                                    // no fan competes with the card
+  if (filterQuery) setFilterQuery('');                     // the card owns the page now
+  api.setFiltering(true);                                  // Esc belongs to the page: first press closes the card
+  applyHover(null, { silent: true });                      // drop the hover spring under the card
+  positionMixer();
+  mxSetDisabled(false);                                    // a previous unavailable-run may have locked it
+  mxRefresh();
+  mixer.poll = setInterval(mxPollTick, MX_POLL_MS);
+  const first = card.querySelector('input');
+  if (first) first.focus();
+  ensureLive().textContent = 'Volume mixer opened. Esc closes it.';
+}
+
+function closeMixer() {
+  if (!mixer.el) return;
+  if (mixer.poll) { clearInterval(mixer.poll); mixer.poll = null; }
+  mxSeq++;                                                 // strand any in-flight refresh
+  mixer.el.remove();
+  mixer.el = null; mixer.sessionsEl = null; mixer.noteEl = null;
+  mixer.ownerSeg = null; mixer.poll = null;
+  mixer.rows.clear();
+  mixer.masterOut = null; mixer.masterIn = null;
+  api.setFiltering(!!filterQuery);                         // hand Esc back to main (unless a query outlives it)
+}
+
+/* The overlay window is resized by main (grow path) — re-anchor the card so
+   it stops riding the temporary centered position. */
+window.addEventListener('resize', () => { if (mixerOpen()) positionMixer(); });
+/* Hide (blur/segment fire) parks the poll; a show re-arms it. onShow also
+   hard-closes any half-lived card. */
+document.addEventListener('visibilitychange', () => {
+  if (!mixerOpen()) return;
+  if (document.hidden) {
+    if (mixer.poll) { clearInterval(mixer.poll); mixer.poll = null; }
+  } else if (!mixer.poll) {
+    mixer.poll = setInterval(mxPollTick, MX_POLL_MS);
+    mxRefresh();
+  }
+});
+
 function mountWheel(config, scale, preview) {
   built = buildWheel(rootEl, config, { scale, iconImages: iconCache, preview: !!preview });
   nav = createFlyoutNavigator(built, {
@@ -105,6 +392,7 @@ function mountWheel(config, scale, preview) {
   });
   selIdx = -1;
   grownTo = 0;
+  sound.reset();   // fresh segment records — the old hover identity is gone
   if (filterQuery) recomputeFilter(false);   // survive a silent icon-refresh rebuild
   return built;
 }
@@ -150,7 +438,7 @@ function ensureIcons(config) {
         const hoveredItem = hoveredSeg && hoveredSeg.item;
         mountWheel(config, lastPayload.scale, true);   // preview:true — silent refresh, no re-pop
         const restored = hoveredItem && built.segments.find((s) => s.item === hoveredItem || (s.item.id || '') === (hoveredItem.id || ''));
-        if (restored) applyHover({ seg: restored });                  // don't pop hover/hub-report state
+        if (restored) applyHover({ seg: restored }, { silent: true });   // don't pop hover/hub-report state — or re-tick
       }
     }).catch(() => {
       iconPending.delete(slug);
@@ -173,13 +461,25 @@ function pointToHit(x, y) {
   return built.hitTest(x, y);
 }
 
-function applyHover(hit) {
+/* Single funnel for every leaf firing (pointer click, marking release, Enter):
+   the select tick rides the same path the ipc click does, so the sound can
+   never drift out of sync with what actually executes. The mixer segment is
+   the one plate that executes nothing — its click opens/closes the volume
+   card in place, with no fire tick (nothing is fired). */
+function fireSeg(seg) {
+  if (isMixerItem(seg.item)) { openMixer(seg); return; }
+  sound.fire();
+  api.clickSegment(seg.item);   // main hides the overlay + executes
+}
+
+function applyHover(hit, opts) {
   if (!built) return;
   const seg = hit && hit.seg ? hit.seg : null;
   built.setHover(seg);
   // keep the keyboard cursor glued to what the pointer shows — Enter fires
   // the hovered segment; moving off it clears the selection too.
   selIdx = seg ? built.segments.indexOf(seg) : -1;
+  if (!(opts && opts.silent)) sound.hoverSeg(seg);   // tick only on a change
   const rootG = document.querySelector('.wheel-root');
   if (rootG) rootG.classList.toggle('any-hover', !!seg);
   rootEl.classList.toggle('has-hover', !!seg || (hit && hit.hub));
@@ -193,9 +493,12 @@ function applyHover(hit) {
 api.onShow((payload) => {
   lastPayload = payload;
   markArmed = null;            // a fresh summon never inherits a half-finished marking gesture
+  closeMixer();                // ...nor a half-open volume card (and its poll)
+  mixer.probe = null;          // re-probe audio availability for the new summon
   filterQuery = '';
   filterSegs = new Set();
   api.setFiltering(false);     // ...or a stale Esc-ownership flag
+  sound.setEnabled(behaviorOf().wheelSound === true);   // opt-in per summon, from the validated payload
   mountWheel(payload.config, payload.scale);
   // Decorative to AT: the SVG (plates, glyph text) is aria-hidden; the visually
   // hidden live region below announces the keyboard selection instead.
@@ -208,7 +511,10 @@ api.onShow((payload) => {
   });
 });
 
-window.addEventListener('mousemove', (e) => applyHover(pointToHit(e.clientX, e.clientY)));
+window.addEventListener('mousemove', (e) => {
+  if (mixerOpen()) return;                       // frozen while the volume card is up
+  applyHover(pointToHit(e.clientX, e.clientY));
+});
 
 /* ── selection ──────────────────────────────────────────────────────────────
    behavior.markingSelect (default ON) turns selection into a marking gesture:
@@ -218,6 +524,13 @@ window.addEventListener('mousemove', (e) => applyHover(pointToHit(e.clientX, e.c
    setting off, the legacy press-fires paths below run untouched. */
 window.addEventListener('mousedown', (e) => {
   if (e.button !== 0 || !built) return;
+  if (mixerOpen()) {
+    // The card owns the screen: a press outside it closes the card and dies
+    // there (the wheel gets its next press back); a press inside it belongs
+    // to the card's own sliders/buttons — never to the marking gesture.
+    if (!mixerHit(e)) closeMixer();
+    return;
+  }
   const hit = pointToHit(e.clientX, e.clientY);
   if (markingOn()) {
     markArmed = hit && hit.hub ? { hub: true } : (hit && hit.seg ? { seg: hit.seg } : { off: true });
@@ -235,12 +548,13 @@ window.addEventListener('mousedown', (e) => {
     // Folder plates branch (and collapse with a latch) instead of firing —
     // a folder executes nothing. Leaf children ride the same click path.
     if (built.flyout.isFolder(hit.seg) && nav && nav.toggle(hit.seg)) return;
-    api.clickSegment(hit.seg.item); // main hides the overlay + executes
+    fireSeg(hit.seg);
   }
 });
 
 window.addEventListener('mouseup', (e) => {
   if (e.button !== 0) return;
+  if (mixerOpen()) return;                    // release inside the card — no marking was armed anyway
   const press = markArmed;
   markArmed = null;
   if (!press || !built) return;                    // press-legacy mode, or no press ever armed
@@ -248,7 +562,7 @@ window.addEventListener('mouseup', (e) => {
   const releaseSeg = hit && hit.seg ? hit.seg : null;
   const verdict = decideMarking({ pressSeg: press.seg || null, releaseSeg, onHub: !!(hit && hit.hub) });
   if (verdict === 'fire' && releaseSeg) {
-    api.clickSegment(releaseSeg.item);             // main hides the overlay + executes
+    fireSeg(releaseSeg);                         // main hides the overlay + executes
   } else if (verdict === 'toggle' && releaseSeg) {
     // Folder plates (and main-resolved recents, which arrive as folders)
     // branch/collapse instead of firing — a container executes nothing.
@@ -263,6 +577,7 @@ window.addEventListener('mouseup', (e) => {
 // The payload is the full validated config, shipped fresh on every summon.
 window.addEventListener('contextmenu', (e) => {
   e.preventDefault();
+  if (mixerOpen()) { closeMixer(); return; }   // first right-click puts the card away
   const bh = lastPayload && lastPayload.config && lastPayload.config.behavior;
   if (!bh || bh.dismissOnRightClick !== false) api.dismiss();
 });
@@ -299,6 +614,7 @@ function selectSeg(i) {
   selIdx = ((i % segs.length) + segs.length) % segs.length;
   const seg = segs[selIdx];
   built.setHover(seg);
+  sound.hoverSeg(seg);   // the keyboard cursor ticks like the pointer does
   const rootG = document.querySelector('.wheel-root');
   if (rootG) rootG.classList.add('any-hover');
   rootEl.classList.add('has-hover');
@@ -328,6 +644,14 @@ function stepFilter(dir) {
 
 window.addEventListener('keydown', (e) => {
   if (!built || !document.hasFocus()) return;
+  if (mixerOpen()) {
+    // The card is up: the wheel's whole keyboard vocabulary stands down (the
+    // focused slider owns arrows; typing belongs to nobody). Esc closes the
+    // card first — main stood down on the wheel:filter flag so the key lands
+    // here; the next Esc, with the flag released, reaches main's dismiss.
+    if (e.key === 'Escape') { e.preventDefault(); closeMixer(); }
+    return;
+  }
   const segs = built.segments;
   if (!segs.length) return;
   if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
@@ -346,7 +670,7 @@ window.addEventListener('keydown', (e) => {
     // fires through the same ipc path the pointer uses. With a filter query
     // running, Enter fires the glued match (a folder match branches instead).
     if (built.flyout.isFolder(seg) && nav && nav.toggle(seg)) { selectSeg(selIdx); return; }
-    api.clickSegment(seg.item);
+    fireSeg(seg);
   } else if (e.key === 'Escape') {
     // A live query owns Esc: the first press clears it (main stands down via
     // the wheel:filter flag); once empty, the key reaches main's dismiss path.

@@ -6,6 +6,7 @@ const path = require('path');
 const { shell } = require('electron');
 const { spawn } = require('child_process');
 const macro = require('./macro');
+const audio = require('./audio');
 
 const ALIAS = {
   volup: 'volume_up', voldown: 'volume_down', taskmgr: 'task_manager',
@@ -16,7 +17,8 @@ const ALIAS = {
   snaplayouts: 'snap_layouts', rundialog: 'run_dialog', thispc: 'this_pc',
   controlpanel: 'control_panel', devicemgr: 'device_manager',
   windowsupdate: 'windows_update', installedapps: 'installed_apps',
-  defaultapps: 'default_apps', osk: 'screen_keyboard', signout: 'sign_out'
+  defaultapps: 'default_apps', osk: 'screen_keyboard', signout: 'sign_out',
+  setout: 'set_output_device', setin: 'set_input_device'
 };
 
 const CATALOG = [
@@ -32,6 +34,11 @@ const CATALOG = [
   { id: 'volume_up', label: 'Volume up', icon: '\uE995', group: 'Audio' },
   { id: 'volume_down', label: 'Volume down', icon: '\uE993', group: 'Audio' },
   { id: 'volume_mixer', label: 'Volume Mixer', icon: '\uE767', group: 'Audio' },
+  /* Device-bound actions: like `explorer`'s hasDir Folder box, the editor
+     surfaces a picker — here it lists the live audio endpoints of the given
+     flow and stores the chosen endpoint id in the item's `dir` field. */
+  { id: 'set_output_device', label: 'Set audio output device', icon: '\uE995', group: 'Audio', hasDevice: 'render' },
+  { id: 'set_input_device', label: 'Set audio input device', icon: '\uE720', group: 'Audio', hasDevice: 'capture' },
   { id: 'play_pause', label: 'Play / Pause', icon: '\uE9A1', group: 'Audio' },
   { id: 'next_track', label: 'Next track', icon: '\uE950', group: 'Audio' },
   { id: 'prev_track', label: 'Previous track', icon: '\uE950', group: 'Audio' },
@@ -161,6 +168,14 @@ function isShellVerb(s) {
   return /^shell:/i.test(t) || /^::\{[0-9a-f-]+\}/i.test(t);
 }
 
+/* A device-bound segment carries the endpoint id in `dir` (the same field the
+   explorer action uses for its folder — generic per-item payload). Throwing
+   routes the failure into the wheel's existing balloon path. */
+async function applyDefaultDevice(flow, dir) {
+  const got = audio.setDefaultDevice(flow, dir);
+  if (!got.ok) throw new Error(got.error || 'could not change the default audio device');
+}
+
 async function run(id, ctx = {}, opts = {}) {
   const key = ALIAS[String(id || '').toLowerCase()] || String(id || '').toLowerCase();
   switch (key) {
@@ -185,6 +200,11 @@ async function run(id, ctx = {}, opts = {}) {
     case 'next_track': return macro.sendVk(0xB0);
     case 'prev_track': return macro.sendVk(0xB1);
     case 'volume_mixer': return spawnDetached('sndvol.exe', []);
+    /* Device switches run in-process over COM (no SendInput, no spawned
+       child), so they stay out of KEY_ACTIONS — the overlay-hide focus wait
+       exists for injected keystrokes only. */
+    case 'set_output_device': return applyDefaultDevice('render', opts.dir);
+    case 'set_input_device': return applyDefaultDevice('capture', opts.dir);
     case 'task_manager': return spawnDetached('taskmgr.exe', []);
     // A user-picked folder opens directly; empty dir keeps the default view.
     case 'explorer': return openExplorer(opts.dir);

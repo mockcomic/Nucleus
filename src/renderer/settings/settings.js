@@ -179,6 +179,14 @@ async function persist() {
 
 /* -------------------------------- tabs ------------------------------------ */
 const tabBtns = [...document.querySelectorAll('.tab-btn')];
+/* Set by wireAdvanced(): the Usage panel re-reads its counts every time the
+   tab is opened, so the numbers never go stale behind the user's back. */
+let onAdvancedTab = null;
+/* Set by wireAudio(): opening the Audio tab (re)loads devices/levels/sessions
+   and arms the live poll; leaving it — or the window hiding — stops that poll,
+   so nothing runs in the background while the user is anywhere else. */
+let onAudioTab = null;
+let audioTabLeaveHook = null;      // set by wireAudio(): stopAudioPoll
 function selectTab(b, focus = false) {
   tabBtns.forEach((x) => {
     x.classList.toggle('active', x === b);
@@ -190,6 +198,9 @@ function selectTab(b, focus = false) {
   panel.classList.remove('hidden');
   panel.setAttribute('role', 'tabpanel');
   panel.setAttribute('aria-labelledby', 'tabbtn-' + b.dataset.tab);
+  if (b.dataset.tab === 'advanced' && onAdvancedTab) { try { onAdvancedTab(); } catch { /* a stale panel must never block tabbing */ } }
+  if (b.dataset.tab === 'audio' && onAudioTab) { try { onAudioTab(); } catch { /* ditto */ } }
+  if (b.dataset.tab !== 'audio' && audioTabLeaveHook) { try { audioTabLeaveHook(); } catch { /* stop failed, timer will self-cancel */ } }
   if (focus) b.focus();
 }
 tabBtns.forEach((b) => {
@@ -274,16 +285,55 @@ function ensureAllIcons() {
 }
 
 /* ------------------------------- segments --------------------------------- */
-const TYPE_OPTIONS = [
-  ['app', 'app — launch program'], ['url', 'url — open link'], ['file', 'file — open file'],
-  ['command', 'command — shell command / script'], ['macro', 'macro — keystrokes'], ['sys', 'sys — Windows action'],
-  ['folder', 'folder — sub-menu that branches on hover'],
-  ['recent', 'recent — auto-filled fan of your most-used segments']
-];
+/* The type vocabulary the user sees. The config keeps the raw type words
+   (app, url, sys …); every USER-FACING string is the plain-English form:
+   `menu` in the Type dropdown — grouped, so the power-user types (shell
+   commands, the macro DSL) sit out of a beginner's way instead of leading
+   the list — and `chip` on the collapsed row (raw `app`/`sys` strings read
+   like an error log to a non-tech person). */
+const TYPE_META = {
+  app:     { chip: 'program',    menu: 'Open a program', group: 0 },
+  url:     { chip: 'website',    menu: 'Open a website', group: 0 },
+  file:    { chip: 'file',       menu: 'Open a file', group: 0 },
+  sys:     { chip: 'Windows',    menu: 'Windows action — lock, volume, Explorer…', group: 0 },
+  mixer:   { chip: 'mixer',      menu: 'App volume mixer — flyout with quick sliders', group: 0 },
+  setting: { chip: 'app toggle', menu: 'Flip one of Radial Wheel\u2019s own switches', group: 0 },
+  folder:  { chip: 'folder',     menu: 'Folder — sub-menu that branches on hover', group: 1 },
+  recent:  { chip: 'recents',    menu: 'Recents — fills itself with your most-used segments', group: 1 },
+  command: { chip: 'command',    menu: 'Run a command or script — for power users', group: 2 },
+  macro:   { chip: 'keystrokes', menu: 'Type or click for you (macro) — for power users', group: 2 }
+};
+const TYPE_GROUP_LABELS = ['Everyday actions', 'Organize the wheel', 'Power user'];
+
+function typeChip(t) { return (TYPE_META[t] || {}).chip || t; }
+function typeMenuLabel(t) { return (TYPE_META[t] || {}).menu || t; }
+
+/* The old flat TYPE_OPTIONS put 'command — shell command / script' one slot
+   from 'app — launch program'; the dropdown now renders TYPE_META through
+   the groups above. */
+function fillTypeSelect(selType, current) {
+  const groups = TYPE_GROUP_LABELS.map(() => null);
+  for (const t of Object.keys(TYPE_META)) {
+    const g = TYPE_META[t].group;
+    if (!groups[g]) groups[g] = el('optgroup', null, { label: TYPE_GROUP_LABELS[g] }, selType);
+    el('option', null, { value: t, text: TYPE_META[t].menu }, groups[g]);
+  }
+  // A config can carry a type the UI no longer lists (hand-edited, or from an
+  // older build) — keep it selectable so the select never lies about the
+  // stored value.
+  if (current && !Object.prototype.hasOwnProperty.call(TYPE_META, current)) {
+    el('optgroup', null, { label: 'Other' }, selType)
+      .appendChild(el('option', null, { value: current, text: current }));
+  }
+}
+
+/* Reserved iconImage key for the app's own wheel artwork (mirrors
+   icon-gen's APP_ICON_KEY — the renderer cannot require the main module). */
+const APP_ICON_IMAGE_KEY = 'builtin:app';
 
 /* What goes in the value box, per type — a single "Target" label asked the user
    to guess; each type now names its own parameter. */
-const TARGET_LABELS = { app: 'Program', url: 'Link', file: 'File', command: 'Command', macro: 'Keys', sys: 'Action' };
+const TARGET_LABELS = { app: 'Program', url: 'Link', file: 'File', command: 'Command', macro: 'Keys', sys: 'Action', setting: 'Setting' };
 
 /* Browse… dialogs per type (title + file filters passed to the main process). */
 const BROWSE_OPTS = {
@@ -374,7 +424,9 @@ function removeRing(ring) {
   });
 }
 
-const GUARDED_TYPES = new Set(['command', 'macro', 'sys']);
+/* Previewing these can affect the machine or the app itself — a setting fire
+   really mutates the live config — so Play arms on the first click. */
+const GUARDED_TYPES = new Set(['command', 'macro', 'sys', 'setting']);
 
 /* Row + editor work on an OWNER ARRAY, not a ring key, so the same component
    renders ring segments (depth 0, owner = cfg.rings[ring]) and folder children
@@ -412,9 +464,11 @@ function segRow(ctx) {
   el('span', 'g', { text: '\uE70D' }, disc);   // ChevronDown
 
   const icoSpan = el('span', 'seg-ico', {}, main);
-  registerIconSpan(icoSpan, item, item.icon || (item.type === 'folder' ? '\uE838' : item.type === 'recent' ? '\uE823' : item.type === 'sys' ? '\uE713' : '\uE76C'));
+  registerIconSpan(icoSpan, item, item.icon || (item.type === 'folder' ? '\uE838' : item.type === 'recent' ? '\uE823' : item.type === 'mixer' ? '\uE767' : item.type === 'sys' || item.type === 'setting' ? '\uE713' : '\uE76C'));
   el('span', 'seg-name', { text: item.label || '(no name)' }, main);
-  el('span', 'seg-type', { text: item.type }, main);
+  // Friendly chip (program/website/Windows…) — the raw type word only survives
+  // as the tooltip and as the fallback for types the UI does not list.
+  el('span', 'seg-type', { text: typeChip(item.type), title: typeMenuLabel(item.type) }, main);
   el('span', 'seg-val', { text: rowValueText(item) }, main);
 
   const acts = el('div', 'seg-actions', {}, main);
@@ -459,9 +513,9 @@ function segRow(ctx) {
   el('span', 'act-sep', { 'aria-hidden': 'true' }, acts);
   // Play can fire arbitrary shell commands, injected keystrokes, or lock/sleep
   // — those require a deliberate second click, not a slip from Delete.
-  if (item.type !== 'folder' && item.type !== 'recent') {
-    // A folder/recents container executes nothing (main refuses them too) —
-    // no Play affordance to dangle.
+  if (item.type !== 'folder' && item.type !== 'recent' && item.type !== 'mixer') {
+    // A folder/recents/mixer container executes nothing (main refuses them
+    // too) — no Play affordance to dangle.
     let armed = false, armTimer = null;
     const runBtn = mini('\uE9A1', 'Try this action now', async () => {   // Play — E768 renders the catalog's Mic glyph
       if (GUARDED_TYPES.has(item.type) && !armed) {
@@ -543,7 +597,9 @@ function sysEntry(id) {
    trailing separators never reach the caption. */
 function sysDisplayText(item) {
   const label = sysLabel(item.value);
-  if (item.dir && (sysEntry(item.value) || {}).hasDir) {
+  const ent = sysEntry(item.value) || {};
+  if (item.dir && ent.hasDevice) return `${label} — ${audioDeviceLabel(item.dir)}`;
+  if (item.dir && ent.hasDir) {
     const leaf = String(item.dir).trim().replace(/^["']+|["']+$/g, '')
       .replace(/[\\/]+$/, '').split(/[\\/]/).pop();
     if (leaf) return `${label} — ${leaf}`;
@@ -560,12 +616,55 @@ function rowValueText(item) {
     return n ? `${n} segment${n === 1 ? '' : 's'} inside` : 'empty sub-menu';
   }
   if (item.type === 'sys') return sysDisplayText(item);
-  if (item.type === 'recent') return 'fills itself from your most-used segments';
+  if (item.type === 'recent') return 'fills itself from your most-recently-used segments';
+  if (item.type === 'mixer') return 'volume-mixer flyout — master + per-app sliders on the wheel';
+  if (item.type === 'setting') return settingLabel(item.value);
   if (item.type === 'app' && String(item.args || '').trim()) return item.value + '  ' + String(item.args).trim();
   return item.value;
 }
 
 let sysCatalogCache = null;
+
+/* type: 'setting' — catalog of app parameters, loaded from main beside
+   sysCatalogCache at boot. One entry per toggle; ids match main's
+   appsettings.js gate (execution refuses anything outside it). */
+let appSettingsCatalogCache = null;
+
+/* ---------------- audio endpoint caches (shared by the Audio tab and the
+   segment editor's device picker) -------------------------------------------
+   Lists come from main's Core Audio module; names are cached by endpoint id
+   so a bound segment can still show "Headphones" as its caption after the
+   user moves on. The caches are per-flow and lazy — cold until first asked. */
+const audioDeviceCache = { render: null, capture: null };
+const audioDeviceNames = new Map();          // endpoint id -> friendly name
+
+async function loadAudioDevices(flow, force = false) {
+  if (audioDeviceCache[flow] && !force) return audioDeviceCache[flow];
+  const r = await safe(() => api.audioDevices(flow));
+  const list = (r && r.ok && Array.isArray(r.devices)) ? r.devices : [];
+  list.forEach((d) => { if (d && d.id) audioDeviceNames.set(d.id, d.name || d.id); });
+  audioDeviceCache[flow] = list;
+  return list;
+}
+
+/* Caption for a bound endpoint id when the cache is cold: the id's own tail,
+   mirroring main's fallbackName so the two never disagree on junk. */
+function audioDeviceLabel(id) {
+  const hit = audioDeviceNames.get(id);
+  if (hit) return hit;
+  const s = String(id || '');
+  const tail = s.includes('::') ? s.slice(s.lastIndexOf('::') + 2) : s;
+  return (tail.replace(/[{}]/g, '') || s).slice(0, 60);
+}
+
+function settingEntry(id) {
+  return (appSettingsCatalogCache || []).find((x) => x.id === id) || null;
+}
+
+function settingLabel(id) {
+  const c = settingEntry(id);
+  return c ? c.label : id;
+}
 
 function segEditor(ctx, withFields = true) {
   const { owner, item, key, depth } = ctx;
@@ -612,7 +711,7 @@ function segEditor(ctx, withFields = true) {
 
   const cType = field('Type', uid + '-type');
   const selType = el('select', null, { id: uid + '-type' }, cType);
-  for (const [v, t] of TYPE_OPTIONS) el('option', null, { value: v, text: t }, selType);
+  fillTypeSelect(selType, item.type);
   selType.value = item.type;
   selType.addEventListener('change', () => {
     const oldType = item.type;
@@ -632,13 +731,29 @@ function segEditor(ctx, withFields = true) {
       item.dir = '';
       item.children = [];                            // main fills the fan at summon time
       if (!item.icon && !item.iconImage) item.icon = '\uE823';   // history-clock glyph
-    } else if (oldType === 'folder' || oldType === 'recent') {
+    } else if (item.type === 'mixer') {
+      item.value = '';
+      item.args = '';
+      item.dir = '';
+      item.children = [];                            // the card is built live from Core Audio — nothing stored
+      if (!item.icon && !item.iconImage) item.icon = '\uE767';   // volume-mixer glyph
+    } else if (oldType === 'folder' || oldType === 'recent' || oldType === 'mixer') {
       item.children = [];                            // the sub-menu slot is container-only
     } else if (item.type === 'sys') {
       if (!(sysCatalogCache || []).some((c) => c.id === item.value)) {
         item.value = (sysCatalogCache && sysCatalogCache[0] && sysCatalogCache[0].id) || '';
       }
-    } else if (oldType === 'sys') {
+    } else if (item.type === 'setting') {
+      // The setting id reuses the value slot; sys and setting ids never
+      // overlap, so a carried-over id simply fails the membership test.
+      item.args = '';
+      item.dir = '';
+      if (!(appSettingsCatalogCache || []).some((c) => c.id === item.value)) {
+        item.value = (appSettingsCatalogCache && appSettingsCatalogCache[0] && appSettingsCatalogCache[0].id) || '';
+      }
+      // Setting segments wear the app's own icon — unless the user already chose art.
+      if (!item.icon && !item.iconImage) item.iconImage = APP_ICON_IMAGE_KEY;
+    } else if (oldType === 'sys' || oldType === 'setting') {
       item.value = '';
       item.dir = '';                                 // the folder slot is sys-only
     } else if (oldType === 'app') {
@@ -655,8 +770,13 @@ function segEditor(ctx, withFields = true) {
   } else if (item.type === 'recent') {
     const cAuto = field('Contents');
     el('div', 'f-hint', {
-      text: 'Fills itself at every wheel opening with your most-used segments — the count is set in Hotkey & Behavior. Nothing to edit here; clicks inside the fan run the real segments.'
+      text: 'Fills itself at every wheel opening with your most-recently-used segments — the count is set in Hotkey & Behavior. Nothing to edit here; clicks inside the fan run the real segments.'
     }, cAuto);
+  } else if (item.type === 'mixer') {
+    const cMix = field('Contents');
+    el('div', 'f-hint', {
+      text: 'Clicking this segment pops a volume flyout beside the wheel — master output, microphone, and a slider for every app that is playing audio. Nothing is launched and nothing to configure; Esc or a click outside closes the card, and it reads live levels fresh at every opening.'
+    }, cMix);
   } else if (item.type === 'sys') {
     const cTarget = field(TARGET_LABELS.sys, uid + '-target');
     sysActionCombo(item, cTarget, `${uid}-list`, syncRowText);
@@ -678,6 +798,45 @@ function segEditor(ctx, withFields = true) {
         text: 'The folder File Explorer opens in — paths with spaces, %VARIABLES%, ~/Name, or a shell: verb. Empty opens the default view.'
       });
     }
+    /* hasDevice (set_output_device / set_input_device): the same `dir` field,
+       filled from the live endpoint list instead of free text. A bound id
+       that's no longer present (unplugged device) keeps a visible orphan row
+       so the segment never silently points at nothing. */
+    const devEnt = sysEntry(item.value) || {};
+    if (devEnt.hasDevice) {
+      const flow = devEnt.hasDevice === 'capture' ? 'capture' : 'render';
+      const cDev = field('Audio device', uid + '-dev');
+      const selDev = el('select', null, { id: uid + '-dev', 'aria-label': 'Audio device this segment switches to' }, cDev);
+      const fillDev = (devices) => {
+        selDev.innerHTML = '';
+        el('option', null, { text: '(pick a device…)', value: '' }, selDev);
+        const orphan = item.dir && !devices.some((d) => d.id === item.dir);
+        if (orphan) el('option', null, { text: '(unplugged — re-pick) ' + audioDeviceLabel(item.dir), value: item.dir }, selDev);
+        devices.forEach((d) => el('option', null, { text: d.name + (d.isDefault ? '  ·  system default' : ''), value: d.id }, selDev));
+        selDev.value = item.dir || '';
+      };
+      fillDev(audioDeviceCache[flow] || []);
+      if (!audioDeviceCache[flow]) loadAudioDevices(flow).then((ds) => { if (selDev.isConnected) fillDev(ds); });
+      const devRg = el('button', 'btn small', { title: 'Reload the device list', 'aria-label': 'Reload the device list' }, cDev);
+      el('span', 'g', { text: '\uE72C' }, devRg);   // Refresh
+      devRg.addEventListener('click', async (ev) => {
+        ev.stopPropagation();
+        const ds = await loadAudioDevices(flow, true);
+        if (selDev.isConnected) fillDev(ds);
+      });
+      selDev.addEventListener('change', () => { item.dir = selDev.value; syncRowText(); touch(false); });
+      hint({
+        text: devEnt.hasDevice === 'capture'
+          ? 'Firing this segment makes that microphone the system default input — the same choice Windows sound settings offers.'
+          : 'Firing this segment makes that speaker or headphone the system default output — the same choice Windows sound settings offers.'
+      });
+    }
+  } else if (item.type === 'setting') {
+    const cTarget = field(TARGET_LABELS.setting, uid + '-target');
+    settingActionCombo(item, cTarget, `${uid}-list`, syncRowText);
+    hint({
+      text: 'Firing this segment flips that switch on the spot — the same as changing it under Hotkey & Behavior. The segment wears the app icon.'
+    });
   } else {
     const cTarget = field(TARGET_LABELS[item.type] || 'Target', uid + '-target');
     const inV = bind(el('input', null, { type: 'text', value: item.value, placeholder: valueHint(item.type), id: uid + '-target' }), (e) => item.value = e.value);
@@ -708,6 +867,10 @@ function segEditor(ctx, withFields = true) {
       });
     }
     if (item.type === 'app') appCombo(item, inV, f);
+    // The macro DSL ('ctrl+c, wait=0.2, hold=f15=1.5') was the one wall between
+    // a non-tech person and this tab — the helper builds correct steps; the
+    // raw Keys box stays fully editable for power users.
+    if (item.type === 'macro') macroBuilder(item, f, inV, syncRowText);
   }
 
   const cIcon = field('Icon');
@@ -716,7 +879,9 @@ function segEditor(ctx, withFields = true) {
   const pick = el('button', 'btn small', { text: 'Choose…' }, cIcon);
   pick.onclick = () => openIconModal(item, pick);
   const clr = el('button', 'btn small glyph', { text: '\uE894', title: 'Clear icon', 'aria-label': 'Clear icon' }, cIcon);
-  clr.onclick = () => { item.icon = ''; renderSegments(); touch(); };
+  // Clears BOTH slots — with the setting type auto-assigning the app image,
+  // a glyph-only clear would leave the segment looking un-clearable.
+  clr.onclick = () => { item.icon = ''; item.iconImage = ''; renderSegments(); touch(); };
 
   const cColor = field('Color');
   const chkAuto = el('input', null, { type: 'checkbox' }, cColor);
@@ -777,6 +942,179 @@ function segEditor(ctx, withFields = true) {
     makeDupButton(box, owner, MAX_CHILDREN, item, `A sub-menu holds at most ${MAX_CHILDREN} segments`);
   }
   return f;
+}
+
+/* --------------------------- macro step helper -----------------------------
+   Guided builder for the `macro` Keys box. The wire format is main/macro.js's
+   grammar (see the step-grammar block there); this UI only ever EMITS valid
+   steps — the same bounds main enforces at execution (wait ≤ 5 s, scroll ≤ 25
+   notches, repeat ≤ 20, spec ≤ 2048 chars, ≤ 128 steps) are enforced here so
+   the user learns about a mistake at build time, not fire time. The raw Keys
+   box remains the single source of truth: chips render it, add/delete write
+   it, and free typing in it is never blocked. */
+const MACRO_MAX_SPEC = 2048, MACRO_MAX_STEPS = 128, MACRO_MAX_REPEAT = 20, MACRO_MAX_SCROLL = 25;
+
+const MACRO_STEP_KINDS = [
+  ['keys',   'Press keys (Ctrl+C, F1…)'],
+  ['click',  'Mouse click'],
+  ['wait',   'Pause'],
+  ['scroll', 'Scroll the wheel'],
+  ['hold',   'Hold a key down'],
+  ['type',   'Type text'],
+  ['repeat', 'Repeat a step']
+];
+const MACRO_CLICK_STEPS = [
+  ['click', 'Left click'], ['rclick', 'Right click'], ['mclick', 'Middle click'],
+  ['dblclick', 'Double click'], ['back', 'Browser back'], ['forward', 'Browser forward']
+];
+
+/* Top-level comma split. `type:` consumes the rest of the spec (must be last),
+   so once one is found everything after it belongs to that step. */
+function splitMacroSteps(spec) {
+  const raw = String(spec || '').trim();
+  if (!raw) return [];
+  const parts = raw.split(',');
+  for (let i = 0; i < parts.length; i++) {
+    if (/^\s*type:/i.test(parts[i])) {
+      const tail = parts.slice(i).join(',');
+      return i ? parts.slice(0, i).concat(tail) : [tail];
+    }
+  }
+  return parts;
+}
+
+const RESERVED_STEP = /^(?:wait|hold|repeat|scroll|wheel)\s*[=:]|^type\s*:/i;
+const looksTyped = (s) => /^\s*type\s*:/i.test(s);
+
+function macroBuilder(item, f, inV, syncRowText) {
+  el('label', 'f-label', { text: 'Steps' }, f);
+  const ctl = el('div', 'f-ctl macro-steps', {}, f);
+  const list = el('div', 'ms-list', {}, ctl);
+  const builder = el('div', 'ms-builder', {}, ctl);
+
+  const commit = (steps) => {
+    item.value = steps.join(', ');
+    inV.value = item.value;
+    syncRowText();
+    touch(false);
+    renderChips();
+  };
+  const renderChips = () => {
+    const steps = splitMacroSteps(item.value);
+    list.innerHTML = '';
+    if (!steps.length) {
+      el('div', 'ms-empty', { text: 'Nothing yet — pick a step below and press Add. Steps run top to bottom.' }, list);
+    }
+    steps.forEach((s, i) => {
+      const chip = el('span', 'ms-chip', {}, list);
+      el('span', 'ms-n', { text: String(i + 1) }, chip);
+      el('span', 'ms-t', { text: s.trim() || '(empty)' }, chip);
+      const x = el('button', 'ms-x', { type: 'button', text: '×', title: 'Remove this step', 'aria-label': `Remove step ${i + 1}` }, chip);
+      x.onclick = (e) => { e.stopPropagation(); const a = splitMacroSteps(item.value); a.splice(i, 1); commit(a); };
+    });
+  };
+
+  const kindSel = el('select', null, { 'aria-label': 'Step type' }, builder);
+  for (const [v, t] of MACRO_STEP_KINDS) el('option', null, { value: v, text: t }, kindSel);
+  const params = el('span', 'ms-params', {}, builder);
+  const addBtn = el('button', 'btn small', { type: 'button', text: 'Add' }, builder);
+  addBtn.onclick = () => { /* replaced per step kind by buildParams */ };
+
+  // One fresh set of parameter controls per step kind — cheap to rebuild, and
+  // it keeps every kind's validation local to its own maker.
+  const num = (v, min, max, step = 'any') => el('input', null, { type: 'number', value: String(v), min: String(min), max: String(max), step, 'aria-label': 'Amount' });
+  const txt = (ph, aria) => el('input', null, { type: 'text', placeholder: ph, 'aria-label': aria, spellcheck: 'false' });
+
+  const addStep = (step) => {
+    const steps = splitMacroSteps(item.value);
+    if (steps.length >= MACRO_MAX_STEPS) { toast(`A macro holds at most ${MACRO_MAX_STEPS} steps`, true); return; }
+    if (steps.length && looksTyped(steps[steps.length - 1])) {
+      toast('Typed text swallows everything after it — remove the “Type text” step first', true);
+      return;
+    }
+    if (looksTyped(step) && steps.some(looksTyped)) {
+      toast('A macro can only type text once — it must be the last step', true);
+      return;
+    }
+    const next = steps.concat(step).join(', ');
+    if (next.length > MACRO_MAX_SPEC) { toast('This macro is getting too long — shorten a step or start a new one', true); return; }
+    commit(steps.concat(step));
+  };
+
+  const buildParams = () => {
+    params.innerHTML = '';
+    const kind = kindSel.value;
+    const focusFirst = () => { const inp = params.querySelector('input, select'); if (inp) inp.focus(); };
+    if (kind === 'keys') {
+      const inK = txt('ctrl+shift+t', 'Keys pressed together');
+      params.appendChild(inK);
+      addBtn.onclick = () => {
+        const v = inK.value.trim();
+        if (!v) { toast('Type the keys first — for example ctrl+shift+t', true); return; }
+        if (v.includes(',') || v.includes('=') || RESERVED_STEP.test(v)) { toast('That mixes in another step type — press one key combo, or pick the right step below', true); return; }
+        addStep(v); focusFirst();
+      };
+    } else if (kind === 'click') {
+      const sel = el('select', null, { 'aria-label': 'Click type' }, params);
+      for (const [v, t] of MACRO_CLICK_STEPS) el('option', null, { value: v, text: t }, sel);
+      addBtn.onclick = () => addStep(sel.value);
+    } else if (kind === 'wait') {
+      const n = num(0.5, 0, 5, 0.1); params.appendChild(n);
+      el('span', 'ms-unit', { text: 'sec' }, params);
+      addBtn.onclick = () => {
+        const v = parseFloat(n.value);
+        if (!Number.isFinite(v) || v < 0) { toast('Enter a pause in seconds — e.g. 0.5', true); return; }
+        addStep('wait=' + Math.min(5, Math.round(v * 100) / 100)); focusFirst();
+      };
+    } else if (kind === 'scroll') {
+      const n = num(3, -MACRO_MAX_SCROLL, MACRO_MAX_SCROLL, 1); params.appendChild(n);
+      el('span', 'ms-unit', { text: 'clicks down (negative = up)' }, params);
+      addBtn.onclick = () => {
+        const v = Math.round(parseFloat(n.value));
+        if (!Number.isFinite(v) || v === 0) { toast('Enter how far to scroll — e.g. 3, or -2 for up', true); return; }
+        if (Math.abs(v) > MACRO_MAX_SCROLL) { toast(`Scroll is capped at ${MACRO_MAX_SCROLL} clicks`, true); return; }
+        addStep('scroll=' + v); focusFirst();
+      };
+    } else if (kind === 'hold') {
+      const inK = txt('f15', 'Keys to hold'); params.appendChild(inK);
+      const n = num(1.5, 0.05, 5, 0.05); params.appendChild(n);
+      el('span', 'ms-unit', { text: 'sec' }, params);
+      addBtn.onclick = () => {
+        const v = inK.value.trim();
+        const s = parseFloat(n.value);
+        if (!v || v.includes(',') || v.includes('=') || RESERVED_STEP.test(v)) { toast('Enter the key or combo to hold — e.g. f15 or ctrl+c', true); return; }
+        if (!Number.isFinite(s) || s <= 0) { toast('Enter how long to hold, in seconds — e.g. 1.5', true); return; }
+        addStep(`hold=${v}=${Math.min(5, Math.round(s * 100) / 100)}`); focusFirst();
+      };
+    } else if (kind === 'type') {
+      const inT = txt('hello world', 'Text to type'); params.appendChild(inT);
+      addBtn.onclick = () => {
+        const v = inT.value;
+        if (!v) { toast('Type the text first', true); return; }
+        addStep('type:' + v);
+      };
+    } else if (kind === 'repeat') {
+      const n = num(3, 1, MACRO_MAX_REPEAT, 1); params.appendChild(n);
+      el('span', 'ms-unit', { text: '×' }, params);
+      const inS = txt('ctrl+v', 'Step to repeat'); params.appendChild(inS);
+      addBtn.onclick = () => {
+        const c = Math.round(parseFloat(n.value));
+        const s = inS.value.trim();
+        if (!Number.isFinite(c) || c < 1) { toast('How many times? — e.g. 3', true); return; }
+        if (c > MACRO_MAX_REPEAT) { toast(`A step can repeat at most ${MACRO_MAX_REPEAT} times`, true); return; }
+        if (!s) { toast('Enter the step to repeat — e.g. ctrl+v', true); return; }
+        if (/^(?:wait\s*=|repeat\s*[=:]|type\s*:)/i.test(s)) { toast('Pauses, typed text and repeats can’t themselves be repeated', true); return; }
+        addStep(`repeat=${c}:${s}`); focusFirst();
+      };
+    }
+  };
+  kindSel.addEventListener('change', () => { buildParams(); });
+  buildParams();
+  renderChips();
+
+  el('div', 'f-hint', {
+    text: 'Mouse steps click wherever the cursor ends up once the wheel closes — usually the spot the wheel covered. The Keys box stays editable for anything the helper doesn’t cover.'
+  }, f);
 }
 
 /* One Duplicate button for both placement levels. Cap + toast text vary
@@ -1038,32 +1376,29 @@ function appCombo(item, inV, f) {
   scanBtn.addEventListener('mousedown', (ev) => { ev.preventDefault(); ensureLoaded(true); showList(); search.focus(); });
 }
 
-/* ---------------- sys action searchable dropdown (type: sys) --------------
-   Same shape as appCombo: search input + ▾ button + .combo-list popup. The
-   catalog is small and fully in-memory, so there is no scan/cache — the list
-   renders instantly, grouped with headers and the action's own glyph. The
-   input is a display field, not free text: blur always restores it to the
-   selected action, and only a pick from the list writes item.value. */
-function sysComboText(c) {
-  return c ? `${c.label}  ·  ${c.group}` : '';
-}
-
-function sysActionCombo(item, cTarget, listId, syncRowText) {
+/* ---------------- catalog searchable dropdowns (sys / setting) ------------
+    Same shape as appCombo: search input + ▾ button + .combo-list popup. The
+    catalogs are small and fully in-memory, so there is no scan/cache — the
+    list renders instantly, grouped with headers and each entry's own glyph.
+    The input is a display field, not free text: blur always restores it to
+    the selected entry, and only a pick from the list writes item.value.
+    catalogCombo is shared; the two wrappers differ only in data source,
+    wording, and onPick side effects (sys's Folder field). */
+function catalogCombo(item, cTarget, listId, syncRowText, o) {
   const host = el('div', 'combo-host', {}, cTarget);
   const search = el('input', null, {
-    type: 'text', placeholder: 'Search actions…  (▾ opens the full list)',
-    'aria-label': 'Search Windows actions', role: 'combobox', 'aria-autocomplete': 'list',
+    type: 'text', placeholder: o.placeholder,
+    'aria-label': o.aria, role: 'combobox', 'aria-autocomplete': 'list',
     'aria-controls': listId, autocomplete: 'off', spellcheck: 'false'
   }, host);
-  search.value = sysComboText(sysEntry(item.value));
-  const ddBtn = el('button', 'btn small', { type: 'button', title: 'Show all actions', 'aria-label': 'Show all actions' }, host);
+  search.value = o.text(o.entry(item.value));
+  const ddBtn = el('button', 'btn small', { type: 'button', title: o.title, 'aria-label': o.title }, host);
   el('span', 'g', { text: '\uE70D' }, ddBtn);   // ChevronDown
-  const list = el('div', 'combo-list hidden', { id: listId, role: 'listbox', 'aria-label': 'Windows actions' }, host);
+  const list = el('div', 'combo-list hidden', { id: listId, role: 'listbox', 'aria-label': o.aria }, host);
 
   let rows = [];
   let active = -1;
   let hideTimer = null;
-  const hasDir = (id) => !!(sysEntry(id) || {}).hasDir;
 
   function match(c, q) {
     const hay = `${c.label} ${c.group} ${c.id}`.toLowerCase();
@@ -1076,10 +1411,10 @@ function sysActionCombo(item, cTarget, listId, syncRowText) {
     const q = useQuery ? search.value.trim().toLowerCase() : '';
     list.innerHTML = ''; rows = []; active = -1;
     search.removeAttribute('aria-activedescendant');
-    const all = sysCatalogCache || [];
+    const all = o.entries();
     const shown = q ? all.filter((c) => match(c, q)) : all;
     if (!shown.length) {
-      el('div', 'combo-empty muted', { text: `No action matches “${search.value.trim()}”` }, list);
+      el('div', 'combo-empty muted', { text: `No ${o.noun} matches “${search.value.trim()}”` }, list);
       fitComboList(list);
       return;
     }
@@ -1090,7 +1425,7 @@ function sysActionCombo(item, cTarget, listId, syncRowText) {
         el('div', 'combo-grp', { text: c.group, role: 'presentation' }, list);
       }
       const r = el('div', 'combo-row combo-sys', { role: 'option', 'aria-selected': 'false', id: `${listId}-opt-${idx}` }, list);
-      el('span', 'g cs-ico', { text: c.icon || '\uE713' }, r);
+      el('span', 'g cs-ico', { text: c.icon || o.iconDefault }, r);
       el('span', 'cr-name', { text: c.label }, r);
       if (c.id === item.value) r.classList.add('selected');
       r.addEventListener('mousedown', (ev) => { ev.preventDefault(); pick(c); });
@@ -1101,16 +1436,13 @@ function sysActionCombo(item, cTarget, listId, syncRowText) {
   }
 
   function pick(c) {
-    const wasDir = hasDir(item.value);
-    item.value = c.id;
-    const isDir = hasDir(c.id);
-    if (!isDir) item.dir = '';                       // folder slot belongs to explorer only
-    search.value = sysComboText(c);
+    const needsRerender = o.onPick(c, item) === true;
+    search.value = o.text(o.entry(item.value));
     list.classList.add('hidden');
     syncRowText();
-    // The Folder field appears/vanishes with the action — rebuild the editor
-    // (touch()) so it stays in sync; otherwise save without a rerender.
-    if (isDir !== wasDir) touch(); else touch(false);
+    // A side field appearing/vanishing (the sys Folder box) needs the editor
+    // rebuilt (touch()); otherwise save without a rerender.
+    if (needsRerender) touch(); else touch(false);
   }
 
   function setActive(i) {
@@ -1132,7 +1464,7 @@ function sysActionCombo(item, cTarget, listId, syncRowText) {
     clearTimeout(hideTimer);
     hideTimer = setTimeout(() => {
       list.classList.add('hidden');
-      search.value = sysComboText(sysEntry(item.value));  // a typed query is never the value
+      search.value = o.text(o.entry(item.value));        // a typed query is never the value
     }, 180);
   });
   search.addEventListener('keydown', (ev) => {
@@ -1149,9 +1481,9 @@ function sysActionCombo(item, cTarget, listId, syncRowText) {
       if (hit) { ev.preventDefault(); hit.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); }
     } else if (ev.key === 'Escape') {
       if (!list.classList.contains('hidden')) {
-        ev.stopPropagation();                          // close the dropdown, not the editor
+        ev.stopPropagation();                            // close the dropdown, not the editor
         list.classList.add('hidden');
-        search.value = sysComboText(sysEntry(item.value));
+        search.value = o.text(o.entry(item.value));
       }
     }
   });
@@ -1163,12 +1495,58 @@ function sysActionCombo(item, cTarget, listId, syncRowText) {
   });
 }
 
+function sysComboText(c) {
+  return c ? `${c.label}  ·  ${c.group}` : '';
+}
+
+function sysActionCombo(item, cTarget, listId, syncRowText) {
+  // The `dir` field serves two namespaces: explorer's folder and the audio
+  // actions' endpoint id. Both are owned by the chosen action alone — a swap
+  // between (or out of) them must wipe the field, never carry junk across.
+  const ownsDir = (id) => { const c = sysEntry(id) || {}; return !!(c.hasDir || c.hasDevice); };
+  catalogCombo(item, cTarget, listId, syncRowText, {
+    entries: () => sysCatalogCache || [],
+    text: sysComboText,
+    entry: (id) => sysEntry(id),
+    placeholder: 'Search actions…  (▾ opens the full list)',
+    aria: 'Windows actions',
+    title: 'Show all actions',
+    noun: 'action',
+    iconDefault: '\uE713',
+    onPick: (c, it) => {
+      const prev = sysEntry(it.value) || {};
+      it.value = c.id;
+      const next = sysEntry(c.id) || {};
+      const was = !!(prev.hasDir || prev.hasDevice);
+      const is = !!(next.hasDir || next.hasDevice);
+      if (!is) it.dir = '';                                   // the slot belongs to no one
+      else if (was && (prev.hasDevice !== next.hasDevice || prev.hasDir !== next.hasDir)) it.dir = '';
+      return is !== was;                                      // side field appeared/vanished
+    }
+  });
+}
+
+function settingActionCombo(item, cTarget, listId, syncRowText) {
+  catalogCombo(item, cTarget, listId, syncRowText, {
+    entries: () => appSettingsCatalogCache || [],
+    text: sysComboText,
+    entry: (id) => settingEntry(id),
+    placeholder: 'Search app settings…  (▾ opens the full list)',
+    aria: 'App settings',
+    title: 'Show all settings',
+    noun: 'setting',
+    iconDefault: '\uE713',
+    onPick: (c, it) => { it.value = c.id; return false; }
+  });
+}
+
 function valueHint(type) {
   return {
     app: 'notepad.exe  or  C:\\Path\\to\\app.exe',
     args: '--flag  "C:\\path with space"',
     url: 'https://…', file: 'C:\\Path\\to\\file.pdf',
-    command: 'taskkill /f /im foo.exe   or   C:\\Scripts\\cleanup.bat', macro: 'ctrl+c, wait=0.2, ctrl+v'
+    command: 'taskkill /f /im foo.exe   or   C:\\Scripts\\cleanup.bat',
+    macro: 'ctrl+c, wait=0.2, ctrl+v   ·   click, scroll=3   ·   hold=f15=1.5   ·   repeat=3:ctrl+v'
   }[type] || '';
 }
 
@@ -1796,6 +2174,10 @@ function wireBehaviorCheckboxes() {
     // Marking + type-to-filter default ON; both are opt-out (validate mirrors this).
     'bh-marking': ['behavior', 'markingSelect'],
     'bh-filter': ['behavior', 'typeToFilter'],
+    // Opt-in (defaults off): config validate fail-closes anything but true.
+    'bh-sound': ['behavior', 'wheelSound'],
+    // Opt-in, same fail-closed discipline: focus a running app's window instead of a new instance.
+    'bh-focus': ['behavior', 'focusExistingApp'],
     // Master switch for the Segments tab's profile chips.
     'bh-profiles': ['behavior', 'profilesEnabled']
   };  for (const [id, [sec, key]] of Object.entries(map)) {
@@ -1835,7 +2217,7 @@ function wireBehaviorCheckboxes() {
     fly.addEventListener('input', () => { if (flyOut) flyOut.textContent = fly.value + ' ms'; fill(); });
     fly.addEventListener('change', () => { cfg.behavior.flyoutDwellMs = Number(fly.value) || 0; touch(false); });
   }
-  /* Recents fan size: how many most-used segments a `recent` segment shows. */
+  /* Recents fan size: how many most-recently-used segments a `recent` shows. */
   const rc = $('#bh-recents'), rcOut = $('#bh-recents-out');
   if (rc) {
     const fillRc = () => rc.style.setProperty('--fill', (Math.min(12, Math.max(3, Number(rc.value)) - 3) / 9 * 100) + '%');
@@ -1903,35 +2285,46 @@ async function wireAdvanced() {
     if (r.ok) toast('Exported to ' + r.path);
     else if (!r.canceled) toast('Export failed: ' + r.error, true);
   };
+  /* Import and Restore-a-backup land in the same place: adopt the graph main
+     returned, repaint, and hand over ONE catchable Undo. The toast is the fast
+     path; the outgoing config also survives on disk under \backups (see
+     config.js), which is what makes a restore safe to attempt at all. */
+  async function afterReplace(r, snapshot, msg) {
+    if (!r.ok) { if (!r.canceled) toast(r.error || 'Could not load that file', true); return false; }
+    cfg = clone(r.config); dirty = false;
+    activeProfileId = null;                       // an imported graph is a different world — start on the default wheel
+    if (typeof r.rev === 'number') storeRev = r.rev;
+    /* A package just installed fresh icon bytes in main — drop the local
+       resolution caches so the rows/preview re-resolve them (a previously
+       failed key must retry, not sit in its cooldown). */
+    if (r.icons) { imgCache.clear(); failedAt.clear(); }
+    renderAll();
+    showHkError(r.hotkeyError || null);           // never let the chip claim a combo that failed to register
+    toast(msg, false, async () => { await restoreConfig(snapshot); });
+    return true;
+  }
+
   $('#btn-import').onclick = async () => {
     const snapshot = clone(cfg);
     const r = await safe(() => api.importConfig());
-    if (r.ok) {
-      cfg = clone(r.config); dirty = false;
-      activeProfileId = null;                       // an imported graph is a different world — start on the default wheel
-      if (typeof r.rev === 'number') storeRev = r.rev;
-      /* A package just installed fresh icon bytes in main — drop the local
-         resolution caches so the rows/preview re-resolve them (a previously
-         failed key must retry, not sit in its cooldown). */
-      if (r.icons) { imgCache.clear(); failedAt.clear(); }
-      renderAll();
-      showHkError(r.hotkeyError || null);          // never let the chip claim a combo that failed to register
-      const msg = r.icons
-        ? `Package imported — ${r.icons.installed} icon${r.icons.installed === 1 ? '' : 's'} carried over${r.icons.skipped ? `, ${r.icons.skipped} skipped (glyph fallback)` : ''}`
-        : 'Config imported';
-      toast(msg, false, async () => { await restoreConfig(snapshot); });
-    } else if (!r.canceled) toast(r.error, true);
+    const msg = r.icons
+      ? `Package imported — ${r.icons.installed} icon${r.icons.installed === 1 ? '' : 's'} carried over${r.icons.skipped ? `, ${r.icons.skipped} skipped (glyph fallback)` : ''}`
+      : 'Config imported';
+    await afterReplace(r, snapshot, msg);
   };
+
+  $('#btn-restore-backup').onclick = async () => {
+    const snapshot = clone(cfg);
+    const r = await safe(() => api.restoreBackup());
+    const done = await afterReplace(r, snapshot, 'Backup restored — the config it replaced is in the backups folder too');
+    if (done) loadUsage();                        // the graph changed under the counts: re-join them
+  };
+
   $('#btn-reset').onclick = async () => {
     const snapshot = clone(cfg);
     const r = await safe(() => api.resetConfig());
-    if (r.ok) {
-      cfg = clone(r.config); dirty = false;
-      if (typeof r.rev === 'number') storeRev = r.rev;
-      renderAll();
-      showHkError(r.hotkeyError || null);
-      toast('Settings reset to defaults', false, async () => { await restoreConfig(snapshot); });
-    } else if (!r.canceled) toast(r.error, true);
+    const done = await afterReplace(r, snapshot, 'Settings reset to defaults');
+    if (done) loadUsage();
   };
   $('#btn-openfolder').onclick = () => api.openConfigFolder();
   $('#btn-export-pkg').onclick = async () => {
@@ -1941,9 +2334,69 @@ async function wireAdvanced() {
       toast(`Package exported with ${r.icons} icon${r.icons === 1 ? '' : 's'}${miss}`);
     } else if (!r.canceled) toast('Export failed: ' + r.error, true);
   };
+
+  /* ---- Usage: what the `recent` fan is actually built from -----------------
+     Main joins the sidecar counts to the LIVE config, so a segment the user
+     deleted disappears from the list instead of haunting it; the orphan count
+     is the honest "these fires belong to nothing any more" line. Labels are
+     user text → textContent only, never innerHTML. */
+  function agoText(t, ageMs) {
+    if (!t) return 'never';
+    const ms = Number.isFinite(ageMs) ? ageMs : (Date.now() - t);
+    const min = Math.floor(ms / 60000);
+    if (min < 1) return 'just now';
+    if (min < 60) return `${min} min ago`;
+    const h = Math.floor(min / 60);
+    if (h < 24) return `${h} h ago`;
+    const d = Math.floor(h / 24);
+    if (d < 7) return `${d} day${d > 1 ? 's' : ''} ago`;
+    try { return new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); }
+    catch { return '—'; }
+  }
+
+  const usageRows = $('#usage-rows'), usageSum = $('#usage-summary');
+  let usageLoading = false;
+  async function loadUsage() {
+    if (usageLoading || !usageRows) return;
+    usageLoading = true;
+    if (usageSum) usageSum.textContent = 'Reading counts…';
+    const r = await safe(() => api.usageStats());
+    usageLoading = false;
+    if (!r || r.ok === false) {
+      usageRows.innerHTML = '';
+      if (usageSum) usageSum.textContent = (r && r.error) || 'Could not read the usage counts.';
+      return;
+    }
+    usageRows.innerHTML = '';
+    const seg = (n) => (n === 1 ? 'segment' : 'segments');
+    if (!r.rows.length) {
+      if (usageSum) usageSum.textContent = 'Nothing fired from the real wheel yet — fire a few segments and refresh.';
+      el('div', 'usage-empty', { text: 'Recent segments stay empty until the wheel gets some use. (Settings’ “Try” buttons deliberately do not count.)' }, usageRows);
+      return;
+    }
+    if (usageSum) {
+      usageSum.textContent = `${r.segments} ${seg(r.segments)} used · ${r.totalFires} fire${r.totalFires === 1 ? '' : 's'} counted`
+        + (r.orphans ? ` · ${r.orphans} orphan count${r.orphans === 1 ? '' : 's'} from deleted segments` : '');
+    }
+    r.rows.forEach((row, i) => {
+      const tr = el('div', 'usage-row', { role: 'listitem' }, usageRows);
+      el('span', 'u-rank', { text: String(i + 1), 'aria-hidden': 'true' }, tr);
+      const nameCell = el('span', 'u-label', {}, tr);
+      el('span', null, { text: row.label }, nameCell);
+      const where = row.profile ? `${row.profile} profile` : (row.path ? row.path : (row.ring ? `ring ${row.ring}` : ''));
+      el('span', 'u-where', { text: `${row.type}${where ? ' · ' + where : ''}` }, nameCell);
+      el('span', 'u-n', { text: `${row.n}×`, title: 'Times fired from the wheel' }, tr);
+      el('span', 'u-when', { text: agoText(row.t, row.ageMs) }, tr);
+    });
+  }
+  if (usageRows) usageRows.setAttribute('role', 'list');
+  onAdvancedTab = loadUsage;             // opening Advanced re-reads the counts
+  const refresh = $('#btn-usage-refresh');
+  if (refresh) refresh.onclick = () => { loadUsage(); };
+
   $('#btn-clear-usage').onclick = async () => {
     const r = await safe(() => api.clearUsage());
-    if (r.ok) toast('Recent-items data cleared — recent segments will refill as you use the wheel');
+    if (r.ok) { toast('Recent-items data cleared — recent segments will refill as you use the wheel'); loadUsage(); }
     else toast(r.error || 'Could not clear recent-items data', true);
   };
   $('#btn-openlogs').onclick = async () => {
@@ -1968,6 +2421,212 @@ async function wireAdvanced() {
     }
     api.requestQuit();
   };
+}
+
+/* ---------------------------------- audio -----------------------------------
+   The Audio tab: default output/input pickers, master volume/mute for each,
+   and the per-app mixer. All state is READ BACK from Windows (main owns Core
+   Audio), so the screen shows the truth even when another app changes volume
+   behind our back; the poll runs only while the tab is visible, and a row the
+   user is actively dragging is never overwritten mid-gesture (busy flag). */
+let audioPollTimer = null;
+const AUDIO_POLL_MS = 2000;
+
+function stopAudioPoll() {
+  if (audioPollTimer) { clearInterval(audioPollTimer); audioPollTimer = null; }
+}
+function startAudioPoll() {
+  stopAudioPoll();
+  audioPollTimer = setInterval(() => {
+    const btn = $('#tabbtn-audio');
+    if (document.hidden || !btn || !btn.classList.contains('active')) { stopAudioPoll(); return; }
+    audioRefreshLevels();
+    audioRefreshSessions();
+  }, AUDIO_POLL_MS);
+}
+document.addEventListener('visibilitychange', () => { if (document.hidden) stopAudioPoll(); });
+
+let audioRefreshLevels = () => Promise.resolve();   // wired by wireAudio()
+let audioRefreshSessions = () => Promise.resolve();
+
+async function wireAudio() {
+  const info = await safe(() => api.audioAvailable());
+  // One line in the log file (preload forwards page console) — the audio
+  // equivalent of the "why is nothing happening" breadcrumb that makes the
+  // mixer features debuggable from %APPDATA%\Radial Wheel\logs alone.
+  console.log('[audio] available:', !!(info && info.ok !== false), (info && (info.reason || info.error)) || '');
+  const notice = $('#au-unavailable');
+  const live = !!info && info.ok !== false;
+  if (!live) {
+    document.querySelectorAll('#tab-audio .audio-live').forEach((n) => n.classList.add('hidden'));
+    if (notice) {
+      notice.textContent = 'Audio control is unavailable — ' +
+        ((info && (info.reason || info.error)) || 'this feature needs Windows');
+      notice.classList.remove('hidden');
+    }
+  }
+  const ss = $('#au-sound-settings');
+  if (ss) ss.onclick = () => api.previewAction({ type: 'sys', value: 'sound' });
+  if (!live) return;
+
+  /* One direction of the mixer: device select + master slider + mute. */
+  function wireDevice(spec) {
+    const sel = $(spec.sel), rg = $(spec.refresh), vol = $(spec.vol), out = $(spec.out), mute = $(spec.mute);
+    let loading = false;
+    let volBusy = false, volIdle = null;
+
+    const fillDevices = (devices) => {
+      sel.innerHTML = '';
+      devices.forEach((d) => {
+        el('option', null, { text: d.name + (d.isDefault ? '  ·  default' : ''), value: d.id }, sel);
+      });
+      const def = devices.find((d) => d.isDefault);
+      if (def) sel.value = def.id;
+      if (!devices.length) el('option', null, { text: '(no devices found)', value: '' }, sel);
+    };
+    async function loadDevices(force) {
+      if (loading) return;
+      loading = true;
+      const devices = await loadAudioDevices(spec.flow, force);
+      loading = false;
+      fillDevices(devices);
+    }
+    async function readLevels() {
+      const r = await safe(() => api.audioLevels(spec.flow));
+      if (!r || r.ok === false) return;
+      if (!volBusy) { vol.value = String(r.volume); out.textContent = r.volume + '%'; mute.checked = !!r.muted; }
+    }
+    const writeVolume = () => {
+      const v = +vol.value;
+      clearTimeout(volIdle);
+      volIdle = setTimeout(async () => {
+        const r = await safe(() => api.audioSetVolume(spec.flow, { volume: v }));
+        volBusy = false;
+        if (!r.ok) { toast('Volume change failed: ' + (r.error || 'unknown'), true); readLevels(); }
+      }, 160);
+    };
+    vol.addEventListener('input', () => {
+      volBusy = true;                       // claim the row until the write lands
+      clearTimeout(volIdle);
+      out.textContent = vol.value + '%';
+      volIdle = setTimeout(() => { volBusy = false; }, 1500);   // a gesture that never commits releases the claim
+    });
+    vol.addEventListener('change', writeVolume);
+    mute.addEventListener('change', async () => {
+      const want = mute.checked;
+      const r = await safe(() => api.audioSetVolume(spec.flow, { muted: want }));
+      if (!r.ok) { toast('Mute change failed: ' + (r.error || 'unknown'), true); mute.checked = !want; }
+    });
+    sel.addEventListener('change', async () => {
+      const id = sel.value;
+      if (!id) return;
+      const r = await safe(() => api.audioSetDefault(spec.flow, id));
+      if (!r.ok) {
+        toast('Could not switch the ' + spec.noun + ': ' + (r.error || 'unknown') + ' — Windows sound settings (below) can do it by hand', true);
+        loadDevices(true);
+        return;
+      }
+      toast('Default ' + spec.noun + ' switched');
+      await Promise.all([loadDevices(true), readLevels()]);
+    });
+    rg.onclick = async () => { await Promise.all([loadDevices(true), readLevels()]); };
+
+    return { reload: async () => { await loadDevices(false); await readLevels(); }, readLevels };
+  }
+  const outCtl = wireDevice({ sel: '#au-out-select', refresh: '#au-out-refresh', vol: '#au-out-vol', out: '#au-out-vol-out', mute: '#au-out-mute', flow: 'render', noun: 'output device' });
+  const inCtl = wireDevice({ sel: '#au-in-select', refresh: '#au-in-refresh', vol: '#au-in-vol', out: '#au-in-vol-out', mute: '#au-in-mute', flow: 'capture', noun: 'input device' });
+  audioRefreshLevels = () => Promise.all([outCtl.readLevels(), inCtl.readLevels()]).then(() => {});
+
+  /* ---- per-app mixer ---- rows keyed by pid (system-sounds keeps its own),
+     diffed in place so a poll never yanks a slider out from under a drag.
+     Labels are app-supplied text → textContent only, never innerHTML. */
+  const sessHost = $('#au-sessions'), sessNote = $('#au-sessions-note');
+  const rows = new Map();                 // rowKey -> row state
+  let sessLoading = false;
+
+  const rowKey = (s) => (s.isSystem ? 'sys:' + s.pid : 'app:' + s.pid);
+
+  function makeRow(s) {
+    const row = el('div', 'au-row' + (s.isSystem ? ' au-system' : ''), {}, sessHost);
+    const name = el('span', 'au-name', {}, row);
+    const slider = el('input', null, { type: 'range', min: '0', max: '100', step: '1', 'aria-label': 'App volume' }, row);
+    const pct = el('span', 'au-pct', { text: '—' }, row);
+    const muteBtn = el('button', 'btn small glyph au-mute', {
+      type: 'button', title: 'Mute this app', 'aria-label': 'Mute this app', 'aria-pressed': 'false'
+    }, row);
+    el('span', 'g', { text: '\uE74E' }, muteBtn);           // in-brand speaker-off glyph
+    const st = { el: row, name, slider, pct, muteBtn, busy: false, idle: null };
+
+    slider.addEventListener('input', () => {
+      st.busy = true;
+      clearTimeout(st.idle);
+      st.pct.textContent = slider.value + '%';
+      st.idle = setTimeout(() => { st.busy = false; }, 1500);
+    });
+    slider.addEventListener('change', () => {
+      const v = +slider.value;
+      clearTimeout(st.idle);
+      st.idle = setTimeout(async () => {
+        const r = await safe(() => api.audioSetSession(s.pid, { volume: v }));
+        st.busy = false;
+        if (!r.ok) toast(r.error || 'App volume change failed', true);   // a vanished app's row drops on the next poll
+      }, 160);
+    });
+    muteBtn.addEventListener('click', async () => {
+      const want = muteBtn.getAttribute('aria-pressed') !== 'true';
+      const r = await safe(() => api.audioSetSession(s.pid, { muted: want }));
+      if (!r.ok) toast(r.error || 'App mute change failed', true);
+    });
+    return st;
+  }
+
+  function updateRow(st, s) {
+    st.name.textContent = s.label;
+    if (!s.isSystem && s.sessions > 1) el('span', 'au-count', { text: '×' + s.sessions }, st.name);
+    st.slider.setAttribute('aria-label', 'Volume for ' + s.label);
+    st.muteBtn.title = (s.isSystem ? 'System sounds' : s.label) + (s.muted ? ' — click to unmute' : ' — click to mute');
+    if (!st.busy) {
+      st.slider.value = String(s.volume);
+      st.pct.textContent = s.volume + '%';
+    }
+    st.muteBtn.setAttribute('aria-pressed', String(!!s.muted));
+  }
+
+  audioRefreshSessions = async function refreshSessions() {
+    if (sessLoading || !sessHost) return;
+    sessLoading = true;
+    const r = await safe(() => api.audioSessions());
+    sessLoading = false;
+    if (!r || r.ok === false) {
+      if (sessNote) sessNote.textContent = (r && r.error) || 'Could not read the app volume list.';
+      return;
+    }
+    if (sessNote) sessNote.textContent = r.sessions.length
+      ? '' : 'Nothing is playing audio right now — a row appears the moment an app starts.';
+    const seen = new Set();
+    for (const s of r.sessions) {
+      const key = rowKey(s);
+      seen.add(key);
+      let st = rows.get(key);
+      if (!st) st = makeRow(s);
+      updateRow(st, s);
+      rows.set(key, st);
+    }
+    for (const [key, st] of rows) {
+      if (!seen.has(key)) { st.el.remove(); clearTimeout(st.idle); rows.delete(key); }
+    }
+  };
+
+  const refreshBtn = $('#au-refresh');
+  if (refreshBtn) refreshBtn.onclick = async () => {
+    await Promise.all([outCtl.reload(), inCtl.reload(), audioRefreshSessions()]);
+  };
+
+  onAudioTab = async () => {
+    await Promise.all([outCtl.reload(), inCtl.reload(), audioRefreshSessions()]);
+    startAudioPoll();
+  };
+  audioTabLeaveHook = stopAudioPoll;
 }
 
 /* --------------------------------- preview ---------------------------------
@@ -2104,9 +2763,11 @@ async function boot() {
   cfg = r.config;
   storeRev = typeof r.rev === 'number' ? r.rev : null;
   sysCatalogCache = await api.sysCatalog();
+  appSettingsCatalogCache = await api.appSettingsCatalog();
   renderAll();
   setSaveState('Saved');
   wireAdvanced();
+  wireAudio();
   wireConflict();
   wireConfigWarn(r);
   if (r.hotkeyError) showHkError(r.hotkeyError);

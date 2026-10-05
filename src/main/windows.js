@@ -164,8 +164,13 @@ class Overlay {
     if (!geo) return;
     const want = 2 * (Math.ceil(reachPx) + 12);   // margin for the plate shadow
     // Monotonic within one summon: never shrink back below the current size
-    // (a mid-hover resize would jerk the SVG under the pointer).
-    const s2 = Math.max(geo.curS, Math.min(want, geo.s + 240));
+    // (a mid-hover resize would jerk the SVG under the pointer). The cap
+    // covers both users of the channel: a folder fan (≤ ~90 px past the rim)
+    // and the volume-mixer panel, whose card sits fully outside the wheel —
+    // a couple of hundred px of reach past the square. The renderer side is
+    // frame-gated to the wheel page, and the wheel:grow handler clamps the
+    // raw value to ≤ 2048, so a bogus reach still cannot blow the window up.
+    const s2 = Math.max(geo.curS, Math.min(want, geo.s + 560));
     if (s2 === geo.curS) return;
     const b = win.getBounds();
     const cx = b.x + b.width / 2, cy = b.y + b.height / 2;

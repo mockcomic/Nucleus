@@ -30,6 +30,14 @@ function launchDetached(cmd, args, label = cmd, opts = {}) {
  * at once — reject with that code so the preview toast reports it instead of
  * claiming success. A command still running past the grace window counts as
  * launched (the child stays alive; it is detached + unref'd).
+ *
+ * shell:true is DELIBERATE here and only here: a `command` segment's value is
+ * the user's own command line (Run-dialog semantics — pipes, &&, redirection
+ * are the point of the type). Every other exec path in this file goes through
+ * launchDetached with an explicit argv array, which keeps the argument
+ * boundary. Do NOT route anything into this function that the user did not
+ * type themselves (config import passes it through the same string, exactly
+ * like editing config.json by hand — the trusted-input contract of the store).
  */
 function runShellCommand(value) {
   return new Promise((resolve, reject) => {
@@ -61,8 +69,33 @@ function safeExternalUrl(value) {
 }
 
 /**
+ * Pure basename extraction for the focus-existing-app check: which running
+ * program (if any) an `app` item's value actually names. Only a `.exe`
+ * basename can be matched against a window's process, so everything else
+ * answers null and launches exactly as before — .lnk/.bat/.cmd (ShellExecute
+ * targets whose real exe is one step away), ms-settings:/store links, bare
+ * shell words without an extension, and URLs.
+ * Handles all three shapes the app branch accepts: `C:\dir\app.exe`,
+ * `C:\dir\app.exe /flag`, and `"C:\Program Files\app.exe" --flag args`.
+ */
+function exeBaseForAppValue(value) {
+  const s = String(value || '').trim();
+  if (!s) return null;
+  let exe = null;
+  const q = s.match(/^"([^"]+)"/);                                   // quoted exe first (may contain spaces)
+  if (q) exe = q[1];
+  else {
+    const m = s.match(/^(.+?\.(?:exe))(?:\s|$)/i);                   // unquoted exe, optional inline args
+    if (m) exe = m[1];
+  }
+  if (!exe) return null;
+  const base = exe.split(/[\\/]/).pop().toLowerCase();
+  return base.endsWith('.exe') && base.length > 4 ? base : null;
+}
+
+/**
  * Execute one configured item. Throws Error with a user-readable message on failure.
- * ctx: { quit?: () => void }
+ * ctx: { quit?: () => void, focusExistingApp?: boolean }
  */
 async function executeAction(item, ctx = {}) {
   if (!item || typeof item !== 'object') throw new Error('invalid item');
@@ -84,6 +117,15 @@ async function executeAction(item, ctx = {}) {
     }
     case 'app': {
       if (!value) throw new Error('no program configured');
+      /* Focus-existing-app (behavior.focusExistingApp, opt-in): when the named
+         program already owns a visible window, raise it instead of spawning a
+         second instance. false covers every "not open / can't tell" case —
+         not running, running windowless, FFI absent, focus refused — and the
+         launch below then proceeds exactly as it always did. */
+      if (ctx.focusExistingApp === true) {
+        const base = exeBaseForAppValue(value);
+        if (base && macro.focusAppWindowByExe(base)) return;
+      }
       const target = value.replace(/^"|"$/g, '');
       const rawArgs = String(item.args || '').trim();
       const tokens = splitArgs(rawArgs);
@@ -146,6 +188,16 @@ async function executeAction(item, ctx = {}) {
       await sys.run(value, ctx, { dir: String(item.dir || '').trim() });
       return;
     }
+    case 'setting': {
+      // App-setting toggle (src/main/appsettings.js owns the catalog). The
+      // mutator rides on ctx so this module never touches the config store
+      // directly — ipc.js hands it the live store plus the Settings-window
+      // echo, and a call path without that hook fails closed.
+      if (!value) throw new Error('no setting configured');
+      if (typeof ctx.applySetting !== 'function') throw new Error('app settings are unavailable here');
+      await ctx.applySetting(value);
+      return;
+    }
     case 'folder':
       // Folder segments are sub-menu containers, never executable — and the
       // wheel renderer shouldn't send them either. Loudly refuse (defense in
@@ -156,9 +208,14 @@ async function executeAction(item, ctx = {}) {
       // usage data at summon time; the container itself executes nothing
       // (clicks on its children carry the real items' ids).
       throw new Error('a recent segment cannot be launched');
+    case 'mixer':
+      // The volume-mixer segment never executes: the overlay intercepts its
+      // click locally and opens the in-wheel volume panel (wheel.js). Loudly
+      // refuse anything that still routes here (defense in depth).
+      throw new Error('a volume mixer segment cannot be launched');
     default:
       throw new Error(`unknown action type '${type}'`);
   }
 }
 
-module.exports = { executeAction, safeExternalUrl };
+module.exports = { executeAction, safeExternalUrl, exeBaseForAppValue };

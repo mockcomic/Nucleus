@@ -13,6 +13,7 @@
       <button class="tab-btn active" data-tab="segments">Segments</button>
       <button class="tab-btn" data-tab="appearance">Appearance</button>
       <button class="tab-btn" data-tab="behavior">Hotkey &amp; Behavior</button>
+      <button class="tab-btn" data-tab="audio">Audio</button>
       <button class="tab-btn" data-tab="advanced">Advanced</button>
     </nav>
     <div class="side-foot">
@@ -93,6 +94,10 @@
         <div class="hint muted">The pie-menu way: hold the left button anywhere on the wheel, sweep (folder fans branch as you pass), and release on a segment to fire it. Releasing off the wheel cancels. Ordinary clicks still work exactly as before.</div>
         <label class="chk"><input type="checkbox" id="bh-filter"> Type to filter while the wheel is open</label>
         <div class="hint muted">Start typing and non-matching segments fade back; the selection jumps to the best match and Enter fires it. Backspace edits, Esc clears the query. Folder sub-menus open themselves when their contents match.</div>
+        <label class="chk"><input type="checkbox" id="bh-sound"> Sound feedback — soft ticks on hover and select</label>
+        <div class="hint muted">A gentle blip when the selection lands on a segment and when a segment fires. The ticks are synthesized on the fly (no audio files, no network); off by default.</div>
+        <label class="chk"><input type="checkbox" id="bh-focus"> Focus an app that's already open instead of opening another copy</label>
+        <div class="hint muted">When a program segment fires and that app already has a window on screen, the existing window comes to the front instead of a second copy starting — a running app with no window (tray-only) still launches normally. Applies to segments that point at an .exe; shortcuts, scripts, and links always open as before. Off by default.</div>
         <div class="slider-row" style="margin-top:10px">
           <label class="slider-lbl" for="bh-flyout">Sub-menu delay
             <input type="range" id="bh-flyout" min="0" max="600" step="10" style="flex:1">
@@ -106,7 +111,7 @@
             <output id="bh-recents-out" for="bh-recents">8</output>
           </label>
         </div>
-        <div class="hint muted">How many of your most-used segments fill a <b>recent</b> segment's sub-menu. Add one from the Segments tab's type list.</div>
+        <div class="hint muted">How many of your most-recently-used segments fill a <b>Recents</b> segment's sub-menu. Add one from the Segments tab's type list.</div>
       </div>
       <div class="card">
         <div class="card-title">App profiles</div>
@@ -124,6 +129,58 @@
       </div>
     </section>
 
+    <section class="tab hidden" id="tab-audio">
+      <div class="tab-head">
+        <h2>Audio</h2>
+        <span class="muted">Default devices and the mixer — the same controls Windows shows, without leaving the wheel's settings.</span>
+      </div>
+      <div id="au-unavailable" class="err cfg-warn hidden" role="alert"></div>
+      <div class="card audio-live">
+        <div class="card-title">Output device</div>
+        <div class="row-line">
+          <select id="au-out-select" class="au-dev" aria-label="Default audio output device"></select>
+          <button class="btn small" id="au-out-refresh" title="Reload the output device list" aria-label="Reload the output device list">&#xE72C;</button>
+        </div>
+        <div class="slider-row" style="margin-top:10px">
+          <label class="slider-lbl" for="au-out-vol">Master volume
+            <input type="range" id="au-out-vol" min="0" max="100" step="1" style="flex:1">
+            <output id="au-out-vol-out" for="au-out-vol">—</output>
+          </label>
+        </div>
+        <label class="chk"><input type="checkbox" id="au-out-mute"> Mute this device</label>
+      </div>
+      <div class="card audio-live">
+        <div class="card-title">Input device</div>
+        <div class="row-line">
+          <select id="au-in-select" class="au-dev" aria-label="Default audio input device"></select>
+          <button class="btn small" id="au-in-refresh" title="Reload the input device list" aria-label="Reload the input device list">&#xE72C;</button>
+        </div>
+        <div class="slider-row" style="margin-top:10px">
+          <label class="slider-lbl" for="au-in-vol">Microphone volume
+            <input type="range" id="au-in-vol" min="0" max="100" step="1" style="flex:1">
+            <output id="au-in-vol-out" for="au-in-vol">—</output>
+          </label>
+        </div>
+        <label class="chk"><input type="checkbox" id="au-in-mute"> Mute this microphone</label>
+      </div>
+      <div class="card audio-live">
+        <div class="card-title">App volume</div>
+        <div class="hint muted">Every program currently playing audio, one row each — sliders and mutes are the Windows Volume Mixer's, live. The list refreshes itself while this tab is open.</div>
+        <div id="au-sessions-note" class="hint muted" aria-live="polite"></div>
+        <div id="au-sessions" class="au-sessions"></div>
+        <div class="row-line">
+          <button class="btn small" id="au-refresh">Refresh now</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">Windows sound settings</div>
+        <div class="hint muted">Device properties, per-device formats, and sound schemes still live in Windows — this page changes the same defaults, this is the escape hatch.</div>
+        <div class="row-line">
+          <button class="btn" id="au-sound-settings">Open Windows sound settings</button>
+        </div>
+      </div>
+    </section>
+
     <section class="tab hidden" id="tab-advanced">
       <div class="tab-head"><h2>Advanced</h2></div>
       <div class="card">
@@ -133,27 +190,38 @@
           <button class="btn" id="btn-export">Export…</button>
           <button class="btn" id="btn-export-pkg">Export package… (with icons)</button>
           <button class="btn" id="btn-import">Import…</button>
+          <button class="btn" id="btn-restore-backup">Restore a backup…</button>
           <button class="btn" id="btn-reset">Reset to defaults</button>
           <button class="btn" id="btn-openfolder">Open config folder</button>
           <button class="btn" id="btn-openlogs">Open logs folder</button>
         </div>
         <div class="hint muted">A <b>package</b> is a single file with your whole setup plus the bytes of every custom segment image — share it and the wheel arrives fully decorated. A plain <b>Export</b> carries config only (logos and URL-picked icons re-download themselves).</div>
+        <div class="hint muted">Before <b>Import…</b> or <b>Reset</b> replaces your config, the outgoing file is copied to <code>%APPDATA%\Radial Wheel\backups</code> and the newest 12 are kept — <b>Restore a backup…</b> opens that folder. Autosaves are kept out of the rotation (one at most every few minutes), so a burst of typing can't bury the useful copies.</div>
+      </div>
+      <div class="card">
+        <div class="card-title">Usage</div>
+        <div class="hint muted">Which segments you actually fire — the same counts that fill a <b>recent</b> segment's sub-menu. Kept beside the config, never inside it, so exports and shared packages carry zero statistics.</div>
         <div class="row-line wrap">
+          <button class="btn" id="btn-usage-refresh">Refresh</button>
           <button class="btn" id="btn-clear-usage">Clear recent-items data</button>
         </div>
-        <div class="hint muted">Empties the usage counts that fill <b>recent</b> segments. Kept out of config.json, so exports and shares never carry your statistics.</div>
+        <div class="hint muted" id="usage-summary">Counts are read when you open this tab.</div>
+        <div id="usage-rows" class="usage-list"></div>
       </div>
       <div class="card">
         <div class="card-title">Action types</div>
         <ul class="type-help">
-          <li><b>app</b> — launch a program or open a file (paths or shell names like <code>notepad.exe</code>), with an optional <b>Arguments</b> box for launch parameters such as <code>--flag "C:\path with space"</code></li>
-          <li><b>url</b> — open a link in your default browser</li>
-          <li><b>command</b> — run a shell command (<code>cmd.exe</code> syntax — type it) or a <code>.bat</code> / <code>.cmd</code> / <code>.ps1</code> script (type the path or use Browse…)</li>
-          <li><b>macro</b> — synthesize keystrokes: <code>ctrl+c, wait=0.2, ctrl+v</code> · <code>type:hello world</code></li>
-          <li><b>sys</b> — built-in Windows actions (lock, sleep, volume, settings pages…)</li>
-          <li><b>folder</b> — a sub-menu that branches outward when the pointer rests on it</li>
-          <li><b>recent</b> — a self-filling sub-menu of your most-used segments; edit its label and icon, its contents update themselves</li>
+          <li><b>Open a program</b> (<code>app</code>) — launch a desktop app (paths or shell names like <code>notepad.exe</code>), with an optional <b>Arguments</b> box for launch parameters such as <code>--flag "C:\path with space"</code></li>
+          <li><b>Open a website</b> (<code>url</code>) — open a link in your default browser</li>
+          <li><b>Open a file</b> (<code>file</code>) — open a document or folder with its default app</li>
+          <li><b>Windows action</b> (<code>sys</code>) — built-in Windows actions (lock, sleep, volume, settings pages…)</li>
+          <li><b>App toggle</b> (<code>setting</code>) — flip one of Radial Wheel's own switches straight from the wheel</li>
+          <li><b>Folder</b> (<code>folder</code>) — a sub-menu that branches outward when the pointer rests on it</li>
+          <li><b>Recents</b> (<code>recent</code>) — a self-filling sub-menu of your most-recently-used segments; edit its label and icon, its contents update themselves</li>
+          <li><b>Run a command or script</b> (<code>command</code>) — run a shell command (<code>cmd.exe</code> syntax — type it) or a <code>.bat</code> / <code>.cmd</code> / <code>.ps1</code> script (type the path or use Browse…)</li>
+          <li><b>Macro</b> (<code>macro</code>) — synthesize keyboard <i>and</i> mouse input. Use the <b>Steps</b> helper in the editor, or write the spec directly: <code>ctrl+c, wait=0.2, ctrl+v</code> · <code>type:hello world</code> · <code>click</code> / <code>rclick</code> / <code>mclick</code> / <code>dblclick</code> / <code>back</code> / <code>forward</code> · <code>scroll=3</code> (negative = up) · <code>hold=ctrl+c=1.5</code> · <code>repeat=3:ctrl+v</code>. Mouse steps fire at the current cursor position</li>
         </ul>
+        <div class="hint muted">The Type dropdown groups these as <b>Everyday actions</b>, <b>Organize the wheel</b>, and <b>Power user</b> — the two technical types sit in that last group.</div>
       </div>
       <div class="card">
         <button class="btn danger" id="btn-quit">Exit Radial Wheel</button>

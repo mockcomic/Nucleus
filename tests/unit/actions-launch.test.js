@@ -56,3 +56,15 @@ test('unresolved app names use cmd start, and ps1 scripts are not launched with 
   assert.equal(psCall.args.includes('-ExecutionPolicy'), false);
   assert.equal(psCall.args.includes('Bypass'), false);
 });
+
+test('container segments refuse to launch — folder, recent, and the mixer card alike', async () => {
+  const before = calls.length;                       // the first test already spawned twice
+  for (const type of ['folder', 'recent', 'mixer']) {
+    await assert.rejects(
+      () => executeAction({ id: 'x', type, value: 'anything' }),
+      /cannot be launched/,
+      `a ${type} segment must never execute`
+    );
+  }
+  assert.equal(calls.length, before, 'the refusals spawned nothing');
+});

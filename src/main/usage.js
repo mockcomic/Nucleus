@@ -115,7 +115,86 @@ function resolveRecents(config, usageMap, count = DEFAULT_COUNT, now = Date.now(
   return out;
 }
 
+/* ------------------------------ usage stats --------------------------------
+   The same sidecar that fills `recent` fans also answers "what do I actually
+   use?". Pure (config + map in, plain object out) so it unit-tests without
+   Electron, and it never mutates either input.
+   Rows are the live, fireable segments — a folder or recent container can be
+   HOVERED but never fires, so containers are skipped exactly like in
+   `candidates()`. Records left over from deleted segments are reported as a
+   count (orphans) rather than as phantom rows. */
+const STATS_MAX_ROWS = 300;
+const STATS_DEFAULT_ROWS = 24;
+const STATS_VALUE_PREVIEW = 60;
+
+function stats(cfg, usageMap, opts = {}) {
+  const map = (usageMap && typeof usageMap === 'object') ? usageMap : {};
+  const now = Number.isFinite(opts.now) ? opts.now : Date.now();
+  let want = Number.isFinite(opts.limit) ? Math.round(opts.limit) : STATS_DEFAULT_ROWS;
+  want = Math.max(1, Math.min(STATS_MAX_ROWS, want));
+
+  const groups = [];
+  if (cfg && cfg.rings && typeof cfg.rings === 'object') groups.push({ rings: cfg.rings, profile: null });
+  if (cfg && Array.isArray(cfg.profiles)) {
+    for (const p of cfg.profiles) if (p && p.rings && typeof p.rings === 'object') groups.push({ rings: p.rings, profile: String(p.name || 'Profile') });
+  }
+
+  const rows = [];
+  const seen = new Set();
+  let tracked = 0;                                  // live segments that have a record
+  for (const g of groups) {
+    const down = (arr, ring, trail) => {
+      for (const it of Array.isArray(arr) ? arr : []) {
+        if (!it || typeof it !== 'object' || typeof it.id !== 'string') continue;
+        if (it.type === 'folder' || it.type === 'recent') {
+          if (Array.isArray(it.children) && it.children.length) down(it.children, ring, trail.concat(String(it.label || 'folder')));
+          continue;
+        }
+        const u = map[it.id];
+        if (!u || typeof u !== 'object') continue;
+        tracked++;
+        if (seen.has(it.id)) continue;              // duplicate ids: first occurrence wins
+        seen.add(it.id);
+        const n = Number.isFinite(u.n) ? u.n : 0;
+        const t = Number.isFinite(u.t) ? u.t : 0;
+        if (n <= 0 && t <= 0) continue;             // junk record: no row
+        rows.push({
+          id: it.id,
+          label: String(it.label || '(no name)').slice(0, 40),
+          type: String(it.type || 'app'),
+          value: String(it.value || '').slice(0, STATS_VALUE_PREVIEW),
+          ring: Number.isFinite(ring) ? ring : null,
+          path: trail.join(' › '),
+          profile: g.profile,
+          n, t,
+          // Rendered as "just now / 5 min ago / yesterday" by the settings UI,
+          // which owns the clock — the number here keeps the function pure.
+          ageMs: t > 0 && now >= t ? now - t : null
+        });
+      }
+    };
+    for (const k of Object.keys(g.rings)) {
+      const ringNum = Number(k);
+      down(g.rings[k], Number.isInteger(ringNum) && ringNum >= 1 ? ringNum : null, []);
+    }
+  }
+
+  rows.sort((a, b) => (b.n - a.n) || (b.t - a.t) || a.label.localeCompare(b.label));
+  const totalFires = rows.reduce((s, r) => s + r.n, 0);
+  let records = 0;
+  try { records = Object.keys(map).length; } catch { records = 0; }
+
+  return {
+    rows: rows.slice(0, want),
+    segments: rows.length,                                  // live segments with ≥1 use
+    totalFires,
+    records,
+    orphans: Math.max(0, records - tracked)                 // counts whose segment is gone
+  };
+}
+
 module.exports = {
-  record, candidates, resolveRecents,
-  MAX_KEYS, MAX_N, RECENT_MAX, DEFAULT_COUNT, MIN_COUNT, MAX_COUNT
+  record, candidates, resolveRecents, stats,
+  MAX_KEYS, MAX_N, RECENT_MAX, DEFAULT_COUNT, MIN_COUNT, MAX_COUNT,
+  STATS_MAX_ROWS, STATS_DEFAULT_ROWS
 };

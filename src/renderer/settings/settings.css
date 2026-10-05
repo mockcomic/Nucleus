@@ -669,6 +669,86 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
 	font-size: 12.5px;
 	line-height: 1.45;
 }
+/* Macro step helper (macroBuilder): chips over a one-line builder. The chips
+   are a render of the Keys box, not a second model — keep them quiet, mono,
+   and deletable; the builder row reuses the shared control styles. */
+.seg-edit .f-ctl.macro-steps {
+	display: block;
+	flex: 1 1 auto;
+	min-width: 0;
+}
+.macro-steps .ms-list {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin: 0 0 8px;
+}
+.ms-list .ms-empty {
+	color: var(--dim);
+	font-size: 12px;
+}
+.ms-list .ms-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	max-width: 100%;
+	padding: 2px 4px 2px 8px;
+	background: var(--btn-bg);
+	border: 1px solid var(--line);
+	border-radius: 20px;
+	font: 12px Consolas, monospace;
+	color: var(--text);
+}
+.ms-chip .ms-n {
+	color: var(--dim);
+	font-weight: 600;
+}
+.ms-chip .ms-t {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.ms-chip .ms-x {
+	flex: none;
+	border: 0;
+	background: none;
+	color: var(--dim);
+	font: 13px/1 'Segoe UI', sans-serif;
+	padding: 2px 5px;
+	border-radius: 50%;
+	cursor: pointer;
+}
+.ms-chip .ms-x:hover,
+.ms-chip .ms-x:focus-visible {
+	color: var(--danger);
+	outline: none;
+	background: var(--btn-bg);
+}
+.macro-steps .ms-builder {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+.ms-builder .ms-params {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+}
+.ms-builder .ms-params input[type='text'] {
+	flex: 1 1 140px;
+	min-width: 0;
+}
+.ms-builder .ms-params input[type='number'] {
+	width: 74px;
+	flex: 0 0 auto;
+}
+.ms-builder .ms-unit {
+	color: var(--dim);
+	font-size: 12px;
+	white-space: nowrap;
+}
 .seg-edit .f-full {
 	grid-column: 1 / -1;
 	position: relative;
@@ -854,6 +934,60 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
 	border-radius: 4px;
 	font-size: 12px;
 	color: var(--code-ink);
+}
+
+/* Advanced → Usage: the fire-count list, built row-by-row by settings.js.
+   Tabular numerals keep the counts and the "3 min ago" column aligned; the
+   zebra fill reuses --field, the same sunken well the code chips use. */
+.usage-list {
+	display: grid;
+	grid-template-columns: 1fr;
+	gap: 2px;
+	margin-top: 8px;
+}
+.usage-row {
+	display: grid;
+	grid-template-columns: 20px minmax(0, 1fr) auto auto;
+	gap: 9px;
+	align-items: baseline;
+	padding: 5px 8px;
+	border-radius: 6px;
+	font-size: 12.5px;
+}
+.usage-row:nth-child(odd) {
+	background: var(--field);
+}
+.usage-row .u-rank {
+	color: var(--dim);
+	font-variant-numeric: tabular-nums;
+	text-align: right;
+}
+.usage-row .u-label {
+	color: var(--text);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.usage-row .u-where {
+	color: var(--dim);
+	font-size: 11.5px;
+	margin-left: 6px;
+}
+.usage-row .u-n {
+	color: var(--accent);
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+}
+.usage-row .u-when {
+	color: var(--dim);
+	font-size: 11.5px;
+	font-variant-numeric: tabular-nums;
+}
+.usage-empty {
+	color: var(--dim);
+	font-size: 12.5px;
+	padding: 6px 8px;
+	line-height: 1.45;
 }
 
 /* preview pane */
@@ -1366,3 +1500,54 @@ html[data-mode='light'] {
 		background: var(--bg);
 	}
 }
+
+/* -------------------------------- audio tab --------------------------------
+   One row per audio-owning process: label, slider, live percentage, mute.
+   The select and range inherit the global form styling; only the row layout
+   and the mute button's engaged state are new. */
+#tab-audio .row-line select.au-dev {
+	flex: 1;
+	min-width: 0;
+}
+.au-sessions {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	margin: 8px 0 10px;
+}
+.au-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+.au-row .au-name {
+	flex: 0 1 240px;
+	min-width: 90px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.au-row .au-name .au-count {
+	color: var(--dim);
+	font-size: 11px;
+	margin-left: 6px;
+}
+.au-row input[type='range'] {
+	flex: 1;
+	min-width: 80px;
+}
+.au-row .au-pct {
+	width: 3.6em;
+	text-align: right;
+	color: var(--dim);
+	font-variant-numeric: tabular-nums;
+}
+.au-row .btn.au-mute[aria-pressed='true'] {
+	color: var(--accent, #fff);
+	background: rgba(255, 99, 99, 0.18);
+	border-color: rgba(255, 99, 99, 0.5);
+}
+.au-row.au-system .au-name {
+	font-style: italic;
+}
+

@@ -3,11 +3,14 @@ const { app, ipcMain, dialog, shell } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const actions = require('./actions');
+const appsettings = require('./appsettings');
+const audio = require('./audio');
 const autostart = require('./autostart');
 const apps = require('./apps');
 const bundle = require('./bundle');
 const dashboardIcons = require('./dashboard-icons');
 const customIcons = require('./custom-icons');
+const iconGen = require('./icon-gen');
 const usage = require('./usage');
 const sys = require('./sys');
 const { walkItems, sanitizeItem } = require('./config');
@@ -68,7 +71,20 @@ function registerIpc(deps) {
     // Packages are the export dialog with icon bytes attached; usage:clear
     // empties the recents sidecar. Both Settings-only like every writer.
     'config:export-bundle': ['settings'], 'usage:clear': ['settings'],
-    'welcome:done': ['welcome'], 'settings:close': ['settings'], 'app:quit': ['settings']
+    // The stats panel reads the same sidecar usage:clear writes, and the backup
+    // list/restore reach into userData — Settings-only, like every other writer.
+    'usage:stats': ['settings'], 'config:backups': ['settings'],
+    'config:restore-backup': ['settings'],
+    'welcome:done': ['welcome'], 'settings:close': ['settings'], 'app:quit': ['settings'],
+    // Audio writers reach the system's audio policy — same trust level as the
+    // other machine-touching writers. Device switching (set-default) is
+    // Settings-frame only; the wheel's volume-mixer panel legitimately drags
+    // real levels through set-volume/set-session — same trust class as
+    // segment-click, which already executes any configured action. The
+    // read channels (audio:devices/levels/sessions/available) are ungated
+    // like sys:catalog: they hand back data the on-screen UI already shows.
+    'audio:set-default': ['settings'],
+    'audio:set-volume': ['settings', 'wheel'], 'audio:set-session': ['settings', 'wheel']
   };
   const SEND_CHANNELS = new Set(['config:flush', 'wheel:segment-click', 'wheel:dismiss', 'wheel:grow', 'wheel:filter', 'welcome:done', 'settings:close', 'app:quit']);
   const refused = (ch, ev) => {
@@ -126,12 +142,34 @@ function registerIpc(deps) {
     const isKeyAction = item.type === 'macro' || (item.type === 'sys' && sys.KEY_ACTIONS.has(sysKey));
     if (isKeyAction) await new Promise((r) => setTimeout(r, 120)); // let the former window regain focus
     try {
-      await actions.executeAction(item, { quit: () => deps.quitApp() });
+      await actions.executeAction(item, actionCtx());
     } catch (err) {
       if (tray) tray.balloon(`${item && item.label ? item.label : 'Action'} failed`, String(err && err.message || err), 'error');
       log.error('action failed:', item && item.label, (err && (err.stack || err.message)) || err);
     }
   });
+
+  /* Context handed to every executeAction: the quit hook, the live
+     focus-existing-app flag (read per click, so the setting takes effect
+     without a restart), and the app-setting mutator. applySetting writes
+     through store.set() (so handleConfigChanged still re-arms autostart,
+     game mode, hotkey policy), then pushes the result to an open Settings
+     window with the reload-broadcast shape — its rev/echo/dirty-queue logic
+     reconciles the UI instead of clobbering it. */
+  function actionCtx() {
+    const bhv = (store.get() || {}).behavior || {};
+    return {
+      quit: () => deps.quitApp(),
+      focusExistingApp: bhv.focusExistingApp === true,
+      applySetting: async (id) => {
+        const merged = await appsettings.apply(id, store);
+        try {
+          settings.send('config:changed', { config: JSON.parse(JSON.stringify(merged)), rev: store.rev });
+        } catch { /* settings may be closed */ }
+        return merged;
+      }
+    };
+  }
 
   /* ---- config ---- */
   guardHandle('config:get', () => ({
@@ -207,18 +245,16 @@ function registerIpc(deps) {
     return { ok: true, path: r.filePath, icons: built.icons, skipped: built.skipped.length };
   });
 
-  guardHandle('config:import', async () => {
-    const r = await dialog.showOpenDialog(settings.win, {
-      title: 'Import config or package',
-      filters: [{ name: 'JSON', extensions: ['json'] }], properties: ['openFile']
-    });
-    if (r.canceled || !r.filePaths[0]) return { ok: false, canceled: true };
+  /* One import pipeline, two entrances: Advanced → Import… (pick any file) and
+     Advanced → Restore a backup… (opens straight at the rolling-backups folder).
+     `reason` tags the pre-replacement backup so the file name says what happened. */
+  async function importConfigFile(filePath, reason) {
     try {
-      const st = fs.statSync(r.filePaths[0]);
+      const st = fs.statSync(filePath);
       if (!st.isFile() || st.size > bundle.BUNDLE_FILE_MAX) {
         return { ok: false, error: 'That file is too large to import (limit ' + ((bundle.BUNDLE_FILE_MAX / 1048576) | 0) + ' MB)' };
       }
-      const raw = JSON.parse(fs.readFileSync(r.filePaths[0], 'utf8'));
+      const raw = JSON.parse(fs.readFileSync(filePath, 'utf8'));
       /* A package (config + icon bytes) installs its icons FIRST so the first
          summon after the config lands already finds its art. Per-icon failures
          are skips, never aborts — the config import proceeds regardless. */
@@ -229,17 +265,58 @@ function registerIpc(deps) {
         icons = { installed: got.installed, skipped: got.skipped.length };
         log.info(`package imported: ${got.installed} icons (${got.skipped.length} skipped)`);
       }
-      const merged = store.set(isBundle ? raw.config : raw);
+      // Always keep the displaced config: this is the one action whose Undo
+      // toast the user may never see (window closed, app quit).
+      const merged = store.set(isBundle ? raw.config : raw, { backup: 'force', reason });
       store.broken = false;
       return { ok: true, config: merged, rev: store.rev, hotkeyError: store.hotkeyError || null, icons };
     } catch (err) {
       return { ok: false, error: 'Import failed: ' + (err.message || err) };
     }
+  }
+
+  guardHandle('config:import', async () => {
+    const r = await dialog.showOpenDialog(settings.win, {
+      title: 'Import config or package',
+      filters: [{ name: 'JSON', extensions: ['json'] }], properties: ['openFile']
+    });
+    if (r.canceled || !r.filePaths[0]) return { ok: false, canceled: true };
+    return importConfigFile(r.filePaths[0], 'import');
+  });
+
+  /* The backup inventory (newest first) for the Advanced panel. */
+  guardHandle('config:backups', () => ({ ok: true, backups: store.listBackups(24) }));
+
+  /* Restore = import, but the dialog opens inside the backups folder so the
+     user never has to navigate to %APPDATA% by hand. Cancelling changes nothing. */
+  guardHandle('config:restore-backup', async () => {
+    const dir = store.backupDir();
+    try { fs.mkdirSync(dir, { recursive: true }); } catch { /* the dialog reports it */ }
+    const r = await dialog.showOpenDialog(settings.win, {
+      title: 'Restore a config backup', defaultPath: dir,
+      filters: [{ name: 'Radial Wheel config', extensions: ['json'] }], properties: ['openFile']
+    });
+    if (r.canceled || !r.filePaths[0]) return { ok: false, canceled: true };
+    const got = await importConfigFile(r.filePaths[0], 'restore');
+    if (got.ok) log.info(`config restored from backup: ${path.basename(r.filePaths[0])}`);
+    return got;
+  });
+
+  /* The Advanced → Usage panel: fire counts joined to the LIVE config, so a
+     deleted segment drops out of the list instead of lingering as a phantom. */
+  guardHandle('usage:stats', (ev, limit) => {
+    try {
+      const map = deps.getState('usage', {}) || {};
+      const s = usage.stats(store.get(), map, { limit: Number.isFinite(+limit) ? +limit : undefined });
+      return Object.assign({ ok: true }, s);
+    } catch (err) {
+      return { ok: false, error: String((err && err.message) || err), rows: [], segments: 0, totalFires: 0, records: 0, orphans: 0 };
+    }
   });
 
   guardHandle('config:reset', () => {
     try {
-      const merged = store.set({}); // validate({}) == defaults
+      const merged = store.set({}, { backup: 'force', reason: 'reset' }); // validate({}) == defaults
       store.broken = false;
       return { ok: true, config: merged, rev: store.rev, hotkeyError: store.hotkeyError || null };
     } catch (err) {
@@ -337,9 +414,21 @@ function registerIpc(deps) {
     walkItems(cfg, (it) => { out.push(it); });
     return out;
   };
-  const resolveIconImage = (key) => customIcons.isCustomKey(key)
-    ? customIcons.dataUrlFor(key)
-    : dashboardIcons.dataUrlFor(key);
+  /* `builtin:app` (icon-gen's APP_ICON_KEY) is the app's own wheel artwork:
+     served here so the overlay, the Settings rows and the live preview all
+     resolve art through this one lookup. A render failure (unwritable
+     userData) answers null like a cache miss — the segment then falls back to
+     its glyph instead of breaking. */
+  const appIconsDir = path.join(app.getPath('userData'), 'icons');
+  const resolveIconImage = (key) => {
+    if (key === iconGen.APP_ICON_KEY) {
+      try { return { ok: true, dataUrl: iconGen.appIconDataUrl(appIconsDir) }; }
+      catch { return null; }
+    }
+    return customIcons.isCustomKey(key)
+      ? customIcons.dataUrlFor(key)
+      : dashboardIcons.dataUrlFor(key);
+  };
 
   guardHandle('icons:search', (ev, query) => dashboardIcons.searchIcons(query));
   guardHandle('icons:fetch', (ev, slug) => dashboardIcons.fetchIcon(slug));
@@ -369,9 +458,11 @@ function registerIpc(deps) {
   });
 
   // Prime both disk caches so the wheel never has to wait on a download. Each
-  // module ignores keys outside its own family, so one list serves both.
+  // module ignores keys outside its own family, so one list serves both. The
+  // built-in app icon is local — filtering it out keeps anything from trying
+  // to "prefetch" it as a dashboard slug.
   const warmIcons = (cfg) => {
-    const keys = ringItems(cfg).map((it) => it.iconImage);
+    const keys = ringItems(cfg).map((it) => it.iconImage).filter((k) => k && k !== iconGen.APP_ICON_KEY);
     dashboardIcons.warm(keys);
     customIcons.warm(keys);
   };
@@ -408,7 +499,7 @@ function registerIpc(deps) {
     // untouched.
     const item = sanitizeItem(raw);
     try {
-      await actions.executeAction(item, { quit: () => deps.quitApp() });
+      await actions.executeAction(item, actionCtx());   // same ctx as a real click — preview behaves like the wheel
       return { ok: true };
     } catch (err) {
       return { ok: false, error: String(err && err.message || err) };
@@ -466,6 +557,37 @@ function registerIpc(deps) {
   });
 
   guardHandle('sys:catalog', () => sys.CATALOG);
+  /* ---- audio (Core Audio control; every answer is {ok,…}|{ok:false,error}) --
+     Reads are ungated like sys:catalog — endpoint ids, display names, and
+     volume levels are exactly what the on-screen UI shows. The writers
+     (set-default / set-volume / set-session) flip real system state and are
+     PRIVILEGED-gated (device switching to the Settings frame only; the wheel
+     mixer panel adds itself for the level writers); argument shapes are
+     clamped in main/audio.js before anything reaches COM. */
+  guardHandle('audio:available', () => audio.available());
+  guardHandle('audio:devices', (ev, flow) => audio.listDevices(flow));
+  guardHandle('audio:levels', (ev, flow) => audio.getLevels(flow));
+  guardHandle('audio:sessions', () => audio.listSessions());
+  guardHandle('audio:set-default', (ev, flow, deviceId) => audio.setDefaultDevice(flow, deviceId));
+  guardHandle('audio:set-volume', (ev, flow, payload) => {
+    const p = payload && typeof payload === 'object' ? payload : {};
+    const vol = +p.volume;
+    return audio.setLevels(flow, {
+      volume: Number.isFinite(vol) ? vol : null,
+      muted: typeof p.muted === 'boolean' ? p.muted : null
+    });
+  });
+  guardHandle('audio:set-session', (ev, pid, payload) => {
+    const p = payload && typeof payload === 'object' ? payload : {};
+    const vol = +p.volume;
+    return audio.setSession(pid, {
+      volume: Number.isFinite(vol) ? vol : null,
+      muted: typeof p.muted === 'boolean' ? p.muted : null
+    });
+  });
+  // Read-only, like sys:catalog: the app-setting dropdown data (labels/groups
+  // only — execution stays id-gated inside appsettings.apply).
+  guardHandle('appsettings:catalog', () => appsettings.CATALOG);
   guardHandle('apps:list', (ev, force) => apps.listApps(!!force));
   guardHandle('app:version', () => displayVersion());
   guardHandle('env:get', () => ({ vibrant: supportsVibrancy() }));

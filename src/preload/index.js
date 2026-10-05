@@ -24,9 +24,19 @@ const wheelSurface = {
   // Ask main to enlarge the transparent window (flyout beyond the outer ring).
   growCanvas: (reachPx) => ipcRenderer.send('wheel:grow', reachPx),
   // "A type-to-filter query is on screen" — while true, main lets Esc reach
-  // the page so the first press clears the query instead of dismissing.
+  // the page so the first press clears the query instead of dismissing. The
+  // volume-mixer panel rides the same flag: while it is open, Esc belongs to
+  // the page (first press closes the panel, second dismisses the wheel).
   setFiltering: (on) => ipcRenderer.send('wheel:filter', !!on),
-  iconDataUrl: invoke('icons:data-url')
+  iconDataUrl: invoke('icons:data-url'),
+  // The `mixer` segment's in-wheel volume panel: reads are ungated catalog-
+  // class lookups; the two writers are frame-gated to the wheel page in main
+  // and clamp volume/pid before anything reaches Core Audio.
+  audioAvailable: invoke('audio:available'),
+  audioLevels: invoke('audio:levels'),
+  audioSessions: invoke('audio:sessions'),
+  audioSetVolume: invoke('audio:set-volume'),
+  audioSetSession: invoke('audio:set-session')
 };
 
 /* The settings window's full surface (settings.js codes against
@@ -56,9 +66,27 @@ const settingsSurface = {
   importConfig: invoke('config:import'),
   resetConfig: invoke('config:reset'),
   clearUsage: invoke('usage:clear'),
+  // Advanced → Usage: fire counts joined to the live config (main owns the data).
+  usageStats: invoke('usage:stats'),
+  // Advanced → Restore a backup…: the rolling config backups and their picker.
+  listBackups: invoke('config:backups'),
+  restoreBackup: invoke('config:restore-backup'),
   openConfigFolder: invoke('config:open-folder'),
   openLogsFolder: invoke('log:open-folder'),
   sysCatalog: invoke('sys:catalog'),
+  // Audio: Settings-window controls for endpoints and the mixer. The three
+  // writers (setDefault/setVolume/setSession) are Settings-gated in main;
+  // the reads are plain lookups like sysCatalog.
+  audioAvailable: invoke('audio:available'),
+  audioDevices: invoke('audio:devices'),
+  audioLevels: invoke('audio:levels'),
+  audioSessions: invoke('audio:sessions'),
+  audioSetDefault: invoke('audio:set-default'),
+  audioSetVolume: invoke('audio:set-volume'),
+  audioSetSession: invoke('audio:set-session'),
+  // type: 'setting' — the app-setting dropdown (read-only catalog; the toggle
+  // itself runs in main when the segment fires).
+  appSettingsCatalog: invoke('appsettings:catalog'),
   appVersion: invoke('app:version'),
   env: invoke('env:get'),
   closeSettings: () => ipcRenderer.send('settings:close'),

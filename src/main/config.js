@@ -34,6 +34,21 @@ const MAX_PROFILES = 8;
 const MAX_PROFILE_APPS = 64;
 const MAX_PROFILE_NAME = 40;
 
+/* ------------------------------ config backups -----------------------------
+   Rolling safety net for the destructive paths (Import…, Reset), whose in-UI
+   Undo is a toast that dies with the Settings window. Backups are plain copies
+   of the config file we are ABOUT to replace, kept in <userData>\backups with a
+   sortable name so a user can pick one in Explorer — or through Advanced →
+   "Restore a backup…", which opens that very folder.
+
+   Autosave fires on every debounced edit, so ordinary saves are THROTTLED;
+   a replace operation (import/reset) forces one. Failures here are logged and
+   swallowed: losing a backup must never cost the user the save they asked for. */
+const BACKUP_DIR_NAME = 'backups';
+const MAX_BACKUPS = 12;
+const BACKUP_MIN_INTERVAL_MS = 5 * 60 * 1000;   // 10 min between ordinary saves
+const BACKUP_STEM_RE = /^config-[0-9]{8}-[0-9]{6}(?:-[a-z0-9]{1,12})?-r[0-9]+\.json$/;
+
 /* Optional persona fields on a palette; malformed entries are dropped, never
    defaulted (see themes.mjs sanitizePalette for the renderer-side mirror). */
 function cleanPalette(raw) {
@@ -106,7 +121,16 @@ function defaults() {
          fires the best match. */
       typeToFilter: true,
       /* How many items the `recent` segment's auto-filled sub-menu shows. */
-      recentsCount: 8
+      recentsCount: 8,
+      /* Soft synthesized hover/select ticks in the wheel overlay (Web Audio,
+         generated in wheel-sound.js — no asset files). Opt-in: audio never
+         makes a sound unless the user turns it on. */
+      wheelSound: false,
+      /* Opt-in: when an `app` segment names a .exe that already owns a
+         visible window, raise that window instead of launching a second
+         instance (macro.focusAppWindowByExe). Off by default — launching a
+         new instance is what every existing install does today. */
+      focusExistingApp: false
     },
     theme: { id: DEFAULT_THEME_ID, customized: false, colors: { ...DEFAULT_COLORS } },
     userThemes: [],
@@ -136,7 +160,7 @@ const HEX = /^#[0-9a-fA-F]{6}$/;
 const clamp = (v, lo, hi, dflt) =>
   (typeof v === 'number' && isFinite(v)) ? Math.min(hi, Math.max(lo, v)) : dflt;
 
-const TYPES = new Set(['app', 'url', 'file', 'command', 'macro', 'sys', 'folder', 'recent']);
+const TYPES = new Set(['app', 'url', 'file', 'command', 'macro', 'sys', 'setting', 'folder', 'recent', 'mixer']);
 const HOTKEY_RE = /^[a-z0-9+ ]{1,40}$/;
 
 function validate(raw) {
@@ -158,15 +182,20 @@ function validate(raw) {
     const isFolder = type === 'folder';
     // `recent` is a container too — its sub-menu is main-resolved at summon
     // time, so every action slot AND any hand-carried children are wiped.
-    const isContainer = isFolder || type === 'recent';
+    // `mixer` is a third: the volume-mixer segment is a pure flyout trigger
+    // (the overlay panel reads/writes Core Audio through the audio channels),
+    // so it launches nothing and carries nothing.
+    const isContainer = isFolder || type === 'recent' || type === 'mixer';
     return {
       id: typeof it.id === 'string' && it.id ? it.id : nid(),
       label: String(it.label ?? `Item ${i + 1}`).slice(0, 40),
       icon: typeof it.icon === 'string' ? Array.from(it.icon).slice(0, 2).join('') : '',
-      // Logo/artwork slot: a Dashboard Icons slug or a `custom:<hash>.<kind>`
-      // key (see dashboard-icons.js and custom-icons.js). Anything neither
+      // Logo/artwork slot: a Dashboard Icons slug, a `custom:<hash>.<kind>`
+      // key (see dashboard-icons.js and custom-icons.js), or the reserved
+      // `builtin:app` key (icon-gen's own-app artwork). Anything neither
       // family recognises degrades to '' so the glyph fallback above works.
       iconImage: (() => {
+        if (it.iconImage === require('./icon-gen').APP_ICON_KEY) return it.iconImage;
         const custom = require('./custom-icons').sanitizeKey(it.iconImage);
         return custom || require('./dashboard-icons').sanitizeSlug(it.iconImage) || '';
       })(),
@@ -184,8 +213,10 @@ function validate(raw) {
       // toggle still wins when labels are off for everyone.
       hideLabel: !!it.hideLabel,
       // Optional parameter slot; currently only the sys `explorer` action
-      // consumes it (the folder Explorer opens in). Inert on other types.
-      dir: !isContainer && typeof it.dir === 'string' ? it.dir.trim().slice(0, 2048) : '',
+      // consumes it (the folder Explorer opens in). Wiped on containers and
+      // on `setting` (whose only parameter is the setting id in `value`);
+      // inert on the other action types.
+      dir: !isContainer && type !== 'setting' && typeof it.dir === 'string' ? it.dir.trim().slice(0, 2048) : '',
       // Folder sub-menu tree, pruned at the caps above. Deeper folders simply
       // lose their own children (they render as empty sub-menus).
       children: isFolder && depth < MAX_FOLDER_DEPTH
@@ -310,7 +341,11 @@ function validate(raw) {
       // still fire under marking; the filter never interferes with chords).
       markingSelect: bhvIn.markingSelect !== false,
       typeToFilter: bhvIn.typeToFilter !== false,
-      recentsCount: clamp(bhvIn.recentsCount, 3, 12, base.behavior.recentsCount)
+      recentsCount: clamp(bhvIn.recentsCount, 3, 12, base.behavior.recentsCount),
+      // Opt-in, fail-closed like mouseClickThrough: absent/junk = silent wheel.
+      wheelSound: bhvIn.wheelSound === true,
+      // Same opt-in discipline: absent/junk = always launch (legacy behavior).
+      focusExistingApp: bhvIn.focusExistingApp === true
     },
     theme: {
       id: themeId,
@@ -402,6 +437,18 @@ function importLegacy(cfgDirCandidates) {
    hook — otherwise toggling the checkbox would only take effect after a restart. */
 const hotkeyPolicy = (c) => `${c.hotkey}|${c.behavior && c.behavior.mouseClickThrough ? 1 : 0}`;
 
+/* Backup file name: `config-20261004-063015-import-r12.json`. Lexicographic
+   order == chronological order (fixed-width local timestamp), the optional
+   reason tag says WHICH action displaced it, and every character comes from a
+   whitelist — a renderer-supplied reason can never smuggle a path separator. */
+function backupName(date, rev, reason) {
+  const p = (n, w) => String(n).padStart(w, '0');
+  const d = date instanceof Date && !Number.isNaN(date.getTime()) ? date : new Date();
+  const tag = String(reason || '').toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 12);
+  return `config-${p(d.getFullYear(), 4)}${p(d.getMonth() + 1, 2)}${p(d.getDate(), 2)}-${p(d.getHours(), 2)}${p(d.getMinutes(), 2)}${p(d.getSeconds(), 2)}`
+    + (tag ? `-${tag}` : '') + `-r${Math.max(0, rev | 0)}.json`;
+}
+
 class ConfigStore extends EventEmitter {
   constructor() {
     super();
@@ -410,11 +457,79 @@ class ConfigStore extends EventEmitter {
     this._watcher = null;
     this._suppressUntil = 0;
     this._lastGood = null;
+    /* Backup throttle clock: starting at NOW means a burst of autosaves right
+       after boot cannot crowd the rotation — only the forced ones (Import… /
+       Reset) get in immediately. */
+    this._lastBackupAt = Date.now();
     this.rev = 0;   // bumped on every genuine content change; the settings window
                     // uses it to tell its own saves' echoes from external edits
   }
 
   file() { return path.join(app.getPath('userData'), 'config.json'); }
+
+  backupDir() { return path.join(app.getPath('userData'), BACKUP_DIR_NAME); }
+
+  /* Newest-first inventory of the rolling backups, for the restore picker.
+     Any fs trouble answers [] — the panel then simply says "none yet". */
+  listBackups(limit = 50) {
+    const dir = this.backupDir();
+    try {
+      return fs.readdirSync(dir)
+        .filter((f) => BACKUP_STEM_RE.test(f))
+        .sort()
+        .reverse()
+        .slice(0, Math.max(1, Math.min(limit | 0 || 1, 200)))
+        .map((f) => {
+          const full = path.join(dir, f);
+          let size = 0, mtimeMs = 0;
+          try { const st = fs.statSync(full); size = st.size; mtimeMs = st.mtimeMs; } catch { /* vanished mid-list */ }
+          return { name: f, path: full, size, mtimeMs };
+        });
+    } catch { return []; }
+  }
+
+  /**
+   * Copy the OUTGOING config.json into the backups folder before it is replaced.
+   * Skips: no file yet, a save that changes nothing on disk, and ordinary saves
+   * inside the throttle window. `force` (import / reset) ignores the throttle —
+   * those are the two actions whose Undo toast the user may never see.
+   * Never throws: a backup problem is logged and the save proceeds.
+   */
+  _backupOutgoing(reason, force = false, newJson = null) {
+    try {
+      const p = this.file();
+      if (!fs.existsSync(p)) return false;
+      let old;
+      try { old = fs.readFileSync(p, 'utf8'); } catch { return false; }
+      if (!old) return false;
+      if (newJson !== null && old === newJson) return false;   // the save is a no-op — nothing is being lost
+      const now = Date.now();
+      if (!force && now - this._lastBackupAt < BACKUP_MIN_INTERVAL_MS) return false;
+      const dir = this.backupDir();
+      fs.mkdirSync(dir, { recursive: true });
+      const dest = path.join(dir, backupName(new Date(), this.rev, reason));
+      fs.writeFileSync(dest, old, 'utf8');
+      this._lastBackupAt = now;
+      this._pruneBackups();
+      log.info(`config backup kept: ${path.basename(dest)}`);
+      return true;
+    } catch (err) {
+      log.warn('config backup skipped:', (err && err.message) || err);
+      return false;
+    }
+  }
+
+  /* Keep the newest MAX_BACKUPS files. Only ever deletes our own filename
+     shape, so anything a user drops in the folder survives. */
+  _pruneBackups() {
+    try {
+      const dir = this.backupDir();
+      const names = fs.readdirSync(dir).filter((f) => BACKUP_STEM_RE.test(f)).sort().reverse();
+      for (const f of names.slice(MAX_BACKUPS)) {
+        try { fs.unlinkSync(path.join(dir, f)); } catch { /* best effort */ }
+      }
+    } catch { /* pruning is housekeeping */ }
+  }
 
   init() {
     const p = this.file();
@@ -457,7 +572,9 @@ class ConfigStore extends EventEmitter {
 
   get() { return this._cfg; }
 
-  set(newCfg) {
+  /* opts.backup === 'force' skips the throttle (the destructive paths: Import…
+     and Reset), opts.reason tags the backup's file name. */
+  set(newCfg, opts = {}) {
     const merged = validate({ ...newCfg, version: VERSION });
     const old = this._cfg;
     const oldGood = this._lastGood;
@@ -465,7 +582,7 @@ class ConfigStore extends EventEmitter {
     this._cfg = merged;
     this.rev++;
     try {
-      this._write();
+      this._write(opts);
     } catch (e) {
       // disk refused the save — roll the store back so memory and file agree
       this._cfg = old;
@@ -494,13 +611,18 @@ class ConfigStore extends EventEmitter {
     }
   }
 
-  _write() {
+  _write(opts = {}) {
     const p = this.file();
     const tmp = p + '.tmp';
     this._suppressUntil = Date.now() + 300;
+    const json = JSON.stringify(this._cfg, null, 2);
     try {
       fs.mkdirSync(path.dirname(p), { recursive: true });
-      fs.writeFileSync(tmp, JSON.stringify(this._cfg, null, 2), 'utf8');
+      // Safety net first (best-effort: never fails the save the user asked for).
+      // The new JSON is passed in so a save that changes nothing on disk is not
+      // worth a backup slot.
+      this._backupOutgoing(opts.reason || (opts.backup === 'force' ? 'replace' : ''), opts.backup === 'force', json);
+      fs.writeFileSync(tmp, json, 'utf8');
       fs.renameSync(tmp, p);
     } catch (e) {
       try { fs.unlinkSync(tmp); } catch { /* leftover temp, best effort */ }
@@ -523,4 +645,4 @@ class ConfigStore extends EventEmitter {
   }
 }
 
-module.exports = { ConfigStore, validate, defaults, sanitizeItem, walkItems, VERSION, MAX_RINGS, MAX_CHILDREN, MAX_FOLDER_DEPTH, MAX_PROFILES, MAX_PROFILE_APPS };
+module.exports = { ConfigStore, validate, defaults, sanitizeItem, walkItems, backupName, VERSION, MAX_RINGS, MAX_CHILDREN, MAX_FOLDER_DEPTH, MAX_PROFILES, MAX_PROFILE_APPS, MAX_BACKUPS, BACKUP_MIN_INTERVAL_MS };

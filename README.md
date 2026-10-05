@@ -56,18 +56,52 @@ in Settings. Replay the guide anytime from tray → **Show welcome…**.
 | `url` | `https://gmail.com` | default browser |
 | `file` | `C:\\Docs\\notes.md` | opens with its registered handler |
 | `command` | `taskkill /f /im foo.exe` | detached shell command |
-| `macro` | `ctrl+c, wait=0.2, ctrl+v` · `type:hello` | real SendInput keys |
+| `macro` | `ctrl+c, wait=0.2, ctrl+v` · `type:hello` · `click, scroll=3` | real SendInput keys **and** mouse |
 | `sys` | `lock`, `mute`, `screenshot`, `wifi`, … | built-in Windows actions |
+| `setting` | `toggle_wheel_sound`, `toggle_game_mode`, … | flips one radial-wheel setting on the spot (dropdown picker, app icon by default) |
 | `folder` | — (no value) | sub-menu that branches outward on hover |
-| `recent` | — (no value) | self-filling sub-menu of your most-used segments; you edit only its label/icon |
+| `recent` | — (no value) | self-filling sub-menu of your most-recently-used segments; you edit only its label/icon |
 
 `sys` values: `lock sleep screenshot show_desktop task_manager exit_app mute volume_up
 volume_down sound explorer recycle_bin settings wifi bluetooth notifications night_light
-display power clipboard_history emoji_picker`.
+display power clipboard_history emoji_picker set_output_device set_input_device`
+(the last two carry a device: the editor lists your live audio endpoints and the
+segment makes the chosen one the system default when it fires — same mechanism as
+`explorer`'s folder box).
+
+`setting` values (each is a live toggle, same switches as the Settings window):
+`toggle_wheel_sound toggle_labels toggle_marking toggle_type_filter toggle_retrigger
+toggle_dismiss_escape toggle_dismiss_rightclick toggle_click_through
+toggle_focus_existing toggle_profiles toggle_game_mode toggle_autostart`.
+
+### Macros
+
+A `macro` segment replays a comma-separated script through `SendInput`
+(`src/main/macro.js`). Keyboard and mouse steps mix in one spec:
+
+| step | example | note |
+|---|---|---|
+| chord | `ctrl+shift+s`, or a lone `a` | `+` joins keys; released in reverse order, so a mid-run failure can never leave Ctrl stuck down |
+| literal text | `type:hello, world` | Unicode via `KEYEVENTF_UNICODE`; **must be the last step** — it consumes the rest of the string, commas included |
+| pause | `wait=0.2` | seconds; clamped to 5 s each |
+| mouse button | `click` `rclick` `mclick` `dblclick` `back` `forward` | left / right / middle / double-left / XBUTTON1 / XBUTTON2 — press **and** release at the current cursor position |
+| wheel | `scroll=3`, `scroll=-2` | notches in one event; positive = down, negative = up (max 25) |
+| hold | `hold=ctrl+c=1.5`, `hold=f15` | press, hold, release in reverse; default 0.5 s, max 5 s |
+| repeat | `repeat=3:ctrl+v` | re-runs one step 1–20×; cannot wrap `wait=`, `type:` or another `repeat=` |
+
+Bounds are enforced **before** a single event is injected — so no spec, not
+even one fired from Settings → **Try**, can overrun the resident process:
+2048 characters, 128 steps, 15 s of combined waits/holds/repeats. Injection is
+paced (~12 ms between events, 8 ms per typed character) because fast target
+apps drop unhurried input.
+
+Mouse steps land wherever the pointer sits when the macro runs — the plate you
+just clicked; the wheel hides first, so the click reaches whatever was under
+it. Aim deliberately, or give the target a `wait=` beat to settle.
 
 ## Settings
 
-Open from the tray (double-click icon → **Open Settings**). Four tabs:
+Open from the tray (double-click icon → **Open Settings**). Five tabs:
 
 - **Segments** — add / edit / reorder / delete items on any ring, **+ Add ring**
   grows the wheel outward (up to 4 rings; remove the outermost anytime),
@@ -91,6 +125,12 @@ Open from the tray (double-click icon → **Open Settings**). Four tabs:
   through to the app under the cursor** to choose between swallowing the click and
   detect-only. Start-with-Windows toggle,
   dismiss options, **Drag to select** / **Type to filter** wheel gestures,
+  a **Sound feedback** toggle (soft synthesized hover/select ticks, off by
+  default — generated on the fly with Web Audio, no audio files),
+  a **Focus an app that's already open** switch (off by default — when a
+  program segment fires and that app already owns a window, its existing
+  window is raised instead of launching a second copy; applies to `.exe`
+  segments — shortcuts, scripts and links always open as before),
   a **Recent items show** slider (how full a `recent` fan gets), and
   **Use a different wheel per app** — the app-profile master switch.
   Plus **Gaming mode**: the wheel turns itself off (hotkey
@@ -101,11 +141,23 @@ Open from the tray (double-click icon → **Open Settings**). Four tabs:
   why the hotkey is off, and tray → **Show wheel** still works as an override.
   Profiles reuse this same focus probe — sampled once per wheel opening, nothing
   runs in the background while both features are off.
+- **Audio** — change the system **default output and input devices** from a live
+  picker (friendly names, the current default marked), set **master volume and
+  mute** for each direction, and run a **per-app volume mixer**: every program
+  currently playing audio gets its own slider and mute button, exactly like the
+  Windows Volume Mixer. Everything reads back from Windows, so the panel stays
+  honest when something else changes the volume; the list refreshes itself
+  while the tab is visible and does nothing while it isn't. The two device
+  pickers double as the data source for the `set_output_device` /
+  `set_input_device` wheel segments (below). An **Open Windows sound settings**
+  button is the escape hatch for device properties and formats.
 - **Advanced** — export / import config, **Export package… (with icons)** — one
   JSON file carrying the config plus the bytes of every custom segment image, so
   a shared setup arrives fully decorated (import accepts either format; icon
   payloads are content-address-verified on the way in, mismatched art is skipped
-  to the glyph fallback), **Clear recent-items data**, open the config folder,
+  to the glyph fallback), **Restore a backup…** (the rolling config backups, see
+  below), a **Usage** panel listing your most-fired segments with counts and
+  last-used times, **Clear recent-items data**, open the config folder,
   action type reference, exit.
 
 All edits autosave (debounced) to:
@@ -113,6 +165,15 @@ All edits autosave (debounced) to:
 ```
 %APPDATA%\Radial Wheel\config.json
 ```
+
+Before **Import…** or **Reset to defaults** replaces that file, the outgoing
+config is copied to `%APPDATA%\Radial Wheel\backups` as
+`config-20261004-063015-import-r12.json`; the newest **12** are kept. Ordinary
+autosaves join that rotation at most once every 5 minutes (and never when the
+content didn't change), so a burst of typing can't bury the copies that matter —
+the destructive actions always get theirs. **Restore a backup…** opens a picker
+rooted in that folder; the replacement is itself backed up and the toast's
+**Undo** puts the previous config straight back.
 
 The file is watched — hand-edit it and the running wheel picks changes up
 (hotkey re-registers too). If it ever becomes invalid JSON, the app keeps the
@@ -188,7 +249,8 @@ To launch from source with no console (e.g. a Startup entry during development):
   to them like any other setting.
 - **Recent segments** are filled by main at summon time from a usage sidecar
   (`state.json` — never config.json, so exports, packages and shares carry zero
-  statistics). Only REAL wheel clicks count; Settings "Try" runs don't pollute
+  statistics). The fan ranks **most-recently-used first** (fire count only breaks
+  ties). Only REAL wheel clicks count; Settings "Try" runs don't pollute
   recents. Clicking an item inside a recent fan executes the real segment with
   that id (every click passes the same live-config id match); the container
   itself launches nothing. In the live preview a recent plate shows as its
@@ -248,11 +310,46 @@ app's hook took it first). Dev builds only — inert once packaged.
     Enter launches it; Backspace edits the query; Esc once clears it, Esc again dismisses
     (and honors the Esc-dismiss setting). A match inside a closed folder opens the fan.
 14. Recents: add a **recent** segment; fire several actions from the real wheel;
-    re-summon → its fan holds the most-used items (hover to branch, click to run —
+    re-summon → its fan holds the most-recently-used items (hover to branch, click to run —
     macro timing intact). `state.json` keeps the counts; config.json stays clean.
     Advanced → **Clear recent-items data** → the fan goes empty until you use the wheel again.
 15. Package: pick a disk image as a segment icon → Advanced → **Export package…**:
     the file carries config + icon. Delete/rename `%APPDATA%\Radial Wheel\icons\custom`,
     then **Import…** the package → icons come back with no network (plain-exported
     configs still import exactly as before, minus the art).
-```
+16. Sound: Behavior → tick **Sound feedback** → summon; the selection (pointer
+    hover or arrow keys) ticks softly per segment change, and firing adds a
+    higher tick. Unticked → complete silence (no AudioContext is ever created).
+    The first hover of a cold pop may be inaudible until the first click/Enter
+    unlocks the audio context (browser autoplay policy) — never an error or delay.
+17. Focus existing app: open Notepad, tick Behavior → **Focus an app that's
+    already open…**, fire an `app` segment pointing at `notepad.exe` → the open
+    window comes to the front (minimized ones are restored) and NO second copy
+    starts. Close Notepad → firing the same segment launches it again. Unticked
+    → every fire launches a new instance exactly as before.
+18. Macro mouse steps (**injects real input — aim the cursor first**): a `macro`
+    segment `click, wait=0.3, rclick, scroll=3, hold=ctrl+c=1, repeat=2:ctrl+v` over
+    a Notepad + Explorer window: left click, right click (menu), three wheel notches
+    down, Ctrl held a second while typing `c`, then Ctrl+V twice. A step that
+    overruns the bounds — e.g. `repeat=99:click` or 20 × `wait=5` — is refused with
+    a balloon before anything is typed, and the wheel stays usable.
+19. Backups: Advanced → **Import…** a different config → `%APPDATA%\Radial
+    Wheel\backups` gains `config-<timestamp>-import-r<n>.json` holding the config it
+    replaced; **Restore a backup…** opens right there, and its toast **Undo** puts
+    the previous config back. Type 20 edits in a row → the autosaves do NOT each add
+    a backup (one at most per 5 min); save 13 forced replacements → only the newest
+    12 files remain.
+20. Usage panel: fire a few segments from the real wheel → Advanced → **Usage**
+    lists them most-fired first, with the ring / folder path / profile each lives in,
+    the `n×` count and a relative last-used time; the summary reports total fires and
+    any orphan counts from deleted segments. Settings **Try** buttons add nothing
+    (by design). **Clear recent-items data** empties the panel and the `recent` fans.
+21. Audio: Settings → **Audio** tab → the Output/Input pickers list the real
+    endpoints with the current default marked `· default`; the Master volume
+    slider and mute move the Windows values (visible in the tray mixer — and
+    changes made elsewhere flow back into the panel while the tab is open).
+    Start something playing → it appears under **App volume** with its own
+    slider + mute, affecting only that app. Segments → add a `sys`
+    **Set audio output device** segment, bind a device in its picker, fire it
+    from the real wheel → that device becomes the system default (an unplugged
+    binding fails with a balloon naming the reason, never silently).

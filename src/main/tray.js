@@ -46,8 +46,11 @@ class TrayManager {
     const cfg = this.getCfg();
     const game = this.handlers.getGameMode ? this.handlers.getGameMode() : null;
     const template = [
-      { label: 'Show wheel', accelerator: undefined, click: () => this.handlers.onShowWheel() },
-      { label: `Open Settings  (${hotkeys.parse ? safeDisp(cfg.hotkey) : cfg.hotkey})`, click: () => this.handlers.onOpenSettings() },
+      // The hotkey shown here is the SUMMON trigger — it belongs on "Show
+      // wheel", not on "Open Settings" (the old label implied the hotkey
+      // opened Settings, which it never does).
+      { label: `Show wheel  (${safeDisp(cfg.hotkey)})`, click: () => this.handlers.onShowWheel() },
+      { label: 'Open Settings', click: () => this.handlers.onOpenSettings() },
       { label: 'Show welcome…', click: () => this.handlers.onShowWelcome() },
       { type: 'separator' },
       { label: 'Reload config from disk', click: () => this.handlers.onReload() },

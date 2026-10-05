@@ -33,8 +33,11 @@ const rawReg = [...src.matchAll(/ipcMain\.(?:on|handle)\('([^']+)'/g)].map((m) =
 /* Read-only channels: their data is already on-screen in every window
    (config echo, catalog, version) — documented exception, not an oversight. */
 const READ_ONLY = new Set([
-  'config:get', 'autostart:get', 'sys:catalog', 'apps:list',
+  'config:get', 'autostart:get', 'sys:catalog', 'appsettings:catalog', 'apps:list',
   'app:version', 'env:get', 'welcome:info',
+  // Audio reads are catalog-class: endpoint ids/names and levels are exactly
+  // what the Settings screen shows; the writers are PRIVILEGED-gated.
+  'audio:available', 'audio:devices', 'audio:levels', 'audio:sessions',
 ]);
 /* Deliberately ungated fire-and-forget diagnostics (crash-time logs must
    survive page teardown); payload is clamped inside the logger. */
@@ -64,8 +67,18 @@ test('side-effect surfaces sit on their legitimate pages only', () => {
   // Privileged writes stay settings-only...
   for (const ch of ['config:set', 'config:flush', 'config:import', 'config:reset',
     'autostart:set', 'dialog:pick-file', 'action:preview', 'icons:add-url', 'icons:pick-image',
-    'config:export-bundle', 'usage:clear'])
+    'config:export-bundle', 'usage:clear',
+    // The stats panel reads the private sidecar and the backup pair reaches into
+    // userData — none of that belongs to the overlay or the FTU page.
+    'usage:stats', 'config:backups', 'config:restore-backup',
+    // Device switching flips system-wide policy — settings-only, like every writer.
+    'audio:set-default'])
     assert.deepEqual(gated.get(ch), ['settings'], `${ch} owner drift`);
+  // ...the wheel's volume-mixer card may drag levels, so the two level writers
+  // gained the wheel frame deliberately (arguments clamped in main/audio.js).
+  // An owner-list change here is a security decision, not a refactor.
+  assert.deepEqual(gated.get('audio:set-volume'), ['settings', 'wheel'], 'mixer card contract');
+  assert.deepEqual(gated.get('audio:set-session'), ['settings', 'wheel'], 'mixer card contract');
   // ...welcome appears only where the FTU contract needs it.
   assert.deepEqual(gated.get('hotkey:set'), ['settings', 'welcome']);
   assert.deepEqual(gated.get('overlay:show'), ['settings', 'welcome']);
@@ -91,4 +104,33 @@ test('SEND_CHANNELS covers exactly the fire-and-forget on-channels', () => {
   const set = new Set([...block[1].matchAll(/'([^']+)'/g)].map((m) => m[1]));
   assert.deepEqual([...set].sort(), [...onCh].sort(),
     'every ipcMain.on channel must be in SEND_CHANNELS (and no invoke channel may leak in)');
+});
+
+/* The dead-channel class: a bridge function pointing at a channel main never
+   registers (or a typo in either name) is invisible until the button that
+   calls it silently does nothing. Every channel the preload INVOKES or SENDS
+   must exist in main; main→renderer pushes (overlay:show, config:changed,
+   welcome:reset) are not preload calls, so they are out of scope here. */
+test('every preload bridge names a channel main actually registers', () => {
+  const preload = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'preload', 'index.js'), 'utf8');
+  const used = new Set([
+    ...[...preload.matchAll(/invoke\('([^']+)'/g)].map((m) => m[1]),
+    // Both spellings: the preload's own `send(ch)` factory and ipcRenderer.send.
+    ...[...preload.matchAll(/\bsend\('([^']+)'/g)].map((m) => m[1])
+  ]);
+  assert.ok(used.size >= 25, `expected the full bridge surface, saw ${used.size}`);
+  for (const ch of used) {
+    assert.ok(registered.has(ch) || gated.has(ch) || UNGATED_BY_DESIGN.has(ch),
+      `preload calls '${ch}', which ipc.js never registers`);
+  }
+  // And the mirror direction: a privileged gate with no caller is dead weight.
+  /* Grandfathered debt (flagged by the whole-tree audit, not yet built):
+     'logs:tail' has a main-side handler + gate but no preload bridge or panel —
+     the in-app log viewer is the open item. Delete an entry from this set only
+     by giving the channel a caller; adding one needs a reason in the PR. */
+  const PENDING_CONSUMER = new Set(['logs:tail']);
+  for (const ch of gated.keys()) {
+    if (READ_ONLY.has(ch) || UNGATED_BY_DESIGN.has(ch) || PENDING_CONSUMER.has(ch)) continue;
+    assert.ok(used.has(ch), `ipc.js gates '${ch}' but no page ever calls it`);
+  }
 });

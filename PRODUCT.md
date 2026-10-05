@@ -14,11 +14,11 @@ General Windows users — including people who are not comfortable editing confi
 
 ## Product Purpose
 
-An always-running radial launcher for Windows: one hotkey pops a two-ring wheel at the mouse cursor; clicking a segment launches apps, opens URLs or files, runs commands, replays keystroke macros, or triggers built-in Windows actions. It exists to compress repetitive desktop choreography into muscle memory — **and** to make that compression genuinely satisfying to use. Speed and delight are both success criteria: the wheel must be faster than Alt+Tab or the Start Menu, and it must feel like a rewarding object at the cursor rather than a menu. The Settings window (Segments, Appearance, Hotkey & Behavior, Advanced) is where that muscle memory gets built, per-user, with live preview and autosave.
+An always-running radial launcher for Windows: one hotkey pops a two-ring wheel at the mouse cursor; clicking a segment launches apps, opens URLs or files, runs commands, replays keystroke and mouse macros, or triggers built-in Windows actions. It exists to compress repetitive desktop choreography into muscle memory — **and** to make that compression genuinely satisfying to use. Speed and delight are both success criteria: the wheel must be faster than Alt+Tab or the Start Menu, and it must feel like a rewarding object at the cursor rather than a menu. The Settings window (Segments, Appearance, Hotkey & Behavior, Advanced) is where that muscle memory gets built, per-user, with live preview and autosave.
 
 ## Positioning
 
-The all-in-one action hub: launcher, macro recorder, and Windows-actions panel unified in one radial surface at your cursor — nothing else bundles all three into a single configurable wheel.
+The all-in-one action hub: launcher, macro engine, and Windows-actions panel unified in one radial surface at your cursor — nothing else bundles all three into a single configurable wheel.
 
 ## Brand Personality
 

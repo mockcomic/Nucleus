@@ -33,7 +33,7 @@ test('validate coerces junk args and defaults it to empty', () => {
 });
 
 test('validate blanks args for every non-app type', () => {
-  for (const type of ['url', 'file', 'command', 'macro', 'sys']) {
+  for (const type of ['url', 'file', 'command', 'macro', 'sys', 'setting']) {
     assert.equal(clean({ type, value: 'v', args: '--sneaky' }).args, '', `type ${type}`);
   }
 });
@@ -58,6 +58,25 @@ test('mouseClickThrough is only true for a real true', () => {
     assert.equal(bhv({ behavior: { mouseClickThrough: junk } }).mouseClickThrough, false, String(junk));
   }
   assert.equal(bhv({ behavior: { mouseClickThrough: false } }).mouseClickThrough, false);
+});
+
+/* ---------------------- behaviour: focus-existing-app ---------------------- */
+test('focusExistingApp defaults to false (always launch)', () => {
+  assert.equal(bhv({}).focusExistingApp, false);
+  assert.equal(bhv({ behavior: {} }).focusExistingApp, false);
+});
+
+test('focusExistingApp is only true for a real true', () => {
+  assert.equal(bhv({ behavior: { focusExistingApp: true } }).focusExistingApp, true);
+  for (const junk of ['yes', 1, {}, [], 'true']) {
+    assert.equal(bhv({ behavior: { focusExistingApp: junk } }).focusExistingApp, false, String(junk));
+  }
+  assert.equal(bhv({ behavior: { focusExistingApp: false } }).focusExistingApp, false);
+});
+
+test('focusExistingApp survives a save round-trip', () => {
+  const saved = validate({ behavior: { focusExistingApp: true } });
+  assert.equal(validate(JSON.parse(JSON.stringify(saved))).behavior.focusExistingApp, true);
 });
 
 /* --------------------------------- hotkey ---------------------------------- */
@@ -170,6 +189,35 @@ test('recent is a container type: action slots and hand-carried children wiped',
   assert.deepEqual(it.children, []);
 });
 
+/* ------------------------------ mixer items -------------------------------- */
+test('mixer is a container type too: it stores no action and no fan', () => {
+  const it = clean({ type: 'mixer', value: 'sndvol.exe', args: '--loud', dir: 'C:\\x', children: [{ id: 'k', type: 'app', value: 'evil.exe' }] });
+  assert.equal(it.type, 'mixer', 'must survive the TYPES whitelist, not coerce to app');
+  assert.equal(it.value, '');
+  assert.equal(it.args, '');
+  assert.equal(it.dir, '');
+  assert.deepEqual(it.children, [], 'the volume card is built live from Core Audio — nothing stowed in the item');
+});
+
+/* ------------------------------ setting items ------------------------------ */
+test('setting is an executable type: value kept, args/dir/children wiped', () => {
+  const it = clean({ type: 'setting', value: 'toggle_wheel_sound', args: '--sneaky', dir: 'C:\\ghost', children: [{ id: 'k', type: 'app', value: 'evil.exe' }] });
+  assert.equal(it.type, 'setting', 'must survive the TYPES whitelist, not coerce to app');
+  assert.equal(it.value, 'toggle_wheel_sound');
+  assert.equal(it.args, '', 'the arguments slot is app-only');
+  assert.equal(it.dir, '', 'the folder slot is sys-only');
+  assert.deepEqual(it.children, [], 'children are folder-only');
+});
+
+test('the builtin:app icon key survives sanitize; junk and near-misses drop', () => {
+  assert.equal(clean({ type: 'setting', iconImage: 'builtin:app' }).iconImage, 'builtin:app');
+  // Exact-match sentinel: case is part of the key contract, path-ish junk never passes.
+  assert.equal(clean({ type: 'app', iconImage: 'BUILTIN:APP' }).iconImage, '');
+  assert.equal(clean({ type: 'app', iconImage: 'builtin:app/../evil' }).iconImage, '');
+  assert.equal(clean({ type: 'app', iconImage: 'builtin:app\n' }).iconImage, '');
+});
+
+
 /* ----------------------------- behavior flags ------------------------------ */
 test('new behavior flags: defaults', () => {
   const b = validate({}).behavior;
@@ -193,6 +241,16 @@ test('recentsCount clamps to 3..12 and heals junk', () => {
   assert.equal(bhv({ behavior: { recentsCount: 0 } }).recentsCount, 3);
   assert.equal(bhv({ behavior: { recentsCount: 'eight' } }).recentsCount, 8);
 });
+
+/* ------------------------------- wheelSound ------------------------------- */
+test('wheelSound is opt-in: default false, only a real true turns audio on', () => {
+  assert.equal(bhv({}).wheelSound, false, 'absent = silent wheel');
+  assert.equal(bhv({ behavior: { wheelSound: true } }).wheelSound, true);
+  for (const junk of ['yes', 1, {}, 'on']) {
+    assert.equal(bhv({ behavior: { wheelSound: junk } }).wheelSound, false, `junk ${JSON.stringify(junk)} stays silent`);
+  }
+});
+
 
 /* ----------------------------- walkItems coverage --------------------------- */
 test('walkItems reaches into profile rings AND nested folder children', () => {
