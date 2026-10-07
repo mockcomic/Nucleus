@@ -1,5 +1,8 @@
 import { buildWheel, createFlyoutNavigator, decideMarking, rankMatches } from '../shared/wheel-core.js';
-import { computePanelLayout, mixerRowKey, isMixerItem } from '../shared/wheel-mixer.js';
+import {
+  computePanelLayout, mixerRowKey, isMixerItem,
+  pickDefaultDevice, deviceSignature, capDeviceList
+} from '../shared/wheel-mixer.js';
 import { createWheelSound } from '../shared/wheel-sound.js';
 
 const api = window.wheelAPI;
@@ -105,23 +108,34 @@ function requestRoom(reachPx) {
 
 /* ── volume-mixer flyout card (the `mixer` segment) ─────────────────────────
    A click on a mixer segment executes nothing: the wheel FREEZES and this
-   card pops out just beyond the plate — master output + microphone rows, then
-   one slider + mute per app owning an audio session (Windows-volume-flyout
-   shape). All state is read back from Windows through the frame-gated audio
+   card pops out just beyond the plate — a default-output picker + master
+   volume row, a default-input picker + microphone row, then one slider + mute
+   per app owning an audio session (Windows-volume-flyout shape). The pickers
+   list the real endpoints main enumerates and switch the system default on
+   click, like the Settings Audio tab's dropdowns do. All state is read back
+   from Windows through the frame-gated audio
    channels (clamped in main before any of it reaches Core Audio), poll-refreshed
    every MX_POLL_MS like the Settings tab, and never overwritten mid-drag
    (per-row busy claim). Geometry is the pure computePanelLayout helper
    (shared/wheel-mixer.js); the window grows over the same wheel:grow path the
    folder fans use, and Esc ownership rides the existing type-to-filter flag:
-   the first Esc closes the card, the next one dismisses the wheel. */
+   the first Esc closes an open device list, then the card; the next one
+    dismisses the wheel. */
 const mixer = {
   el: null, sessionsEl: null, noteEl: null,
   ownerSeg: null, rows: new Map(), poll: null,
   masterOut: null, masterIn: null,
-  probe: null                  // availability: null = not probed, false+why = dead
+  devOut: null, devIn: null,   // the two default-device pickers (mxDevice)
+  probe: null,                 // availability: null = not probed, false+why = dead
+  tick: 0                      // poll counter — drives the slow endpoint re-read
 };
 const MX_POLL_MS = 2000;
 const MX_MAX_ROWS = 12;
+/* Endpoint lists change only when something is plugged in or another app flips
+   the default, so they are not on the 2 s level poll (the Settings tab keeps
+   the same split): they load at open, on expand, on Refresh, after a switch,
+   and every MX_DEV_EVERY_TICKS-th tick (~6 s) so a hot-plug still shows up. */
+const MX_DEV_EVERY_TICKS = 3;
 let mxSeq = 0;                 // newest-load-wins guard on the async refreshes
 let mxNoteTimer = null;
 
@@ -140,12 +154,35 @@ const apiCall = (fn) => Promise.resolve().then(fn).catch(() => null);
 const mixerOpen = () => !!mixer.el;
 const mixerHit = (e) => !!(mixer.el && e && mixer.el.contains(e.target));
 
+/* Esc budget inside the card: an open endpoint list goes away first, the card
+   second — the same "deepest thing first" rhythm the folder fans use.
+   Returns true when a list was collapsed, so the key is spent. */
+function mxCloseOpenPickers() {
+  let closed = false;
+  for (const w of [mixer.devOut, mixer.devIn]) {
+    if (w && w.open) { w.close(); closed = true; }
+  }
+  return closed;
+}
+
 function mxNote(text, isError) {
   const n = mixer.noteEl;
   if (!n) return;
   clearTimeout(mxNoteTimer);
   n.textContent = String(text || '');
+  n.title = n.textContent;                       // the visible note clamps to 3 lines; the full reason stays reachable
   n.classList.toggle('mx-err', !!isError);
+}
+
+/* An error caused by a user gesture — a refused device switch — has to
+   outlive the next poll: the poll's successful session read calls mxNote('')
+   and would otherwise erase the reason within two seconds. A sticky line
+   clears on the next gesture, on a good switch, or when the hold expires. */
+const MX_NOTE_HOLD_MS = 9000;
+let mxNoteHoldUntil = 0;
+function mxNoteSticky(text) {
+  mxNote(text, true);
+  mxNoteHoldUntil = Date.now() + MX_NOTE_HOLD_MS;
 }
 
 function mxSetDisabled(on) {
@@ -218,6 +255,150 @@ function mxRow(host, { icon, label, aria, onVolume, onMute }) {
   return st;
 }
 
+/* One default-device picker: a button naming the endpoint Windows currently
+   uses for this direction, opening an in-card list of every active endpoint —
+   clicking an entry makes it the system default, like the Settings Audio tab's
+   dropdown does.
+
+   Deliberately NOT a <select>: the overlay window hides itself on blur
+   (main/windows.js), and a native dropdown is an OS widget that takes
+   activation — the wheel would dismiss itself mid-selection, and the popup
+   would be clipped by the transparent square regardless. So the list is the
+   card's own DOM, capped by capDeviceList and scrolled like the app rows; the
+   two pickers are an accordion (opening one closes the other) to keep the
+   card inside its height budget (shared/wheel-mixer.js, TALLEST_CARD_PX).
+
+   The widget never fetches: mxRefresh owns the round trips and hands results
+   to st.setList / st.fail / st.setUnavailable, so one seq guard covers
+   levels, sessions, and endpoints alike. */
+function mxDevice(host, { icon, kind, noun, onPick, onToggle }) {
+  const lid = 'mx-dev-list-' + String(noun).replace(/[^a-z]+/gi, '-');   // one id for aria-controls
+  const row = h('div', 'mx-row mx-dev', null, host);
+  h('span', 'mx-ico g', { text: icon, 'aria-hidden': 'true' }, row);
+  const btn = h('button', 'mx-dev-btn', {
+    type: 'button', 'aria-haspopup': 'listbox', 'aria-expanded': 'false',
+    'aria-controls': lid,
+    'aria-label': 'Change the default ' + noun
+  }, row);
+  h('span', 'mx-dev-kind', { text: kind }, btn);
+  const cur = h('span', 'mx-dev-cur', { text: '—' }, btn);
+  h('span', 'mx-dev-caret', { 'aria-hidden': 'true' }, btn);      // CSS-drawn triangle
+  const list = h('div', 'mx-dev-list', { id: lid, role: 'listbox', 'aria-label': 'Default ' + noun }, row);
+  btn.addEventListener('click', () => setOpen(!st.open));        // the accordion handle
+
+  const st = {
+    row, btn, cur, list,
+    devices: [], sig: null, loaded: false,
+    open: false, busy: false
+  };
+
+  const locked = () => !!(mixer.el && mixer.el.classList.contains('mx-off'));
+
+  function paintButton() {
+    const d = pickDefaultDevice(st.devices);
+    const text = !st.loaded ? '…' : (d ? (d.name || d.id) : '(none — pick one)');
+    cur.textContent = text;
+    btn.title = kind + ': ' + text;
+    btn.setAttribute('aria-label', 'Change the default ' + noun + ' — currently ' + text);
+  }
+
+  function paintList() {
+    const sig = deviceSignature(st.devices);
+    if (sig === st.sig && st.loaded) return;   // a poll that changed nothing leaves the list alone
+    st.sig = sig;
+    list.innerHTML = '';
+    const capped = capDeviceList(st.devices);
+    if (!capped.items.length) h('div', 'mx-dev-empty', { text: '(no devices found)' }, list);
+    for (const d of capped.items) {
+      const name = d.name || d.id;
+      const opt = h('button', 'mx-dev-opt', {
+        type: 'button', role: 'option', title: name,
+        'aria-selected': d.isDefault ? 'true' : 'false'
+      }, list);
+      h('span', 'mx-dev-check', { 'aria-hidden': 'true' }, opt);  // CSS-drawn tick on the current default
+      h('span', 'mx-dev-text', { text: name }, opt);
+      if (locked()) opt.disabled = true;         // an unavailable stack locks late nodes too
+      opt.addEventListener('click', () => pick(d, opt));
+    }
+    if (capped.extra > 0) h('div', 'mx-dev-more', { text: '\u2026and ' + capped.extra + ' more' }, list);
+    if (st.open) positionMixer();                // the card just changed height
+  }
+
+  function repaint() { st.sig = null; paintList(); paintButton(); }
+
+  async function pick(d, opt) {
+    if (st.busy || !d || !d.id) return;
+    mxNoteHoldUntil = 0;                         // a new gesture retires the previous error line
+    st.busy = true;
+    list.querySelectorAll('button').forEach((b) => { b.disabled = true; });
+    if (opt) opt.classList.add('mx-dev-waiting');
+    const r = await apiCall(() => onPick(d.id));
+    st.busy = false;
+    if (!mixer.el) return;                       // the card closed mid-write: nothing to update
+    if (!r || r.ok === false) {
+      // Windows said no (device busy or gone, or an OS image missing its private
+      // audio-policy registration): say why and keep saying why — the next poll
+      // reads the truth back, so only a sticky note survives it.
+      mxNoteSticky(kind + ': ' + ((r && r.error) || 'unknown'));
+      ensureLive().textContent = 'Could not switch the ' + noun + '. ' + ((r && r.error) || 'unknown');
+      repaint();                                 // re-enable the rows and show the truth
+      mxRefresh({ devices: true });              // re-read what Windows actually has
+      return;
+    }
+    // Optimistic: mark the new default locally, then confirm against Windows.
+    st.devices = st.devices.map((x) => Object.assign({}, x, { isDefault: x.id === d.id }));
+    st.loaded = true;
+    setOpen(false);
+    repaint();
+    mxNote('');
+    ensureLive().textContent = 'Default ' + noun + ' set to ' + (d.name || 'device');
+    mxRefresh({ devices: true });                // levels + sessions track the NEW endpoint
+  }
+
+  function setOpen(on) {
+    if (st.open === on) return;
+    st.open = on;
+    row.classList.toggle('mx-dev-open', on);
+    btn.setAttribute('aria-expanded', String(on));
+    if (on) {
+      paintList();
+      if (!st.loaded || !st.devices.length) mxRefresh({ devices: true });
+    }
+    onToggle(st, on);
+  }
+
+  st.setList = (devices) => {
+    const next = Array.isArray(devices) ? devices.filter((d) => d && typeof d.id === 'string' && d.id) : [];
+    const same = st.loaded && deviceSignature(next) === deviceSignature(st.devices);
+    st.devices = next;
+    st.loaded = true;
+    // Identical re-read: touch the button text only. Rebuilding the list would
+    // drop the focused option (and the user's place in it) for nothing.
+    if (same) paintButton();
+    else repaint();
+  };
+  st.fail = (err) => {
+    if (st.loaded) return;                       // keep the last good list; never fight the note line
+    st.loaded = false;
+    cur.textContent = '(not readable)';
+    mxNoteSticky('Could not read the ' + noun + ' list: ' + (err || 'unknown'));
+  };
+  /* The whole audio stack is dead (probe failed): the row says so instead of
+     sitting on '…' forever. mxSetDisabled has already locked every control. */
+  st.setUnavailable = () => {
+    st.loaded = false;
+    st.devices = [];
+    st.sig = '\u0000locked';
+    list.innerHTML = '';
+    cur.textContent = '(unavailable)';
+    btn.setAttribute('aria-label', 'Change the default ' + noun + ' — audio control unavailable');
+  };
+  st.toggle = () => setOpen(!st.open);
+  st.close = () => setOpen(false);
+  st.destroy = () => row.remove();
+  return st;
+}
+
 /* Diff the live session list into the rows Map (keyed by pid / system-sounds,
    same identity as the Settings tab) — a vanished app's row drops on the next
    poll, an app the user is dragging is left alone. */
@@ -253,30 +434,53 @@ function mxDiffSessions(sessions) {
   else if (extra > 0) mxNote('\u2026and ' + extra + ' more');
 }
 
-async function mxRefresh() {
+/* One round trip for the whole card: sessions + both master levels, and the
+   two endpoint lists only when `wantDevices` says so (see MX_DEV_EVERY_TICKS).
+   A device read that fails keeps the picker's last good list — and only
+   complains on the note line when the picker never loaded anything, so a
+   flaky enumeration cannot erase the app-list messaging. */
+async function mxRefresh(opts) {
   if (!mixer.el) return;
   const seq = ++mxSeq;
+  const wantDevices = !!(opts && opts.devices) || (mixer.tick % MX_DEV_EVERY_TICKS) === 0;
   if (mixer.probe === null) {
     const av = await apiCall(() => api.audioAvailable());
     mixer.probe = !!(av && av.ok !== false) ? true : ((av && (av.reason || av.error)) || 'Audio control is unavailable');
-    if (mixer.probe !== true) { mxNote(String(mixer.probe), true); mxSetDisabled(true); return; }
+    if (mixer.probe !== true) {
+      mxNote(String(mixer.probe), true);
+      mxSetDisabled(true);
+      if (mixer.devOut) mixer.devOut.setUnavailable();
+      if (mixer.devIn) mixer.devIn.setUnavailable();
+      return;
+    }
   }
   if (mixer.probe !== true) return;
-  const [rs, ro, ri] = await Promise.all([
+  const [rs, ro, ri, dOut, dIn] = await Promise.all([
     apiCall(() => api.audioSessions()),
     apiCall(() => api.audioLevels('render')),
-    apiCall(() => api.audioLevels('capture'))
+    apiCall(() => api.audioLevels('capture')),
+    wantDevices ? apiCall(() => api.audioDevices('render')) : null,
+    wantDevices ? apiCall(() => api.audioDevices('capture')) : null
   ]);
   if (seq !== mxSeq || !mixer.el) return;             // a newer load (or a close) won
   if (ro && ro.ok !== false && mixer.masterOut) mixer.masterOut.set(ro.volume, ro.muted);
   if (ri && ri.ok !== false && mixer.masterIn) mixer.masterIn.set(ri.volume, ri.muted);
+  if (mixer.devOut) {
+    if (dOut && dOut.ok !== false) mixer.devOut.setList(dOut.devices);
+    else if (dOut) mixer.devOut.fail(dOut.error);
+  }
+  if (mixer.devIn) {
+    if (dIn && dIn.ok !== false) mixer.devIn.setList(dIn.devices);
+    else if (dIn) mixer.devIn.fail(dIn.error);
+  }
   if (!rs || rs.ok === false) { mxNote((rs && rs.error) || 'Could not read the app volume list.', true); return; }
-  mxNote('');                                          // a good read clears the stale error line
+  if (Date.now() >= mxNoteHoldUntil) mxNote('');  // a good read clears a stale line — but not a sticky one
   mxDiffSessions(rs.sessions);
 }
 
 function mxPollTick() {
   if (!mixer.el || document.hidden) return;            // main hid the window: the page idles, not polls
+  mixer.tick += 1;
   mxRefresh();
 }
 
@@ -294,18 +498,39 @@ function buildMixerCard(seg) {
 
   const head = h('div', 'mx-head', null, card);
   h('span', 'mx-title', { text: (seg.item && seg.item.label) || 'Volume mixer' }, head);
-  const refresh = h('button', 'mx-btn', { type: 'button', title: 'Refresh the volume list', 'aria-label': 'Refresh the volume list' }, head);
+  const refresh = h('button', 'mx-btn', { type: 'button', title: 'Refresh the volume and device lists', 'aria-label': 'Refresh the volume and device lists' }, head);
   h('span', 'g', { text: '\uE72C' }, refresh);          // Refresh glyph
-  refresh.addEventListener('click', () => { mxRefresh(); });
+  refresh.addEventListener('click', () => { mxRefresh({ devices: true }); });
   const close = h('button', 'mx-btn mx-close', { type: 'button', title: 'Close', 'aria-label': 'Close the volume mixer' }, head);
   h('span', 'g', { text: '\uE8BB' }, close);            // ChromeClose glyph
   close.addEventListener('click', () => closeMixer());
 
   const body = h('div', 'mx-body', null, card);
+  /* The two pickers are an accordion: one open list at a time keeps the card
+     inside its height budget, and every open/close re-anchors (the list can
+     change the card's height, which drives the wheel:grow request). The CARD
+     carries its own class — .mx-dev-open belongs to the open ROW only, so a
+     card-level flag must never look like "every list is open". */
+  const devToggle = (st, on) => {
+    if (on) for (const other of [mixer.devOut, mixer.devIn]) if (other && other !== st) other.close();
+    const anyOpen = !!(mixer.devOut && mixer.devOut.open) || !!(mixer.devIn && mixer.devIn.open);
+    card.classList.toggle('mx-pickers-open', anyOpen);
+    positionMixer();
+  };
+  mixer.devOut = mxDevice(body, {
+    icon: '\uE767', kind: 'Output', noun: 'output device',
+    onPick: (id) => api.audioSetDefault('render', id),
+    onToggle: devToggle
+  });
   mixer.masterOut = mxRow(body, {
     icon: '\uE767', label: 'System volume', aria: 'Master output volume',
     onVolume: (v) => api.audioSetVolume('render', { volume: v }),
     onMute: (m) => api.audioSetVolume('render', { muted: m })
+  });
+  mixer.devIn = mxDevice(body, {
+    icon: '\uE720', kind: 'Input', noun: 'input device',
+    onPick: (id) => api.audioSetDefault('capture', id),
+    onToggle: devToggle
   });
   mixer.masterIn = mxRow(body, {
     icon: '\uE720', label: 'Microphone', aria: 'Microphone volume',
@@ -350,7 +575,8 @@ function openMixer(seg) {
   applyHover(null, { silent: true });                      // drop the hover spring under the card
   positionMixer();
   mxSetDisabled(false);                                    // a previous unavailable-run may have locked it
-  mxRefresh();
+  mixer.tick = 0;                                          // the first refresh always reads the endpoint lists
+  mxRefresh({ devices: true });
   mixer.poll = setInterval(mxPollTick, MX_POLL_MS);
   const first = card.querySelector('input');
   if (first) first.focus();
@@ -366,6 +592,8 @@ function closeMixer() {
   mixer.ownerSeg = null; mixer.poll = null;
   mixer.rows.clear();
   mixer.masterOut = null; mixer.masterIn = null;
+  mixer.devOut = null; mixer.devIn = null;   // pickers rebuild with the card
+  mxNoteHoldUntil = 0;                       // a refused switch is not the next session's business
   api.setFiltering(!!filterQuery);                         // hand Esc back to main (unless a query outlives it)
 }
 
@@ -646,10 +874,15 @@ window.addEventListener('keydown', (e) => {
   if (!built || !document.hasFocus()) return;
   if (mixerOpen()) {
     // The card is up: the wheel's whole keyboard vocabulary stands down (the
-    // focused slider owns arrows; typing belongs to nobody). Esc closes the
-    // card first — main stood down on the wheel:filter flag so the key lands
-    // here; the next Esc, with the flag released, reaches main's dismiss.
-    if (e.key === 'Escape') { e.preventDefault(); closeMixer(); }
+    // focused slider owns arrows; typing belongs to nobody). Esc puts the
+    // deepest thing away first — an OPEN device list, then the card itself —
+    // main stood down on the wheel:filter flag so the key lands here; the next
+    // Esc, with the flag released, reaches main's dismiss.
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      if (mxCloseOpenPickers()) return;
+      closeMixer();
+    }
     return;
   }
   const segs = built.segments;

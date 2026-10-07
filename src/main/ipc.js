@@ -77,13 +77,19 @@ function registerIpc(deps) {
     'config:restore-backup': ['settings'],
     'welcome:done': ['welcome'], 'settings:close': ['settings'], 'app:quit': ['settings'],
     // Audio writers reach the system's audio policy — same trust level as the
-    // other machine-touching writers. Device switching (set-default) is
-    // Settings-frame only; the wheel's volume-mixer panel legitimately drags
-    // real levels through set-volume/set-session — same trust class as
-    // segment-click, which already executes any configured action. The
-    // read channels (audio:devices/levels/sessions/available) are ungated
+    // other machine-touching writers. All three writers are granted the wheel
+    // frame deliberately: the volume-mixer panel legitimately drags levels AND
+    // switches the default output/input device, exactly like the Settings
+    // Audio tab it mirrors. That is a reviewed security decision (see
+    // tests/unit/ipc-gating.test.js, which pins these owner lists): the wheel
+    // renderer is as trusted as the overlay that already executes any
+    // configured segment, and every argument is clamped in main/audio.js
+    // before it reaches COM — the endpoint id through sanitizeDeviceId, the
+    // flow through parseFlow, and a switch is verified by reading the default
+    // back through the documented enumerator before {ok:true} is claimed. The
+    // read channels (audio:devices/levels/sessions/available) stay ungated
     // like sys:catalog: they hand back data the on-screen UI already shows.
-    'audio:set-default': ['settings'],
+    'audio:set-default': ['settings', 'wheel'],
     'audio:set-volume': ['settings', 'wheel'], 'audio:set-session': ['settings', 'wheel']
   };
   const SEND_CHANNELS = new Set(['config:flush', 'wheel:segment-click', 'wheel:dismiss', 'wheel:grow', 'wheel:filter', 'welcome:done', 'settings:close', 'app:quit']);
@@ -561,9 +567,10 @@ function registerIpc(deps) {
      Reads are ungated like sys:catalog — endpoint ids, display names, and
      volume levels are exactly what the on-screen UI shows. The writers
      (set-default / set-volume / set-session) flip real system state and are
-     PRIVILEGED-gated (device switching to the Settings frame only; the wheel
-     mixer panel adds itself for the level writers); argument shapes are
-     clamped in main/audio.js before anything reaches COM. */
+     PRIVILEGED-gated to the two pages that own audio UI — Settings and the
+     wheel's mixer card (the PRIVILEGED map records why the wheel holds all
+     three writers); argument shapes are clamped in main/audio.js before
+     anything reaches COM. */
   guardHandle('audio:available', () => audio.available());
   guardHandle('audio:devices', (ev, flow) => audio.listDevices(flow));
   guardHandle('audio:levels', (ev, flow) => audio.getLevels(flow));

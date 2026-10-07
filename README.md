@@ -147,7 +147,11 @@ Open from the tray (double-click icon → **Open Settings**). Five tabs:
   currently playing audio gets its own slider and mute button, exactly like the
   Windows Volume Mixer. Everything reads back from Windows, so the panel stays
   honest when something else changes the volume; the list refreshes itself
-  while the tab is visible and does nothing while it isn't. The two device
+  while the tab is visible and does nothing while it isn't. The same four
+  controls — both device pickers, master, and the app list — also sit in the
+  **`mixer` segment's flyout beside the wheel** (no `<select>` popups there:
+  the endpoint list opens inside the card, so the overlay never loses
+  activation). The two device
   pickers double as the data source for the `set_output_device` /
   `set_input_device` wheel segments (below). An **Open Windows sound settings**
   button is the escape hatch for device properties and formats.
@@ -353,3 +357,13 @@ app's hook took it first). Dev builds only — inert once packaged.
     **Set audio output device** segment, bind a device in its picker, fire it
     from the real wheel → that device becomes the system default (an unplugged
     binding fails with a balloon naming the reason, never silently).
+22. Mixer card: add a `mixer` segment, fire it from the real wheel → the card
+    opens with **Output** / **Input** rows naming the endpoint Windows currently
+    uses for each direction. Open one (the endpoint list opens *inside* the card — the wheel
+    stays up; there is no Windows dropdown to steal activation), click another
+    endpoint → the Windows default flips (check Settings → Sound), the row
+    re-reads the new default, and the master slider + app list follow it,
+    since both track the default endpoint. The list caps at five endpoints with
+    a `…and N more` line; Esc closes an open list first, then the card. A
+    refused switch (device busy/gone, or an OS image missing its audio-policy
+    component) says why on the card's note line — never a silent no-op.

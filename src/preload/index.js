@@ -30,11 +30,17 @@ const wheelSurface = {
   setFiltering: (on) => ipcRenderer.send('wheel:filter', !!on),
   iconDataUrl: invoke('icons:data-url'),
   // The `mixer` segment's in-wheel volume panel: reads are ungated catalog-
-  // class lookups; the two writers are frame-gated to the wheel page in main
-  // and clamp volume/pid before anything reaches Core Audio.
+  // class lookups; the three writers are frame-gated to the wheel page in main
+  // and clamp volume/pid/endpoint-id before anything reaches Core Audio. The
+  // device pickers switch the SYSTEM default output/input device — granted to
+  // the overlay deliberately, alongside the level writers (see the PRIVILEGED
+  // map in main/ipc.js and the owner-list assertions in
+  // tests/unit/ipc-gating.test.js).
   audioAvailable: invoke('audio:available'),
+  audioDevices: invoke('audio:devices'),
   audioLevels: invoke('audio:levels'),
   audioSessions: invoke('audio:sessions'),
+  audioSetDefault: invoke('audio:set-default'),
   audioSetVolume: invoke('audio:set-volume'),
   audioSetSession: invoke('audio:set-session')
 };

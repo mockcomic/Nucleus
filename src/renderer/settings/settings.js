@@ -296,7 +296,7 @@ const TYPE_META = {
   url:     { chip: 'website',    menu: 'Open a website', group: 0 },
   file:    { chip: 'file',       menu: 'Open a file', group: 0 },
   sys:     { chip: 'Windows',    menu: 'Windows action — lock, volume, Explorer…', group: 0 },
-  mixer:   { chip: 'mixer',      menu: 'App volume mixer — flyout with quick sliders', group: 0 },
+  mixer:   { chip: 'mixer',      menu: 'App volume mixer — flyout with quick sliders and device pickers', group: 0 },
   setting: { chip: 'app toggle', menu: 'Flip one of Radial Wheel\u2019s own switches', group: 0 },
   folder:  { chip: 'folder',     menu: 'Folder — sub-menu that branches on hover', group: 1 },
   recent:  { chip: 'recents',    menu: 'Recents — fills itself with your most-used segments', group: 1 },
@@ -617,7 +617,7 @@ function rowValueText(item) {
   }
   if (item.type === 'sys') return sysDisplayText(item);
   if (item.type === 'recent') return 'fills itself from your most-recently-used segments';
-  if (item.type === 'mixer') return 'volume-mixer flyout — master + per-app sliders on the wheel';
+  if (item.type === 'mixer') return 'volume-mixer flyout — master + per-app sliders and the default device pickers on the wheel';
   if (item.type === 'setting') return settingLabel(item.value);
   if (item.type === 'app' && String(item.args || '').trim()) return item.value + '  ' + String(item.args).trim();
   return item.value;
@@ -775,7 +775,7 @@ function segEditor(ctx, withFields = true) {
   } else if (item.type === 'mixer') {
     const cMix = field('Contents');
     el('div', 'f-hint', {
-      text: 'Clicking this segment pops a volume flyout beside the wheel — master output, microphone, and a slider for every app that is playing audio. Nothing is launched and nothing to configure; Esc or a click outside closes the card, and it reads live levels fresh at every opening.'
+      text: 'Clicking this segment pops a volume flyout beside the wheel — the default output and input device pickers, master output, microphone, and a slider for every app that is playing audio. Picking a device switches it system-wide, exactly like this tab\u2019s dropdowns. Nothing is launched and nothing to configure; Esc closes an open device list first, then the card, and it reads live levels, sessions, and endpoints fresh at every opening.'
     }, cMix);
   } else if (item.type === 'sys') {
     const cTarget = field(TARGET_LABELS.sys, uid + '-target');

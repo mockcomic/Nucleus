@@ -70,10 +70,14 @@ test('side-effect surfaces sit on their legitimate pages only', () => {
     'config:export-bundle', 'usage:clear',
     // The stats panel reads the private sidecar and the backup pair reaches into
     // userData — none of that belongs to the overlay or the FTU page.
-    'usage:stats', 'config:backups', 'config:restore-backup',
-    // Device switching flips system-wide policy — settings-only, like every writer.
-    'audio:set-default'])
+    'usage:stats', 'config:backups', 'config:restore-backup'])
     assert.deepEqual(gated.get(ch), ['settings'], `${ch} owner drift`);
+  // The mixer card's default-device pickers switch SYSTEM policy from the
+  // overlay, so audio:set-default joined the two level writers on the wheel
+  // frame. Like them it is a reviewed security decision, not a refactor:
+  // arguments are clamped in main/audio.js (sanitizeDeviceId / parseFlow) and
+  // main verifies the switch by reading the default back before claiming ok.
+  assert.deepEqual(gated.get('audio:set-default'), ['settings', 'wheel'], 'mixer card device picker');
   // ...the wheel's volume-mixer card may drag levels, so the two level writers
   // gained the wheel frame deliberately (arguments clamped in main/audio.js).
   // An owner-list change here is a security decision, not a refactor.

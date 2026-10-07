@@ -171,7 +171,88 @@ html, body {
 .mx-sessions::-webkit-scrollbar-thumb:hover { background: rgba(128,138,148,0.8); }
 .mx-system .mx-name { font-style: italic; opacity: .8; }
 
+/* ── default-device pickers (the two `mx-dev` rows) ─────────────────────
+   Each row names the endpoint Windows currently uses for that direction; the
+   button opens the endpoint list INSIDE the card — a native <select> would
+   take activation from the overlay (which dismisses on blur, main/windows.js)
+   and be clipped by the transparent square. One list open at a time
+   (the accordion in wheel.js), and the app list shrinks for the occasion so
+   the tallest card stays inside TALLEST_CARD_PX / PANEL_H_HI
+   (shared/wheel-mixer.js), which is what the window-grow request budgets for. */
+.mx-dev { grid-template-columns: 20px minmax(0, 1fr); }
+.mx-dev .mx-ico { grid-row: 1; opacity: .55; }   /* a prefix, not a second speaker */
+.mx-dev-btn {
+  grid-column: 2; grid-row: 1;
+  display: flex; align-items: center; gap: 6px;
+  min-width: 0; height: 22px; padding: 0 5px;
+  border: none; border-radius: 6px; background: transparent;
+  color: inherit; cursor: pointer; text-align: left; font: inherit;
+}
+.mx-dev-kind { flex: none; opacity: .6; }
+.mx-dev-cur {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mx-dev-caret {
+  flex: none; width: 0; height: 0; opacity: .7;
+  border-left: 4px solid transparent; border-right: 4px solid transparent;
+  border-top: 5px solid currentColor;
+  transition: transform 120ms ease-out;
+}
+.mx-dev-btn:hover { background: color-mix(in srgb, var(--mx-hover, #2e7dd1) 34%, transparent); }
+.mx-dev-btn:focus-visible { outline: 2px solid var(--mx-accent, #4c9ff0); outline-offset: 1px; }
+.mx-dev-btn:disabled { opacity: .4; cursor: default; }
+.mx-dev-open .mx-dev-caret { transform: rotate(180deg); }
+
+.mx-dev-list { display: none; }
+.mx-dev-open .mx-dev-list {
+  display: flex; flex-direction: column; gap: 1px;
+  grid-column: 2; grid-row: 2;
+  margin: 2px 0; padding: 2px;
+  max-height: 112px; overflow-y: auto; overscroll-behavior: contain;
+  border: 1px solid var(--mx-edge, rgba(255,255,255,0.08));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--mx-bg, #0a0e12) 92%, transparent);
+}
+.mx-dev-list::-webkit-scrollbar { width: 6px; }
+.mx-dev-list::-webkit-scrollbar-thumb { background: rgba(128,138,148,0.5); border-radius: 3px; }
+.mx-dev-opt {
+  display: flex; align-items: center; gap: 6px;
+  min-width: 0; padding: 3px 6px;
+  border: none; border-radius: 6px; background: transparent;
+  color: inherit; cursor: pointer; text-align: left; font: inherit;
+}
+.mx-dev-opt:hover { background: color-mix(in srgb, var(--mx-hover, #2e7dd1) 34%, transparent); }
+.mx-dev-opt:focus-visible { outline: 2px solid var(--mx-accent, #4c9ff0); outline-offset: -2px; }
+.mx-dev-opt:disabled { opacity: .4; cursor: default; }
+.mx-dev-check { position: relative; width: 14px; flex: none; }
+/* The tick is drawn, not typed: the fluent icon font has no reliable glyph
+   for a check mark (or a chevron) at this size, and a missing one reads as a
+   broken control. The selected row also goes bold, below. */
+.mx-dev-opt[aria-selected="true"] .mx-dev-check::before {
+  content: ''; position: absolute; left: 3px; top: 0;
+  width: 4px; height: 9px;
+  border: solid var(--mx-accent, #4c9ff0); border-width: 0 2px 2px 0;
+  transform: rotate(42deg);
+}
+.mx-dev-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mx-dev-opt[aria-selected="true"] .mx-dev-text { font-weight: 600; }
+.mx-dev-waiting .mx-dev-text { opacity: .6; }
+.mx-dev-empty, .mx-dev-more { font-size: 11px; opacity: .6; padding: 2px 6px; }
+
+/* Height budget: with an endpoint list open, the app list gives room. The card
+   carries .mx-pickers-open (wheel.js devToggle) while an open ROW carries
+   .mx-dev-open — the two must stay distinct, or one open list expands both. */
+.mixer-panel.mx-pickers-open .mx-sessions { max-height: 132px; }
+
 .mx-note { font-size: 11px; opacity: .65; text-align: center; padding-top: 4px; min-height: 16px; }
+/* The card is anchored outside the wheel and the window grows only so far, so
+   the note line is bounded: 3 rows, full text in the title + the aria-live
+   announcement. Longest real messages (main's audio-policy refusal) fit. */
+.mx-note:not(:empty) {
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+  overflow: hidden; max-height: 48px;
+}
 .mx-note:empty { display: none; }
 .mx-note.mx-err { opacity: 1; color: #ff9a9a; }
 .mixer-panel.mx-off .mx-body, .mixer-panel.mx-off .mx-sessions { opacity: .55; }
@@ -182,4 +263,5 @@ html, body {
   .flyout { animation: none; }
   .wheel-root.any-hover .seg.hovered { transition: none; transform: none; }
   .mixer-panel { animation: none; }
+  .mx-dev-caret { transition: none; }
 }
