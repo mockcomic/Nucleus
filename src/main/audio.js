@@ -38,14 +38,27 @@ const IID_IAudioEndpointVolume = '5cdf2c82-841e-4546-9722-0cf74078229a';
 const IID_IAudioSessionManager2 = '77aa99a0-1bd6-484f-8bc7-2c654c9a9b6f';
 const IID_IAudioSessionControl2 = 'bfb7ff88-7239-4fc9-8fa2-07c950be9c6d';
 const IID_ISimpleAudioVolume = '87ce5498-68d6-44e5-9215-6da47ef883d8';
-/* Undocumented policy-config (set/get default endpoint). Two coclass
-   identities have shipped; the registry route tries the modern client first,
-   the legacy one next, and createPolicyConfig() falls through to the DLL's own
-   class factory when neither is registered (see below). */
+/* Undocumented policy-config (set/get default endpoint). The object has
+   shipped under several coclass/IID identities; the ones in the app's own
+   legacy table (registry route) are NOT registered on current Windows images
+   at all — see the comment above POLICY_ROUTES for the identities the
+   registry actually answers with, each paired with its own IID and its own
+   SetDefaultEndpoint vtable slot. */
 const IID_IPolicyConfig = '568b9108-44bf-4e8e-8826-90422f8d5c72';
 const CLSID_PolicyConfigClient = '294935e7-f627-4c7c-b4eb-3335d062c838';
 const CLSID_PolicyConfig = 'f8679f5a-f8e0-43f6-b29b-b1f49c448218';
 const POLICY_CLSIDS = [CLSID_PolicyConfigClient, CLSID_PolicyConfig];
+/* The identities registered on modern Windows (measured on 10.0.26200: both
+   live under HKCR\CLSID with InprocServer32 → AudioSes.dll). A coclass and
+   its IID are a PAIR — asking one for the other's IID answers E_NOINTERFACE,
+   so every route below carries its triple — and the Vista variant has no
+   ResetDeviceFormat, which shifts its SetDefaultEndpoint slot by one (12 vs
+   13). Calling a policy IID at the wrong slot runs a different method with
+   the wrong arity, so the slot is part of the identity, not a detail. */
+const IID_IPolicyConfig7 = 'f8679f50-850a-41cf-9c72-430f290290c8';          // SetDefaultEndpoint @ 13
+const CLSID_PolicyConfigClient7 = '870af99c-171d-4f9e-af0d-e63df40c2bc9';
+const IID_IPolicyConfigVista = '568b9108-44bf-40b4-9006-86afe5b5a620';      // SetDefaultEndpoint @ 12
+const CLSID_PolicyConfigVistaClient = '294935ce-f637-4e7c-a41b-ab255460b862';
 /* Standard class-factory interface every DllGetClassObject answers for. */
 const IID_IClassFactory = '00000001-0000-0000-c000-000000000046';
 const CLSCTX_SERVER = 0x4 | 0x10 | 0x20000;      // inproc | local | remote (16)
@@ -301,17 +314,21 @@ function activate(dev, iid, key) {
 
 /* ---------------- the audio-policy object ----------------------------------
    IPolicyConfig is the object that flips a system default. It has no
-   documented creation path: two private coclass identities are in circulation
-   and are looked up in the registry — and a Windows image can ship with
-   NEITHER registered, in which case CoCreateInstance answers
-   REGDB_E_CLASSNOTREG to every user-mode client, the Settings app included.
-   The implementation itself lives in %SystemRoot%\System32\AudioSes.dll, which
-   exports the standard DllGetClassObject, so the class factory can be asked of
-   the DLL directly and no registry entry is needed.
+   documented creation path, and the identities in circulation differ per
+   Windows image: a coclass hands out only ITS OWN IID (cross-asking another
+   answers E_NOINTERFACE), and the two variants' SetDefaultEndpoint sit one
+   slot apart (the Vista variant has no ResetDeviceFormat before it). Every
+   route below is therefore a (clsid, iid, slot) TRIPLE — mixing halves of
+   two identities either fails to create or, worse, calls a wrong method
+   through a wrong-arity call. The two in-circulation coclass ids the old
+   table only knew ({294935E7…}/{F8679F5A…}) are not registered at all on
+   current images; the registry entry that does answer points at
+   %SystemRoot%\System32\AudioSes.dll, so the DLL's exported DllGetClassObject
+   stays useful as the registration-free fallback.
 
-   Routes run in order — the documented registry lookup first (it is the
-   normal case and the cheapest), then a full-CLSCTX attempt, then the DLL's own
-   factory for both coclass identities. The first route that hands back an
+   Routes run in order — the registry lookups first (the normal case and the
+   cheapest), then a full-CLSCTX attempt, then the DLL's own factory for both
+   coclass identities. The first route that hands back an
    interface is remembered for the life of the process: the mixer card polls
    and switches repeatedly, and re-walking the ladder every time would be pure
    noise (a whole dead ladder is remembered too, for the same reason).
@@ -319,33 +336,54 @@ function activate(dev, iid, key) {
    setDefaultDevice. */
 const REGDB_E_CLASSNOTREG = 0x80040154;
 const CLASS_E_CLASSNOTAVAILABLE = 0x80040111;
-/* Hresults that all mean "this image does not expose the policy object", as
-   opposed to a real runtime failure worth reporting verbatim.
+/* Hresults that all mean "this image does not expose the policy object (under
+   this identity)", as opposed to a real runtime failure worth reporting
+   verbatim.
    CLASS_E_CLASSNOTAVAILABLE belongs here: it is what a DLL's own
    DllGetClassObject answers when it declines a coclass entirely. Verified on
-   10.0.26200, where the two registry identities, both CLSCTX_SERVER attempts and
-   both factory attempts all refuse the policy object (and a QueryInterface on
-   the enumerator answers E_NOINTERFACE), while MMDevApi.dll's factory still
-   serves CLSID_MMDeviceEnumerator from the same call — so the refusal is the
-   image's, not the FFI path's. */
+   10.0.26200, where the two legacy identities — both CoCreateInstance CLSCTXes
+   and both factory attempts — all refuse, while MMDevApi.dll's factory still
+   serves CLSID_MMDeviceEnumerator from the same call (so the refusal is the
+   identity's, not the FFI path's) and the modern pairs above create and
+   switch cleanly. */
 const POLICY_MISSING_CODES = [REGDB_E_CLASSNOTREG, 0x8007007e /* MOD_NOT_FOUND */, 0x80004002 /* E_NOINTERFACE */, 0x80040153 /* IIDNOTREG */, CLASS_E_CLASSNOTAVAILABLE];
 
 const POLICY_ROUTES = [
-  { key: 'registry', run: () => coCreate(CLSID_PolicyConfigClient, IID_IPolicyConfig) },
-  { key: 'registry-legacy', run: () => coCreate(CLSID_PolicyConfig, IID_IPolicyConfig) },
-  { key: 'server', run: () => coCreate(CLSID_PolicyConfigClient, IID_IPolicyConfig, CLSCTX_SERVER) },
-  { key: 'server-legacy', run: () => coCreate(CLSID_PolicyConfig, IID_IPolicyConfig, CLSCTX_SERVER) },
-  { key: 'factory', run: () => policyFromFactory(CLSID_PolicyConfigClient) },
-  { key: 'factory-legacy', run: () => policyFromFactory(CLSID_PolicyConfig) }
+  /* Every route is a (coclass, its own IID, its SetDefaultEndpoint vtable
+     slot) triple: a coclass only hands out its paired IID (cross-asking
+     answers E_NOINTERFACE) and the two variants differ by one slot
+     (the Vista one has no ResetDeviceFormat). The first two are the
+     identities HKCR\CLSID registers on current images (measured on
+     10.0.26200, InprocServer32 → AudioSes.dll); the legacy pair behind
+     them keeps older images — which register the two in-circulation
+     coclass ids and no others — working unchanged. */
+  { key: 'client', clsid: CLSID_PolicyConfigClient7, iid: IID_IPolicyConfig7, slot: 13 },
+  { key: 'vista', clsid: CLSID_PolicyConfigVistaClient, iid: IID_IPolicyConfigVista, slot: 12 },
+  { key: 'client-factory', clsid: CLSID_PolicyConfigClient7, iid: IID_IPolicyConfig7, slot: 13, factory: true },
+  { key: 'vista-factory', clsid: CLSID_PolicyConfigVistaClient, iid: IID_IPolicyConfigVista, slot: 12, factory: true },
+  { key: 'registry', clsid: CLSID_PolicyConfigClient, iid: IID_IPolicyConfig, slot: S.policy_SetDefault },
+  { key: 'registry-legacy', clsid: CLSID_PolicyConfig, iid: IID_IPolicyConfig, slot: S.policy_SetDefault },
+  { key: 'server', clsid: CLSID_PolicyConfigClient, iid: IID_IPolicyConfig, slot: S.policy_SetDefault, clsctx: CLSCTX_SERVER },
+  { key: 'server-legacy', clsid: CLSID_PolicyConfig, iid: IID_IPolicyConfig, slot: S.policy_SetDefault, clsctx: CLSCTX_SERVER },
+  { key: 'factory', clsid: CLSID_PolicyConfigClient, iid: IID_IPolicyConfig, slot: S.policy_SetDefault, factory: true },
+  { key: 'factory-legacy', clsid: CLSID_PolicyConfig, iid: IID_IPolicyConfig, slot: S.policy_SetDefault, factory: true }
 ];
+// The table is data so node:test can assert the pairings; the run closures
+// are built once from each row's own (clsid, iid) — never mix-and-match.
+for (const r of POLICY_ROUTES) {
+  r.run = r.factory
+    ? () => policyFromFactory(r.clsid, r.iid)
+    : () => coCreate(r.clsid, r.iid, r.clsctx || CLSCTX_INPROC_SERVER);
+}
 
 let _policyRoute = null;      // the route that worked, or null while unknown
 let _policyDead = false;      // every route failed once — do not walk the ladder again per call
 
-/** Ask AudioSes.dll itself for the class factory and instantiate through it.
+/** Ask AudioSes.dll itself for the class factory and instantiate through it,
+ *  for the SAME IID the coclass is paired with.
  *  Throws (with .hresult) when the DLL refuses, exactly like a failed
  *  CoCreateInstance, so the ladder can move on to the next route. */
-function policyFromFactory(clsid) {
+function policyFromFactory(clsid, iid) {
   if (!macro.ffi.audioSesAvailable) throw new Error(macro.ffi.audioSesLoadError || 'AudioSes.dll unavailable');
   const getClassObject = macro.ffi.declareAudioSes(
     'int32 __stdcall DllGetClassObject(void* rclsid, void* riid, void** ppv)');
@@ -356,7 +394,7 @@ function policyFromFactory(clsid) {
   try {
     const out = Buffer.alloc(8);
     const hc = vcall(cf, S.fact_CreateInstance, 'IClassFactory_CreateInstance', ['void*', 'void*', 'void**'])(
-      cf, null, guidBytes(IID_IPolicyConfig), out);
+      cf, null, guidBytes(iid), out);
     if (!ok(hc)) throw fail(hc, 'IClassFactory::CreateInstance');
     return macro.ffi.decode(out, 0, 'void*');
   } finally {
@@ -364,10 +402,11 @@ function policyFromFactory(clsid) {
   }
 }
 
-/** An IPolicyConfig pointer from the first route that works. */
+/** {iface, slot} from the first route that works. The slot belongs to the
+ *  route's IID — callers must use the pair returned here, never a constant. */
 function createPolicyConfig() {
   if (_policyRoute) {
-    try { return _policyRoute.run(); } catch { _policyRoute = null; }   // route broke mid-session: re-walk
+    try { return { iface: _policyRoute.run(), slot: _policyRoute.slot }; } catch { _policyRoute = null; }   // route broke mid-session: re-walk
   }
   if (_policyDead) { const e = new Error('no audio-policy object on this Windows image'); e.hresult = REGDB_E_CLASSNOTREG; throw e; }
   let last = null;
@@ -380,9 +419,9 @@ function createPolicyConfig() {
   let allMissing = true;
   for (const r of POLICY_ROUTES) {
     try {
-      const pc = r.run();
+      const iface = r.run();
       _policyRoute = r;
-      return pc;
+      return { iface, slot: r.slot };
     } catch (e) { last = e; if (!policyMissing(e)) allMissing = false; }
   }
   if (last && allMissing) _policyDead = true;
@@ -462,8 +501,9 @@ function setDefaultDevice(flowName, deviceIdRaw) {
   if (why) return { ok: false, code: 'unavailable', error: why };
   let pc = null;
   try {
-    pc = createPolicyConfig();
-    const h = vcall(pc, S.policy_SetDefault, 'IPolicyConfig_SetDefaultEndpoint', ['str16', 'int32'])(pc, id, flow);
+    const pol = createPolicyConfig();
+    pc = pol.iface;
+    const h = vcall(pc, pol.slot, 'IPolicyConfig_SetDefaultEndpoint', ['str16', 'int32'])(pc, id, flow);
     if (!ok(h)) throw fail(h, 'SetDefaultEndpoint');
     release(pc); pc = null;
     // Read-back through the documented path: the switch must be observable
@@ -718,5 +758,6 @@ module.exports = {
   // pure, node:test-only exports (see tests/unit/audio.test.js)
   _guidBytes: guidBytes, _parseFlow: parseFlow, _clampPercent: clampPercent,
   _percentToScalar: percentToScalar, _scalarToPercent: scalarToPercent,
-  _sanitizeDeviceId: sanitizeDeviceId, _fallbackName: fallbackName, _groupSessions: groupSessions
+  _sanitizeDeviceId: sanitizeDeviceId, _fallbackName: fallbackName, _groupSessions: groupSessions,
+  _policyRoutes: POLICY_ROUTES
 };

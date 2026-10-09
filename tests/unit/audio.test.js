@@ -117,6 +117,50 @@ test('groupSessions sorts audibly: apps first (by label), system sounds last', (
   assert.deepEqual(g.map((r) => r.exe), ['apple.exe', 'zebra.exe', 'sys.exe']);
 });
 
+/* ---- the policy ladder (source of the device-switch identity) ----
+   A route must carry its OWN (clsid, iid, slot) triple: the coclass only
+   serves its paired IID (cross-asking answers E_NOINTERFACE), and the two
+   variants place SetDefaultEndpoint one slot apart (the Vista one has no
+   ResetDeviceFormat before it). A half-swapped triple either fails to
+   create — which is how "cannot change the output device" ships — or calls
+   a wrong method through a wrong-arity call. The registered pairings are
+   measured facts (verified live, incl. an actual default flip read back
+   through the documented enumerator, on Windows 11 25H2 / 10.0.26200). */
+test('every policy route is a complete (clsid, iid, slot) triple', () => {
+  const routes = audio._policyRoutes;
+  assert.ok(Array.isArray(routes) && routes.length >= 4);
+  const keys = new Set();
+  for (const r of routes) {
+    assert.ok(typeof r.key === 'string' && r.key && !keys.has(r.key), 'unique route key: ' + r.key);
+    keys.add(r.key);
+    assert.equal(typeof r.run, 'function', 'route ' + r.key + ' is callable');
+    assert.ok(Number.isInteger(r.slot) && r.slot >= 3, 'route ' + r.key + ' carries its own vtable slot');
+    assert.deepEqual([...audio._guidBytes(r.clsid)].length, 16);   // malformed literals throw
+    assert.deepEqual([...audio._guidBytes(r.iid)].length, 16);
+  }
+});
+
+test('the registered modern pairs keep their measured GUIDs and slots', () => {
+  const byKey = Object.fromEntries(audio._policyRoutes.map((r) => [r.key, r]));
+  assert.deepEqual(
+    [byKey.client.clsid, byKey.client.iid, byKey.client.slot],
+    ['870af99c-171d-4f9e-af0d-e63df40c2bc9', 'f8679f50-850a-41cf-9c72-430f290290c8', 13]);
+  assert.deepEqual(
+    [byKey.vista.clsid, byKey.vista.iid, byKey.vista.slot],
+    ['294935ce-f637-4e7c-a41b-ab255460b862', '568b9108-44bf-40b4-9006-86afe5b5a620', 12]);
+  // Factory fallbacks must carry the SAME pair as their registry route — the
+  // bug that shipped was a ladder built on identities the image never had.
+  assert.equal(byKey['client-factory'].clsid, byKey.client.clsid);
+  assert.equal(byKey['client-factory'].iid, byKey.client.iid);
+  assert.equal(byKey['client-factory'].slot, byKey.client.slot);
+  assert.equal(byKey['vista-factory'].clsid, byKey.vista.clsid);
+  assert.equal(byKey['vista-factory'].iid, byKey.vista.iid);
+  assert.equal(byKey['vista-factory'].slot, byKey.vista.slot);
+  // The registered-identity routes run before the legacy pair.
+  assert.ok(audio._policyRoutes.findIndex((r) => r.key === 'client') <
+            audio._policyRoutes.findIndex((r) => r.key === 'registry'));
+});
+
 /* ---- argument pre-checks (must reject before the COM gate) ---- */
 test('bad arguments are rejected without ever waking COM', () => {
   assert.match(audio.listDevices('sideways').error, /render or capture/);
