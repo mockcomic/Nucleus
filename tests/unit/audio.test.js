@@ -134,4 +134,46 @@ test('available() answers the {ok}/{ok:false,reason} contract', () => {
   assert.equal(typeof a, 'object');
   if (process.platform === 'win32') assert.ok(a.ok === true || (a.ok === false && typeof a.reason === 'string'));
   else assert.equal(a.ok, false);
+  // The surfaces word their own advice from this flag, so it is part of the
+  // contract — never an optional extra that silently disappears.
+  assert.equal(typeof a.canSetDefault, 'boolean');
+  if (a.ok === true) assert.equal(typeof a.canSetDefault, 'boolean');
+});
+
+/* ---- the refusal copy, as a source-scan invariant (same style as the
+   owner-list assertions in ipc-gating.test.js). The message IS the feature
+   here: an OS-wide refusal must not claim, in the same breath, that some other
+   app can still do what it just said no app can do — and every surface that
+   shows the refusal has to name a next step that actually exists on it. ---- */
+const fs = require('node:fs');
+const path = require('node:path');
+const readSrc = (...p) => fs.readFileSync(path.join(__dirname, '..', '..', ...p), 'utf8');
+
+test('the refused-switch copy names its escape hatch without contradicting itself', () => {
+  const main = readSrc('src', 'main', 'audio.js');
+  const settings = readSrc('src', 'renderer', 'settings', 'settings.js');
+  const wheel = readSrc('src', 'renderer', 'wheel', 'wheel.js');
+
+  // main: the human line states the limit in plain words; the COM jargon and
+  // the HRESULT live in `detail`, which is for the log, not for the toast.
+  assert.match(main, /does not let apps change the default audio device/);
+  assert.ok(!/error: '[^']*audio-policy/.test(main), 'the user-facing error line must not carry COM jargon');
+  assert.match(main, /detail: 'audio-policy object not available/);
+
+  // The retired tail ("… Windows sound settings (below) can do it by hand")
+  // contradicted main's own refusal and pointed at a direction, not a control.
+  assert.ok(!settings.includes('Windows sound settings (below)'), 'settings.js: the retired contradictory advice');
+  assert.ok(!wheel.includes('can do it by hand'), 'wheel.js: the retired advice line');
+
+  // Both surfaces special-case the OS-wide refusal and point at a door that is
+  // really on that surface: the Settings tab has the button, the card points at
+  // the system page because it carries no button of its own.
+  assert.ok(settings.includes("'policy_unavailable'"), 'settings.js must word advice for the OS-wide refusal');
+  assert.ok(settings.includes('Open Windows sound settings'), 'settings.js must name the button it points at');
+  assert.ok(wheel.includes("'policy_unavailable'"), 'wheel.js must word advice for the OS-wide refusal');
+  assert.ok(wheel.includes('Windows sound settings'), 'the card has no button: it has to name the system page');
+
+  // The flag that lets a surface admit the refusal before the doomed click.
+  assert.ok(settings.includes('canSetDefault'), 'settings.js must honour canSetDefault up front');
+  assert.ok(wheel.includes('canSetDefault'), 'the card must honour canSetDefault on opening');
 });

@@ -84,6 +84,40 @@ try {
 
 const readRect = (b, off) => [b.readInt32LE(off), b.readInt32LE(off + 4), b.readInt32LE(off + 8), b.readInt32LE(off + 12)];
 
+/* ---- AudioSes.dll: the registry-free route to the audio policy object -----
+   Some Windows images ship without the private audio-policy coclasses
+   registered under HKCR (their InprocServer32 keys simply are not there), and
+   then CoCreateInstance answers REGDB_E_CLASSNOTREG for EVERY client — the
+   Settings app included. Those classes are implemented inside
+   %SystemRoot%\System32\AudioSes.dll, which exports the standard
+   DllGetClassObject, so a caller that knows the absolute path can ask the DLL
+   for its class factory directly. koffi resolves the path through LoadLibrary
+   itself, so no kernel32 declaration is needed here; the path is built from
+   the system root and is never influenced by any renderer. */
+const AUDIO_SES_FILE = 'AudioSes.dll';
+function audioSesPath() {
+  const root = process.env.SystemRoot || process.env.windir || 'C:\\Windows';
+  if (!/^[A-Za-z]:[\\/]/.test(root)) return null;   // junk system root — refuse, never search by name
+  return root.replace(/[\\/]+$/, '') + '\\System32\\' + AUDIO_SES_FILE;
+}
+
+let audioSes = null, audioSesTried = false, audioSesAvailable = false, audioSesLoadError = null;
+function ensureAudioSes() {
+  if (audioSesTried) return;
+  audioSesTried = true;
+  if (!available || process.arch === 'ia32') { audioSesLoadError = 'native audio-policy route unavailable'; return; }
+  try {
+    const p = audioSesPath();
+    if (!p) { audioSesLoadError = 'system root is not resolvable'; return; }
+    audioSes = koffi.load(p);                                  // absolute path: no search-order gamble
+    audioSesAvailable = true;
+  } catch (e) {
+    audioSes = null;
+    audioSesAvailable = false;
+    audioSesLoadError = (e && e.message) ? e.message : String(e);
+  }
+}
+
 /** Lowercase exe basename of a process id ('' when unreadable). Shared by the
  *  foreground probe and the window-focus enumeration. */
 function readExeBase(pid) {
@@ -721,6 +755,18 @@ const ffi = {
   declareOle32(spec) {
     if (!comAvailable) throw new Error(comLoadError || 'ole32 unavailable');
     return ole32.func(spec);
+  },
+  /** True when AudioSes.dll (the audio-policy class factory) is loadable. */
+  get audioSesAvailable() { ensureAudioSes(); return audioSesAvailable; },
+  get audioSesLoadError() { ensureAudioSes(); return audioSesLoadError; },
+  /** Declare a symbol exported by AudioSes.dll — today only DllGetClassObject,
+      used by audio.js when the policy coclasses are not registered in HKCR.
+      Same guarded shape as declareOle32: a failed load is an error to the
+      caller, and audio.js folds it into its fail-closed channel. */
+  declareAudioSes(spec) {
+    ensureAudioSes();
+    if (!audioSesAvailable) throw new Error(audioSesLoadError || 'AudioSes.dll unavailable');
+    return audioSes.func(spec);
   },
   /** Declare a callback signature, e.g. 'int64 __stdcall Name(int, uintptr, intptr)'. */
   proto(spec) { needInput(); return koffi.proto(spec); },

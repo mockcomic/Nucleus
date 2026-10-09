@@ -2457,6 +2457,11 @@ async function wireAudio() {
   console.log('[audio] available:', !!(info && info.ok !== false), (info && (info.reason || info.error)) || '');
   const notice = $('#au-unavailable');
   const live = !!info && info.ok !== false;
+  // Main remembers a completely dead policy ladder for the life of the process.
+  // When it does, the pickers say so up front instead of letting the user click
+  // into a list that cannot commit — reading devices still works, only the
+  // switch is impossible for any app on such an image.
+  const canSwitch = live && (!info || info.canSetDefault !== false);
   if (!live) {
     document.querySelectorAll('#tab-audio .audio-live').forEach((n) => n.classList.add('hidden'));
     if (notice) {
@@ -2474,6 +2479,19 @@ async function wireAudio() {
     const sel = $(spec.sel), rg = $(spec.refresh), vol = $(spec.vol), out = $(spec.out), mute = $(spec.mute);
     let loading = false;
     let volBusy = false, volIdle = null;
+
+    // A dead ladder is process-wide knowledge, so the row admits it before the
+    // first doomed click: the list stays readable, the switch is explained, and
+    // the escape hatch is named by its label rather than by a direction.
+    if (!canSwitch) {
+      const line = sel.closest('.row-line') || sel.parentNode;
+      if (line && line.parentNode) {
+        const hint = el('div', 'hint muted', {
+          text: 'Apps cannot change the default here on this Windows install \u2014 the Open Windows sound settings button at the bottom of this page is the escape hatch.'
+        }, line.parentNode);
+        line.parentNode.insertBefore(hint, line.nextSibling);
+      }
+    }
 
     const fillDevices = (devices) => {
       sel.innerHTML = '';
@@ -2522,7 +2540,13 @@ async function wireAudio() {
       if (!id) return;
       const r = await safe(() => api.audioSetDefault(spec.flow, id));
       if (!r.ok) {
-        toast('Could not switch the ' + spec.noun + ': ' + (r.error || 'unknown') + ' — Windows sound settings (below) can do it by hand', true);
+        // Main's own line already says what happened; only the OS-wide refusal
+        // needs a second door, and that door is named — never "(below)".
+        const advice = r.code === 'policy_unavailable'
+          ? ' \u2014 the Open Windows sound settings button at the bottom of this page can still try it'
+          : '';
+        toast('Could not switch the ' + spec.noun + ': ' + (r.error || 'unknown') + advice, true);
+        console.log('[audio] set-default refused:', spec.flow, r.code || 'failed', r.detail || r.error || '');
         loadDevices(true);
         return;
       }

@@ -248,7 +248,8 @@ html, body {
 .mx-note { font-size: 11px; opacity: .65; text-align: center; padding-top: 4px; min-height: 16px; }
 /* The card is anchored outside the wheel and the window grows only so far, so
    the note line is bounded: 3 rows, full text in the title + the aria-live
-   announcement. Longest real messages (main's audio-policy refusal) fit. */
+   announcement. The longest real messages — main's plain-language policy
+   refusal plus the "try Windows sound settings" tail — fit inside them. */
 .mx-note:not(:empty) {
   display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
   overflow: hidden; max-height: 48px;

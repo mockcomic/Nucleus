@@ -356,7 +356,10 @@ app's hook took it first). Dev builds only — inert once packaged.
     slider + mute, affecting only that app. Segments → add a `sys`
     **Set audio output device** segment, bind a device in its picker, fire it
     from the real wheel → that device becomes the system default (an unplugged
-    binding fails with a balloon naming the reason, never silently).
+    binding fails with a balloon naming the reason, never silently). On an image
+    where no app may change the default, both pickers carry a line saying so and
+    pointing at the **Open Windows sound settings** button, rather than failing
+    only after the click.
 22. Mixer card: add a `mixer` segment, fire it from the real wheel → the card
     opens with **Output** / **Input** rows naming the endpoint Windows currently
     uses for each direction. Open one (the endpoint list opens *inside* the card — the wheel
@@ -365,5 +368,8 @@ app's hook took it first). Dev builds only — inert once packaged.
     re-reads the new default, and the master slider + app list follow it,
     since both track the default endpoint. The list caps at five endpoints with
     a `…and N more` line; Esc closes an open list first, then the card. A
-    refused switch (device busy/gone, or an OS image missing its audio-policy
-    component) says why on the card's note line — never a silent no-op.
+    refused switch (device busy/gone, or an OS image where no app may change the
+    default) says why in plain words on the card's note line — never a silent
+    no-op — and names **Windows sound settings** as the door still left. On such
+    an image the card opens with that line already showing: levels and app rows
+    stay live, only the switch is impossible.

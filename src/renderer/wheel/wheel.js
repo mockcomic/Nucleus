@@ -338,9 +338,14 @@ function mxDevice(host, { icon, kind, noun, onPick, onToggle }) {
     if (!r || r.ok === false) {
       // Windows said no (device busy or gone, or an OS image missing its private
       // audio-policy registration): say why and keep saying why — the next poll
-      // reads the truth back, so only a sticky note survives it.
-      mxNoteSticky(kind + ': ' + ((r && r.error) || 'unknown'));
-      ensureLive().textContent = 'Could not switch the ' + noun + '. ' + ((r && r.error) || 'unknown');
+      // reads the truth back, so only a sticky note survives it. The card has no
+      // button of its own, so the refusal advice names the system page instead.
+      const why = (r && r.error) || 'unknown';
+      const advice = r && r.code === 'policy_unavailable'
+        ? ' \u2014 try Windows sound settings'
+        : '';
+      mxNoteSticky(kind + ': ' + why + advice);
+      ensureLive().textContent = 'Could not switch the ' + noun + ': ' + why + advice;
       repaint();                                 // re-enable the rows and show the truth
       mxRefresh({ devices: true });              // re-read what Windows actually has
       return;
@@ -452,6 +457,13 @@ async function mxRefresh(opts) {
       if (mixer.devOut) mixer.devOut.setUnavailable();
       if (mixer.devIn) mixer.devIn.setUnavailable();
       return;
+    }
+    // The stack is alive but main already knows the policy object is missing:
+    // say it on opening, rather than making the user click into a list that can
+    // only refuse. Levels/sessions stay live — those do not need the policy
+    // object — so nothing is disabled, only explained.
+    if (av.canSetDefault === false) {
+      mxNoteSticky('Apps cannot change the default device on this Windows install \u2014 try Windows sound settings.');
     }
   }
   if (mixer.probe !== true) return;

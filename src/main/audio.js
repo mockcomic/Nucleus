@@ -39,10 +39,16 @@ const IID_IAudioSessionManager2 = '77aa99a0-1bd6-484f-8bc7-2c654c9a9b6f';
 const IID_IAudioSessionControl2 = 'bfb7ff88-7239-4fc9-8fa2-07c950be9c6d';
 const IID_ISimpleAudioVolume = '87ce5498-68d6-44e5-9215-6da47ef883d8';
 /* Undocumented policy-config (set/get default endpoint). Two coclass
-   identities have shipped; try the modern client first, the legacy one next. */
+   identities have shipped; the registry route tries the modern client first,
+   the legacy one next, and createPolicyConfig() falls through to the DLL's own
+   class factory when neither is registered (see below). */
 const IID_IPolicyConfig = '568b9108-44bf-4e8e-8826-90422f8d5c72';
 const CLSID_PolicyConfigClient = '294935e7-f627-4c7c-b4eb-3335d062c838';
 const CLSID_PolicyConfig = 'f8679f5a-f8e0-43f6-b29b-b1f49c448218';
+const POLICY_CLSIDS = [CLSID_PolicyConfigClient, CLSID_PolicyConfig];
+/* Standard class-factory interface every DllGetClassObject answers for. */
+const IID_IClassFactory = '00000001-0000-0000-c000-000000000046';
+const CLSCTX_SERVER = 0x4 | 0x10 | 0x20000;      // inproc | local | remote (16)
 /* PROPERTYKEY {fmtid, pid} for the device's display name. */
 const FMTID_DEVPROP = 'a45c254e-df1c-4efd-8020-67d146a850e0';
 const PID_FRIENDLY_NAME = 14;
@@ -59,7 +65,8 @@ const S = {
   senum_Count: 3, senum_GetSession: 4,
   sc2_GetDisplayName: 4, sc2_GetProcessId: 14, sc2_IsSystemSounds: 15,
   sav_SetMasterVolume: 3, sav_GetMasterVolume: 4, sav_SetMute: 5, sav_GetMute: 6,
-  policy_GetDefault: 3, policy_SetDefault: 4
+  policy_GetDefault: 3, policy_SetDefault: 4,
+  fact_CreateInstance: 3                      // IClassFactory (after IUnknown 0–2)
 };
 
 /* ---------------- pure helpers (unit-tested; no FFI) ---------------------- */
@@ -216,9 +223,9 @@ function fail(hr_, what) {
   return err;
 }
 
-function coCreate(clsid, iid) {
+function coCreate(clsid, iid, clsctx = CLSCTX_INPROC_SERVER) {
   const out = Buffer.alloc(8);
-  const h = com().CoCreateInstance(guidBytes(clsid), null, CLSCTX_INPROC_SERVER, guidBytes(iid), out);
+  const h = com().CoCreateInstance(guidBytes(clsid), null, clsctx, guidBytes(iid), out);
   if (!ok(h)) throw fail(h, `CoCreateInstance(${clsid})`);
   return macro.ffi.decode(out, 0, 'void*');
 }
@@ -292,6 +299,102 @@ function activate(dev, iid, key) {
   return macro.ffi.decode(out, 0, 'void*');
 }
 
+/* ---------------- the audio-policy object ----------------------------------
+   IPolicyConfig is the object that flips a system default. It has no
+   documented creation path: two private coclass identities are in circulation
+   and are looked up in the registry — and a Windows image can ship with
+   NEITHER registered, in which case CoCreateInstance answers
+   REGDB_E_CLASSNOTREG to every user-mode client, the Settings app included.
+   The implementation itself lives in %SystemRoot%\System32\AudioSes.dll, which
+   exports the standard DllGetClassObject, so the class factory can be asked of
+   the DLL directly and no registry entry is needed.
+
+   Routes run in order — the documented registry lookup first (it is the
+   normal case and the cheapest), then a full-CLSCTX attempt, then the DLL's own
+   factory for both coclass identities. The first route that hands back an
+   interface is remembered for the life of the process: the mixer card polls
+   and switches repeatedly, and re-walking the ladder every time would be pure
+   noise (a whole dead ladder is remembered too, for the same reason).
+   Nothing here is renderer-reachable except through the clamped arguments in
+   setDefaultDevice. */
+const REGDB_E_CLASSNOTREG = 0x80040154;
+const CLASS_E_CLASSNOTAVAILABLE = 0x80040111;
+/* Hresults that all mean "this image does not expose the policy object", as
+   opposed to a real runtime failure worth reporting verbatim.
+   CLASS_E_CLASSNOTAVAILABLE belongs here: it is what a DLL's own
+   DllGetClassObject answers when it declines a coclass entirely. Verified on
+   10.0.26200, where the two registry identities, both CLSCTX_SERVER attempts and
+   both factory attempts all refuse the policy object (and a QueryInterface on
+   the enumerator answers E_NOINTERFACE), while MMDevApi.dll's factory still
+   serves CLSID_MMDeviceEnumerator from the same call — so the refusal is the
+   image's, not the FFI path's. */
+const POLICY_MISSING_CODES = [REGDB_E_CLASSNOTREG, 0x8007007e /* MOD_NOT_FOUND */, 0x80004002 /* E_NOINTERFACE */, 0x80040153 /* IIDNOTREG */, CLASS_E_CLASSNOTAVAILABLE];
+
+const POLICY_ROUTES = [
+  { key: 'registry', run: () => coCreate(CLSID_PolicyConfigClient, IID_IPolicyConfig) },
+  { key: 'registry-legacy', run: () => coCreate(CLSID_PolicyConfig, IID_IPolicyConfig) },
+  { key: 'server', run: () => coCreate(CLSID_PolicyConfigClient, IID_IPolicyConfig, CLSCTX_SERVER) },
+  { key: 'server-legacy', run: () => coCreate(CLSID_PolicyConfig, IID_IPolicyConfig, CLSCTX_SERVER) },
+  { key: 'factory', run: () => policyFromFactory(CLSID_PolicyConfigClient) },
+  { key: 'factory-legacy', run: () => policyFromFactory(CLSID_PolicyConfig) }
+];
+
+let _policyRoute = null;      // the route that worked, or null while unknown
+let _policyDead = false;      // every route failed once — do not walk the ladder again per call
+
+/** Ask AudioSes.dll itself for the class factory and instantiate through it.
+ *  Throws (with .hresult) when the DLL refuses, exactly like a failed
+ *  CoCreateInstance, so the ladder can move on to the next route. */
+function policyFromFactory(clsid) {
+  if (!macro.ffi.audioSesAvailable) throw new Error(macro.ffi.audioSesLoadError || 'AudioSes.dll unavailable');
+  const getClassObject = macro.ffi.declareAudioSes(
+    'int32 __stdcall DllGetClassObject(void* rclsid, void* riid, void** ppv)');
+  const cfOut = Buffer.alloc(8);
+  const h = getClassObject(guidBytes(clsid), guidBytes(IID_IClassFactory), cfOut);
+  if (!ok(h)) throw fail(h, 'DllGetClassObject(AudioSes.dll)');
+  const cf = macro.ffi.decode(cfOut, 0, 'void*');
+  try {
+    const out = Buffer.alloc(8);
+    const hc = vcall(cf, S.fact_CreateInstance, 'IClassFactory_CreateInstance', ['void*', 'void*', 'void**'])(
+      cf, null, guidBytes(IID_IPolicyConfig), out);
+    if (!ok(hc)) throw fail(hc, 'IClassFactory::CreateInstance');
+    return macro.ffi.decode(out, 0, 'void*');
+  } finally {
+    release(cf);
+  }
+}
+
+/** An IPolicyConfig pointer from the first route that works. */
+function createPolicyConfig() {
+  if (_policyRoute) {
+    try { return _policyRoute.run(); } catch { _policyRoute = null; }   // route broke mid-session: re-walk
+  }
+  if (_policyDead) { const e = new Error('no audio-policy object on this Windows image'); e.hresult = REGDB_E_CLASSNOTREG; throw e; }
+  let last = null;
+  // The verdict describes the WHOLE ladder, not whichever route ran last: one
+  // route's CLASS_E_CLASSNOTAVAILABLE must not bury four routes' worth of
+  // REGDB_E_CLASSNOTREG (or the other way round). That single decision is what
+  // makes the user hear "this Windows install does not let apps change the
+  // default audio device" instead of a raw HRESULT, and what lets the ladder be
+  // remembered as dead — a half-missed ladder would be re-walked on every poll.
+  let allMissing = true;
+  for (const r of POLICY_ROUTES) {
+    try {
+      const pc = r.run();
+      _policyRoute = r;
+      return pc;
+    } catch (e) { last = e; if (!policyMissing(e)) allMissing = false; }
+  }
+  if (last && allMissing) _policyDead = true;
+  throw last || new Error('no audio-policy object could be created');
+}
+
+/** True when every route said the policy object simply is not here (used to
+ *  pick the honest user-facing message, never to change behaviour). */
+function policyMissing(e) {
+  return !!e && POLICY_MISSING_CODES.indexOf(((e.hresult || 0) >>> 0)) >= 0;
+}
+
 /* ---------------- public API ------------------------------------------------
    Every function is synchronous (COM marshals on this thread; an endpoint
    enumeration is single-digit milliseconds) and answers {ok:true,…} or
@@ -300,8 +403,8 @@ function activate(dev, iid, key) {
 /** {ok, devices:[{id, name, isDefault}]} for one direction of the world. */
 function listDevices(flowName) {
   const flow = parseFlow(flowName);
-  if (flow === null) return { ok: false, error: 'flow must be render or capture' };
-  if (unavailable()) return { ok: false, error: unavailable() };
+  if (flow === null) return { ok: false, code: 'bad_flow', error: 'flow must be render or capture' };
+  const why = unavailable(); if (why) return { ok: false, code: 'unavailable', error: why };
   let en = null, coll = null, dev = null;
   try {
     en = createEnumerator();
@@ -344,34 +447,24 @@ function listDevices(flowName) {
   }
 }
 
-/** Flip the system default for one direction (IPolicyConfig, then verified
- *  by reading the default back through the documented enumerator). */
+/** Flip the system default for one direction. The object is obtained through
+ *  createPolicyConfig()'s ladder (registry first, AudioSes.dll's own class
+ *  factory when the image has no registration), and the switch is verified by
+ *  reading the default back through the documented enumerator before ok:true.
+ *  Failures carry a machine-readable `code` so each UI words its own advice:
+ *  bad_flow | bad_id | unavailable | policy_unavailable | refused | failed. */
 function setDefaultDevice(flowName, deviceIdRaw) {
   const flow = parseFlow(flowName);
-  if (flow === null) return { ok: false, error: 'flow must be render or capture' };
+  if (flow === null) return { ok: false, code: 'bad_flow', error: 'flow must be render or capture' };
   const id = sanitizeDeviceId(deviceIdRaw);
-  if (!id) return { ok: false, error: 'that audio device id is not usable' };
-  if (unavailable()) return { ok: false, error: unavailable() };
+  if (!id) return { ok: false, code: 'bad_id', error: 'that audio device id is not usable' };
+  const why = unavailable();
+  if (why) return { ok: false, code: 'unavailable', error: why };
   let pc = null;
   try {
-    try {
-      pc = coCreate(CLSID_PolicyConfigClient, IID_IPolicyConfig);
-    } catch (e) {
-      // Older builds only know the legacy coclass. If BOTH are unknown to COM
-      // (REGDB_E_CLASSNOTREG = 0x80040154, no InprocServer32 anywhere), the
-      // Windows image is missing the private audio-policy registration —
-      // no user-mode app can set defaults on it, so say exactly that.
-      if (e && e.hresult === 0x80040154) {
-        pc = coCreate(CLSID_PolicyConfig, IID_IPolicyConfig);
-      } else throw e;
-    }
-    let h = vcall(pc, S.policy_SetDefault, 'IPolicyConfig_SetDefaultEndpoint', ['str16', 'int32'])(pc, id, flow);
-    if (!ok(h)) {
-      release(pc); pc = null;
-      pc = coCreate(CLSID_PolicyConfig, IID_IPolicyConfig);
-      h = vcall(pc, S.policy_SetDefault, 'IPolicyConfig_SetDefaultEndpoint', ['str16', 'int32'])(pc, id, flow);
-      if (!ok(h)) throw fail(h, 'SetDefaultEndpoint');
-    }
+    pc = createPolicyConfig();
+    const h = vcall(pc, S.policy_SetDefault, 'IPolicyConfig_SetDefaultEndpoint', ['str16', 'int32'])(pc, id, flow);
+    if (!ok(h)) throw fail(h, 'SetDefaultEndpoint');
     release(pc); pc = null;
     // Read-back through the documented path: the switch must be observable
     // before we claim it worked.
@@ -379,18 +472,25 @@ function setDefaultDevice(flowName, deviceIdRaw) {
     try {
       const dev = defaultDevice(en, flow);
       try {
-        if (deviceId(dev) !== id) return { ok: false, error: 'Windows refused the switch (the device may be busy or already gone)' };
+        if (deviceId(dev) !== id) return { ok: false, code: 'refused', error: 'Windows refused the switch (the device may be busy or already gone)' };
       } finally { release(dev); }
     } finally { release(en); }
     return { ok: true };
   } catch (e) {
-    // REGDB_E_CLASSNOTREG on both coclasses = the OS image lacks the private
-    // audio-policy registration (custom/stripped installs). No user-mode app
-    // can set defaults then — tell the user what it actually means.
-    if (e && e.hresult === 0x80040154) {
-      return { ok: false, error: 'this Windows install is missing its audio-policy component, so no app can change the default device — use Windows sound settings (below)' };
+    // Every route said the policy object is not there at all: this image has no
+    // audio-policy registration, so NO user-mode app can set defaults — say
+    // exactly that, and let each surface point at its own escape hatch.
+    // `error` is the human line (no COM jargon, no HRESULT); `detail` is the
+    // diagnostic for the log breadcrumb the surfaces print alongside it.
+    if (policyMissing(e)) {
+      const hr = ((e && e.hresult) || 0) >>> 0;
+      return {
+        ok: false, code: 'policy_unavailable',
+        error: 'this Windows install does not let apps change the default audio device',
+        detail: 'audio-policy object not available (0x' + hr.toString(16).padStart(8, '0') + ')'
+      };
     }
-    return { ok: false, error: String((e && e.message) || e) };
+    return { ok: false, code: 'failed', error: String((e && e.message) || e) };
   } finally {
     release(pc);
   }
@@ -413,8 +513,8 @@ function withEndpointVolume(flow, fn) {
 /** {ok, volume, muted} for the default endpoint of one direction. */
 function getLevels(flowName) {
   const flow = parseFlow(flowName);
-  if (flow === null) return { ok: false, error: 'flow must be render or capture' };
-  if (unavailable()) return { ok: false, error: unavailable() };
+  if (flow === null) return { ok: false, code: 'bad_flow', error: 'flow must be render or capture' };
+  const why = unavailable(); if (why) return { ok: false, code: 'unavailable', error: why };
   try {
     return withEndpointVolume(flow, (vol) => {
       const vOut = Buffer.alloc(4);
@@ -433,11 +533,11 @@ function getLevels(flowName) {
 /** {volume 0–100, muted} — either may be null (= leave unchanged). */
 function setLevels(flowName, { volume = null, muted = null } = {}) {
   const flow = parseFlow(flowName);
-  if (flow === null) return { ok: false, error: 'flow must be render or capture' };
-  if (volume === null && muted === null) return { ok: false, error: 'nothing to change' };
+  if (flow === null) return { ok: false, code: 'bad_flow', error: 'flow must be render or capture' };
+  if (volume === null && muted === null) return { ok: false, code: 'nothing_to_change', error: 'nothing to change' };
   const pct = volume === null ? null : clampPercent(volume);
-  if (volume !== null && pct === null) return { ok: false, error: 'volume must be a number 0–100' };
-  if (unavailable()) return { ok: false, error: unavailable() };
+  if (volume !== null && pct === null) return { ok: false, code: 'bad_volume', error: 'volume must be a number 0–100' };
+  const why = unavailable(); if (why) return { ok: false, code: 'unavailable', error: why };
   try {
     return withEndpointVolume(flow, (vol) => {
       if (pct !== null) {
@@ -539,7 +639,7 @@ function readSessionRows() {
 /** {ok, sessions:[{pid, label, exe, volume, muted, isSystem, sessions}]} — the
  *  per-app mixer rows for the default output device. */
 function listSessions() {
-  if (unavailable()) return { ok: false, error: unavailable() };
+  const why = unavailable(); if (why) return { ok: false, code: 'unavailable', error: why };
   try {
     const rows = readSessionRows().filter(Boolean);
     const grouped = groupSessions(rows).map((r) => ({
@@ -561,11 +661,11 @@ function listSessions() {
  *  A pid that vanished between list and set is a clean error, not a no-op. */
 function setSession(pid, { volume = null, muted = null } = {}) {
   const p = Number(pid);
-  if (!Number.isInteger(p) || p <= 0) return { ok: false, error: 'a real process id is required' };
-  if (volume === null && muted === null) return { ok: false, error: 'nothing to change' };
+  if (!Number.isInteger(p) || p <= 0) return { ok: false, code: 'bad_pid', error: 'a real process id is required' };
+  if (volume === null && muted === null) return { ok: false, code: 'nothing_to_change', error: 'nothing to change' };
   const pct = volume === null ? null : clampPercent(volume);
-  if (volume !== null && pct === null) return { ok: false, error: 'volume must be a number 0–100' };
-  if (unavailable()) return { ok: false, error: unavailable() };
+  if (volume !== null && pct === null) return { ok: false, code: 'bad_volume', error: 'volume must be a number 0–100' };
+  const why = unavailable(); if (why) return { ok: false, code: 'unavailable', error: why };
   let touched = 0, firstErr = null;
   try {
     forEachSession((c2) => {
@@ -593,8 +693,8 @@ function setSession(pid, { volume = null, muted = null } = {}) {
     });
     if (!touched) {
       return firstErr
-        ? { ok: false, error: String((firstErr && firstErr.message) || firstErr) }
-        : { ok: false, error: 'that app stopped playing audio — refresh the list' };
+        ? { ok: false, code: 'failed', error: String((firstErr && firstErr.message) || firstErr) }
+        : { ok: false, code: 'stale', error: 'that app stopped playing audio — refresh the list' };
     }
     return { ok: true };
   } catch (e) {
@@ -603,10 +703,14 @@ function setSession(pid, { volume = null, muted = null } = {}) {
 }
 
 /** Static gate for the UI: {ok:true} or {ok:false, reason}. Cheap enough to
- *  call on every tab open. */
+ *  call on every tab open. `canSetDefault` says whether the device switchers
+ *  can commit at all on this image — false once the policy ladder has come
+ *  back empty, so the surfaces can offer their escape hatch up front instead
+ *  of letting the user click into a list that cannot commit. */
 function available() {
   const why = unavailable();
-  return why ? { ok: false, reason: why } : { ok: true };
+  if (why) return { ok: false, reason: why, canSetDefault: false };
+  return { ok: true, canSetDefault: !_policyDead };
 }
 
 module.exports = {
