@@ -10,7 +10,7 @@ web
 
 ## Users
 
-General Windows users — including people who are not comfortable editing config files. They keep Radial Wheel running in the tray all day and summon the wheel at their cursor with a global hotkey from inside whatever they're already doing: writing, browsing, building. The context is interruption-free access — they don't want to leave their task to configure or fire an action. Secondary context: the same person, minutes later, in the Settings window, deliberately shaping the wheel to their workflow.
+General Windows users — including people who are not comfortable editing config files. They keep Nucleus running in the tray all day and summon the wheel at their cursor with a global hotkey from inside whatever they're already doing: writing, browsing, building. The context is interruption-free access — they don't want to leave their task to configure or fire an action. Secondary context: the same person, minutes later, in the Settings window, deliberately shaping the wheel to their workflow.
 
 ## Product Purpose
 

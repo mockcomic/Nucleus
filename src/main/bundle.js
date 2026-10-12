@@ -9,7 +9,7 @@
    Format (deliberately JSON, not zip — icon formats are already compressed and
    a zip dependency buys nothing here):
 
-     { "bundle": "radial-wheel", "version": 1,
+     { "bundle": "nucleus", "version": 1,
        "config": { …config.json verbatim… },
        "icons":  { "custom:<hash>.<kind>": { "b64": "…", "url": "origin?" } } }
 
@@ -45,7 +45,10 @@ function walkItems(cfg, fn) {
   }
 }
 
-const BUNDLE_ID = 'radial-wheel';
+const BUNDLE_ID = 'nucleus';
+/* Packages exported before the Radial Wheel → Nucleus rename carry the old
+   id; importing them must keep working, exporting uses the new one. */
+const LEGACY_BUNDLE_IDS = ['radial-wheel'];
 const BUNDLE_VERSION = 1;
 const ICON_TOTAL_MAX = 48 * 1024 * 1024;   // mirrors custom-icons DIR_TOTAL_MAX
 const BUNDLE_FILE_MAX = 64 * 1024 * 1024;  // read guard applied by the caller (ipc.js)
@@ -99,7 +102,7 @@ function buildBundle(config, deps = {}) {
 
 /* Cheap shape gate on import: is this file a package (vs a plain config)? */
 function looksLikeBundle(raw) {
-  return !!(raw && typeof raw === 'object' && raw.bundle === BUNDLE_ID);
+  return !!(raw && typeof raw === 'object' && [BUNDLE_ID, ...LEGACY_BUNDLE_IDS].includes(raw.bundle));
 }
 
 /**
@@ -145,6 +148,6 @@ function hashBuf(buf) {
 }
 
 module.exports = {
-  BUNDLE_ID, BUNDLE_VERSION, ICON_TOTAL_MAX, BUNDLE_FILE_MAX,
+  BUNDLE_ID, LEGACY_BUNDLE_IDS, BUNDLE_VERSION, ICON_TOTAL_MAX, BUNDLE_FILE_MAX,
   collectIconKeys, buildBundle, looksLikeBundle, importIcons, hashBuf
 };

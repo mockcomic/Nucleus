@@ -292,7 +292,7 @@ function focusAppWindowByExe(exeBase) {
    Read-only peek at a single HKCU Run value so the login-item disable path can
    verify OWNERSHIP before deleting (see autostart.js): Electron's
    setLoginItemSettings({openAtLogin:false}) deletes the Run value by NAME,
-   ignoring `path`, and every copy of this app shares the 'local.radialwheel'
+   ignoring `path`, and every copy of this app shares the 'local.nucleus'
    name — so a portable/dev launch must never reach that delete without first
    seeing the stored command line. Deliberately read-only: writes/deletes stay
    with Electron's API.

@@ -37,7 +37,7 @@ class WelcomeWindow {
     const colors = (this.deps.getConfig() || {}).appearance?.colors || {};
     this.win = new BrowserWindow({
       width: WELCOME_W, height: WELCOME_H, x, y,
-      title: 'Radial Wheel — Welcome',
+      title: 'Nucleus — Welcome',
       backgroundColor: colors.bg || '#0f1419',
       frame: false, resizable: false, maximizable: false, fullscreenable: false,
       minimizable: true, skipTaskbar: false, alwaysOnTop: false,

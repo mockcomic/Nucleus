@@ -178,6 +178,6 @@ Do not perform a complete visual rewrite when a smaller improvement solves the p
 
 **Given a screenshot or mockup:** analyze layout, hierarchy, spacing, typography, color, grouping, alignment, interaction model, responsiveness. Reproduce the intent and structure rather than blindly tracing pixels. If the reference has usability problems, improve them while maintaining the intended aesthetic.
 
-## Project note — radial-wheel
+## Project note — Nucleus (radial-wheel)
 
 In this repo, `DESIGN.md` is the source of truth for palette and typography tokens (machined-midnight theme, `pilot-blue` accent, Segoe UI stack, vibrancy/hairline conventions). Apply this skill's hierarchy, restraint, state, and review discipline on top of those tokens. Do not import a generic light-theme token block or an alien accent color that contradicts `DESIGN.md`; extend its existing tokens instead.

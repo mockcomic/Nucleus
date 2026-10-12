@@ -125,6 +125,10 @@ class Overlay {
     const scale = Math.min(1, fitMax / need);
     const s = Math.max(64, Math.round(need * scale));
 
+    /* The wheel itself ALWAYS opens under the cursor — no setting moves it
+       (behavior.appOpenPosition moves freshly-opened APP windows, not this
+       overlay). Center the square on the pointer, then clamp fully inside the
+       display so a summon near a screen edge never pushes plates off-screen. */
     let x = Math.round(cur.x - s / 2);
     let y = Math.round(cur.y - s / 2);
     x = Math.min(Math.max(x, disp.bounds.x), disp.bounds.x + Math.max(0, disp.bounds.width - s));
@@ -208,7 +212,7 @@ class SettingsWindow {
       x: typeof st.x === 'number' ? st.x : undefined,
       y: typeof st.y === 'number' ? st.y : undefined,
       minWidth: 920, minHeight: 640,
-      title: 'Radial Wheel — Settings',
+      title: 'Nucleus — Settings',
       backgroundColor: (this.deps.bgColor && this.deps.bgColor()) || '#0f1419',
       autoHideMenuBar: true,
       icon: path.join(app.getPath('userData'), 'icons', 'tray-32.png'),

@@ -1,10 +1,10 @@
 {
-  "name": "radial-wheel",
-  "productName": "Radial Wheel",
+  "name": "nucleus-launcher",
+  "productName": "Nucleus",
   "version": "1.0.0",
-  "description": "A polished, always-running radial launcher menu for Windows",
+  "description": "A polished, always-running radial launcher for Windows",
   "main": "src/main/main.js",
-  "author": "Radial Wheel",
+  "author": "Nucleus",
   "license": "MIT",
   "scripts": {
     "start": "electron .",
@@ -23,9 +23,9 @@
     "electron-builder": "^26.0.12"
   },
   "build": {
-    "appId": "local.radialwheel",
-    "productName": "Radial Wheel",
-    "buildNumber": "10",
+    "appId": "local.nucleus",
+    "productName": "Nucleus",
+    "buildNumber": "16",
     "directories": {
       "output": "dist"
     },
@@ -46,11 +46,11 @@
       "oneClick": true,
       "perMachine": false,
       "deleteAppDataOnUninstall": false,
-      "artifactName": "RadialWheel-${version}-b${buildNumber}-setup.exe",
+      "artifactName": "Nucleus-${version}-b${buildNumber}-setup.exe",
       "include": "build/installer.nsh"
     },
     "portable": {
-      "artifactName": "RadialWheel-${version}-b${buildNumber}-portable.exe"
+      "artifactName": "Nucleus-${version}-b${buildNumber}-portable.exe"
     }
   }
 }

@@ -45,20 +45,20 @@ test.afterEach(() => _setRunValueReader(null));
 test('allowsLoginItem requires a packaged install, an uninstaller, and no portable marker', () => {
   assert.equal(allowsLoginItem({ packaged: true, portableFile: undefined, hasUninstaller: true }), true);
   assert.equal(allowsLoginItem({ packaged: true, portableFile: '', hasUninstaller: true }), true);
-  assert.equal(allowsLoginItem({ packaged: true, portableFile: 'C:\\Downloads\\RadialWheel.exe', hasUninstaller: true }), false);
+  assert.equal(allowsLoginItem({ packaged: true, portableFile: 'C:\\Downloads\\Nucleus-1.0.0-portable.exe', hasUninstaller: true }), false);
   assert.equal(allowsLoginItem({ packaged: false, portableFile: undefined, hasUninstaller: true }), false);
   assert.equal(allowsLoginItem({ packaged: true, portableFile: undefined, hasUninstaller: false }), false);
 });
 
 test('hasUninstallerBeside matches "Uninstall <product>.exe" only', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rw-uninst-'));
-  const exe = path.join(dir, 'Radial Wheel.exe');
+  const exe = path.join(dir, 'Nucleus.exe');
   fs.writeFileSync(exe, '');
   try {
     assert.equal(hasUninstallerBeside(exe), false);
-    fs.writeFileSync(path.join(dir, 'Uninstall Radial Wheel.exe'), '');
+    fs.writeFileSync(path.join(dir, 'Uninstall Nucleus.exe'), '');
     assert.equal(hasUninstallerBeside(exe), true);
-    fs.unlinkSync(path.join(dir, 'Uninstall Radial Wheel.exe'));
+    fs.unlinkSync(path.join(dir, 'Uninstall Nucleus.exe'));
     fs.writeFileSync(path.join(dir, 'uninstall.exe'), '');
     assert.equal(hasUninstallerBeside(exe), false);
   } finally {
@@ -67,7 +67,7 @@ test('hasUninstallerBeside matches "Uninstall <product>.exe" only', () => {
 });
 
 test('expectedRunCommand quotes the exe path and appends args', () => {
-  assert.equal(expectedRunCommand('C:\\Dir\\Radial Wheel.exe', ARGS), '"C:\\Dir\\Radial Wheel.exe" --hidden');
+  assert.equal(expectedRunCommand('C:\\Dir\\Nucleus.exe', ARGS), '"C:\\Dir\\Nucleus.exe" --hidden');
   assert.equal(expectedRunCommand('C:\\Dir\\app.exe', []), '"C:\\Dir\\app.exe"');
   assert.equal(expectedRunCommand('C:\\a.exe', ['plain', 'a b']), '"C:\\a.exe" plain "a b"');
 });
@@ -87,7 +87,7 @@ test('runEntryBelongsToExe accepts every form our writes can take', () => {
 });
 
 test('runEntryBelongsToExe rejects entries owned by another executable', () => {
-  const other = 'C:\\Users\\me\\AppData\\Local\\Programs\\radial-wheel\\Radial Wheel.exe';
+  const other = 'C:\\Users\\me\\AppData\\Local\\Programs\\nucleus\\Nucleus.exe';
   assert.equal(runEntryBelongsToExe(`"${other}" --hidden`, EXE, ARGS), false);
   assert.equal(runEntryBelongsToExe('"C:\\Other\\thing.exe" --hidden', EXE, ARGS), false);
   assert.equal(runEntryBelongsToExe('', EXE, ARGS), false);
@@ -111,7 +111,7 @@ test('set(false) from a non-installed copy does NOT delete a foreign login item'
   calls.length = 0;
   fakeApp.isPackaged = false;
   // The installed copy's entry, sitting under the SAME value name we share.
-  useValues({ 'local.radialwheel': { state: 'value', data: '"C:\\Installed\\Radial Wheel.exe" --hidden' } });
+  useValues({ 'local.nucleus': { state: 'value', data: '"C:\\Installed\\Nucleus.exe" --hidden' } });
   const r = set(false);
   assert.equal(r.ok, true);
   assert.equal(r.skipped, 'foreign');
@@ -143,7 +143,7 @@ test('set(false) deletes only the value whose command line is our own exe', () =
   fakeApp.isPackaged = false;
   // Reader models the registry honestly: the value exists until the fake
   // setLoginItemSettings records a delete for that name.
-  _setRunValueReader((name) => (name === 'local.radialwheel' &&
+  _setRunValueReader((name) => (name === 'local.nucleus' &&
     !calls.some((c) => c.openAtLogin === false && c.name === name)
     ? { state: 'value', data: `"${EXE}" --hidden` }
     : { state: 'absent' }));
@@ -153,7 +153,7 @@ test('set(false) deletes only the value whose command line is our own exe', () =
   assert.equal(r.verified, true);
   assert.equal(calls.length, origLen + 1, 'one delete, for our own value only');
   assert.equal(calls[origLen].openAtLogin, false);
-  assert.equal(calls[origLen].name, 'local.radialwheel');
+  assert.equal(calls[origLen].name, 'local.nucleus');
 });
 
 test('set(true) from the installed copy writes the AUMID entry and verifies by read-back', () => {
@@ -163,15 +163,15 @@ test('set(true) from the installed copy writes the AUMID entry and verifies by r
   // Pretend an uninstaller sits beside THIS exe so allowed() passes without
   // depending on the real execPath's directory.
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rw-inst-'));
-  const exe = path.join(dir, 'Radial Wheel.exe');
+  const exe = path.join(dir, 'Nucleus.exe');
   fs.writeFileSync(exe, '');
-  fs.writeFileSync(path.join(dir, 'Uninstall Radial Wheel.exe'), '');
+  fs.writeFileSync(path.join(dir, 'Uninstall Nucleus.exe'), '');
   const realExec = Object.getOwnPropertyDescriptor(process, 'execPath');
   Object.defineProperty(process, 'execPath', { value: exe, configurable: true });
   try {
     assert.equal(allowed(), true);
     // The write "succeeds": the AUMID value now holds the exact expected command.
-    useValues({ 'local.radialwheel': { state: 'value', data: `"${exe}" --hidden` } });
+    useValues({ 'local.nucleus': { state: 'value', data: `"${exe}" --hidden` } });
     const r = set(true);
     assert.equal(r.ok, true);
     assert.equal(r.enabled, true);
@@ -187,19 +187,80 @@ test('set(true) from the installed copy writes the AUMID entry and verifies by r
   }
 });
 
+test('set(true) cleans an orphaned Radial Wheel login item when enabling', () => {
+  calls.length = 0;
+  fakeApp.isPackaged = true;
+  delete process.env.PORTABLE_EXECUTABLE_FILE;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rw-inst-'));
+  const exe = path.join(dir, 'Nucleus.exe');
+  fs.writeFileSync(exe, '');
+  fs.writeFileSync(path.join(dir, 'Uninstall Nucleus.exe'), '');
+  const realExec = Object.getOwnPropertyDescriptor(process, 'execPath');
+  Object.defineProperty(process, 'execPath', { value: exe, configurable: true });
+  try {
+    const gone = path.join(dir, 'Radial Wheel.exe');           // never created — the upgrade deleted it
+    _setRunValueReader((name) => {
+      if (name === 'local.nucleus' && !calls.some((c) => c.openAtLogin === false && c.name === name))
+        return { state: 'value', data: `"${exe}" --hidden` };
+      if (name === 'local.radialwheel' && !calls.some((c) => c.openAtLogin === false && c.name === name))
+        return { state: 'value', data: `"${gone}" --hidden` };
+      return { state: 'absent' };
+    });
+    const r = set(true);
+    assert.equal(r.ok, true);
+    assert.equal(r.verified, true);
+    assert.ok(calls.some((c) => c.openAtLogin === false && c.name === 'local.radialwheel'),
+      'the orphan under the legacy name is removed');
+    assert.ok(!calls.some((c) => c.openAtLogin === false && c.name === 'local.nucleus'),
+      'the live value is never touched by the cleanup');
+  } finally {
+    Object.defineProperty(process, 'execPath', realExec);
+    _setRunValueReader(null);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('set(true) leaves a still-existing Radial Wheel login item alone', () => {
+  calls.length = 0;
+  fakeApp.isPackaged = true;
+  delete process.env.PORTABLE_EXECUTABLE_FILE;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rw-inst-'));
+  const exe = path.join(dir, 'Nucleus.exe');
+  fs.writeFileSync(exe, '');
+  fs.writeFileSync(path.join(dir, 'Uninstall Nucleus.exe'), '');
+  const oldAlive = path.join(dir, 'Radial Wheel.exe');         // old copy still on disk
+  fs.writeFileSync(oldAlive, '');
+  const realExec = Object.getOwnPropertyDescriptor(process, 'execPath');
+  Object.defineProperty(process, 'execPath', { value: exe, configurable: true });
+  try {
+    useValues({
+      'local.nucleus': { state: 'value', data: `"${exe}" --hidden` },
+      'local.radialwheel': { state: 'value', data: `"${oldAlive}" --hidden` }
+    });
+    const r = set(true);
+    assert.equal(r.ok, true);
+    assert.ok(!calls.some((c) => c.openAtLogin === false && c.name === 'local.radialwheel'),
+      'an entry whose exe still exists belongs to the old copy, not us');
+  } finally {
+    Object.defineProperty(process, 'execPath', realExec);
+    _setRunValueReader(null);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('set(true) reports verified:false when the read-back disagrees', () => {
   calls.length = 0;
   fakeApp.isPackaged = true;
   delete process.env.PORTABLE_EXECUTABLE_FILE;
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rw-inst-'));
-  const exe = path.join(dir, 'Radial Wheel.exe');
+  const exe = path.join(dir, 'Nucleus.exe');
   fs.writeFileSync(exe, '');
-  fs.writeFileSync(path.join(dir, 'Uninstall Radial Wheel.exe'), '');
+  fs.writeFileSync(path.join(dir, 'Uninstall Nucleus.exe'), '');
   const realExec = Object.getOwnPropertyDescriptor(process, 'execPath');
   Object.defineProperty(process, 'execPath', { value: exe, configurable: true });
   try {
     // Something else owns the value — the write did not take (or was raced).
-    useValues({ 'local.radialwheel': { state: 'value', data: '"C:\\Somewhere\\Else.exe" --hidden' } });
+    useValues({ 'local.nucleus': { state: 'value', data: '"C:\\Somewhere\\Else.exe" --hidden' } });
     const r = set(true);
     assert.equal(r.ok, true);
     assert.equal(r.verified, false);

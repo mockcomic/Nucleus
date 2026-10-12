@@ -1,7 +1,7 @@
 'use strict';
 /* Rolling config backups (src/main/config.js). Electron is stubbed via
    require-cache injection and every path is routed to a fresh mkdtemp dir, so
-   the real %APPDATA%\Radial Wheel is never touched (test-bootstrap rule).
+   the real %APPDATA%\Nucleus is never touched (test-bootstrap rule).
    init() arms an fs.watch, so anything that calls it closes the watcher. */
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -10,7 +10,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 function freshStore() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'radial-wheel-backup-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nucleus-backup-'));
   const electronPath = require.resolve('electron');
   require.cache[electronPath] = {
     id: electronPath, filename: electronPath, loaded: true,

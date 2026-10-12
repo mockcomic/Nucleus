@@ -1,5 +1,5 @@
-' Launches Radial Wheel with no console window (dev mode), fully detached.
-' Startup shortcut target: wscript.exe "...\radial-wheel\scripts\launch-hidden.vbs"
+' Launches Nucleus with no console window (dev mode), fully detached.
+' Startup shortcut target: wscript.exe "...\nucleus-launcher\scripts\launch-hidden.vbs"
 Dim fso, sh, root, cmd
 Set fso = CreateObject("Scripting.FileSystemObject")
 Set sh = CreateObject("WScript.Shell")

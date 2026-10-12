@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:">
-  <title>Radial Wheel — Settings</title>
+  <title>Nucleus — Settings</title>
   <link rel="stylesheet" href="settings.css">
 </head>
 <body>
@@ -80,11 +80,20 @@
       </div>
       <div class="card">
         <div class="card-title">Startup</div>
-        <label class="chk" id="autostart-lbl"><input type="checkbox" id="autostart-chk"> Launch Radial Wheel when I sign in to Windows</label>
+        <label class="chk" id="autostart-lbl"><input type="checkbox" id="autostart-chk"> Launch Nucleus when I sign in to Windows</label>
         <div id="autostart-hint" class="hint muted hidden">Startup is only available in the installed app. This copy will not register a login item.</div>
       </div>
       <div class="card">
         <div class="card-title">Wheel behavior</div>
+        <div class="row-line" style="align-items:center;gap:10px">
+          <label for="bh-app-open" style="flex:1">Where opened programs appear</label>
+          <select id="bh-app-open" style="max-width:280px">
+            <option value="default">Let the app decide (default)</option>
+            <option value="cursor">At the mouse cursor</option>
+            <option value="center">Center of the screen</option>
+          </select>
+        </div>
+        <div class="hint muted">Where programs opened <b>from the wheel</b> place their window: left to the app, pulled under the mouse, or centered on the monitor your mouse is on (taskbar excluded). Only freshly-opened windows move — apps that raise an already-open window, or that start maximized, keep their spot. The wheel itself always opens under the cursor. Takes a few seconds as the program starts.</div>
         <label class="chk"><input type="checkbox" id="bh-esc"> Dismiss with Esc</label>
         <label class="chk"><input type="checkbox" id="bh-right"> Right-click dismisses the wheel</label>
         <label class="chk"><input type="checkbox" id="bh-retrigger"> Pressing the hotkey again hides the wheel</label>
@@ -140,7 +149,9 @@
         <div class="row-line">
           <select id="au-out-select" class="au-dev" aria-label="Default audio output device"></select>
           <button class="btn small" id="au-out-refresh" title="Reload the output device list" aria-label="Reload the output device list">&#xE72C;</button>
+          <button class="btn small" id="au-out-manage" aria-expanded="false" title="Choose which devices appear in this list" aria-label="Manage hidden output devices">Manage&#8230;</button>
         </div>
+        <div id="au-out-hidden" class="au-hidden hidden" role="group" aria-label="Hidden output devices"></div>
         <div class="slider-row" style="margin-top:10px">
           <label class="slider-lbl" for="au-out-vol">Master volume
             <input type="range" id="au-out-vol" min="0" max="100" step="1" style="flex:1">
@@ -154,7 +165,9 @@
         <div class="row-line">
           <select id="au-in-select" class="au-dev" aria-label="Default audio input device"></select>
           <button class="btn small" id="au-in-refresh" title="Reload the input device list" aria-label="Reload the input device list">&#xE72C;</button>
+          <button class="btn small" id="au-in-manage" aria-expanded="false" title="Choose which devices appear in this list" aria-label="Manage hidden input devices">Manage&#8230;</button>
         </div>
+        <div id="au-in-hidden" class="au-hidden hidden" role="group" aria-label="Hidden input devices"></div>
         <div class="slider-row" style="margin-top:10px">
           <label class="slider-lbl" for="au-in-vol">Microphone volume
             <input type="range" id="au-in-vol" min="0" max="100" step="1" style="flex:1">
@@ -185,7 +198,7 @@
       <div class="tab-head"><h2>Advanced</h2></div>
       <div class="card">
         <div class="card-title">Config file</div>
-        <div class="hint muted" id="cfg-path-hint">Stored in %APPDATA%\Radial Wheel\config.json — edits are watched live.</div>
+        <div class="hint muted" id="cfg-path-hint">Stored in %APPDATA%\Nucleus\config.json — edits are watched live.</div>
         <div class="row-line wrap">
           <button class="btn" id="btn-export">Export…</button>
           <button class="btn" id="btn-export-pkg">Export package… (with icons)</button>
@@ -196,7 +209,7 @@
           <button class="btn" id="btn-openlogs">Open logs folder</button>
         </div>
         <div class="hint muted">A <b>package</b> is a single file with your whole setup plus the bytes of every custom segment image — share it and the wheel arrives fully decorated. A plain <b>Export</b> carries config only (logos and URL-picked icons re-download themselves).</div>
-        <div class="hint muted">Before <b>Import…</b> or <b>Reset</b> replaces your config, the outgoing file is copied to <code>%APPDATA%\Radial Wheel\backups</code> and the newest 12 are kept — <b>Restore a backup…</b> opens that folder. Autosaves are kept out of the rotation (one at most every few minutes), so a burst of typing can't bury the useful copies.</div>
+        <div class="hint muted">Before <b>Import…</b> or <b>Reset</b> replaces your config, the outgoing file is copied to <code>%APPDATA%\Nucleus\backups</code> and the newest 12 are kept — <b>Restore a backup…</b> opens that folder. Autosaves are kept out of the rotation (one at most every few minutes), so a burst of typing can't bury the useful copies.</div>
       </div>
       <div class="card">
         <div class="card-title">Usage</div>
@@ -215,7 +228,7 @@
           <li><b>Open a website</b> (<code>url</code>) — open a link in your default browser</li>
           <li><b>Open a file</b> (<code>file</code>) — open a document or folder with its default app</li>
           <li><b>Windows action</b> (<code>sys</code>) — built-in Windows actions (lock, sleep, volume, settings pages…)</li>
-          <li><b>App toggle</b> (<code>setting</code>) — flip one of Radial Wheel's own switches straight from the wheel</li>
+          <li><b>App toggle</b> (<code>setting</code>) — flip one of Nucleus's own switches straight from the wheel</li>
           <li><b>Folder</b> (<code>folder</code>) — a sub-menu that branches outward when the pointer rests on it</li>
           <li><b>Recents</b> (<code>recent</code>) — a self-filling sub-menu of your most-recently-used segments; edit its label and icon, its contents update themselves</li>
           <li><b>Run a command or script</b> (<code>command</code>) — run a shell command (<code>cmd.exe</code> syntax — type it) or a <code>.bat</code> / <code>.cmd</code> / <code>.ps1</code> script (type the path or use Browse…)</li>
@@ -224,7 +237,7 @@
         <div class="hint muted">The Type dropdown groups these as <b>Everyday actions</b>, <b>Organize the wheel</b>, and <b>Power user</b> — the two technical types sit in that last group.</div>
       </div>
       <div class="card">
-        <button class="btn danger" id="btn-quit">Exit Radial Wheel</button>
+        <button class="btn danger" id="btn-quit">Exit Nucleus</button>
         <div class="hint muted">Quits the tray app — the summon hotkey stops working until you launch Radial&nbsp;Wheel again.</div>
       </div>
     </section>

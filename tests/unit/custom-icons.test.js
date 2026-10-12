@@ -1,7 +1,7 @@
 'use strict';
 /* Unit tests for src/main/custom-icons.js — the key/sniff half is pure, the
    store half runs against a throwaway tmpdir (test-bootstrap isolation rule:
-   nothing here may touch %APPDATA%\Radial Wheel). Network paths are excluded;
+   nothing here may touch %APPDATA%\Nucleus). Network paths are excluded;
    a URL-sourced icon's re-fetch is exercised only through its no-origin
    failure branch. */
 const test = require('node:test');

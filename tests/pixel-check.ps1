@@ -13,7 +13,8 @@ if (-not ('Win32.U32' -as [type])) {
   Add-Type -Namespace Win32 -Name U32 -MemberDefinition '[DllImport("user32.dll")] public static extern bool SetCursorPos(int X, int Y);'
 }
 
-$cfgPath = Join-Path $env:APPDATA 'Radial Wheel\config.json'
+$cfgPath = Join-Path $env:APPDATA 'Nucleus\config.json'
+if (-not (Test-Path $cfgPath)) { $cfgPath = Join-Path $env:APPDATA 'Radial Wheel\config.json' }
 $cfg = Get-Content $cfgPath -Raw | ConvertFrom-Json
 $inner = $cfg.appearance.innerRadius
 $outer = $cfg.appearance.outerRadius

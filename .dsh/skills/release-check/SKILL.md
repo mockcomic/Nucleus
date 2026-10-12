@@ -1,35 +1,35 @@
 ---
 name: release-check
-description: "The radial-wheel packaging ritual: npm run dist pipeline, artifact verification, autostart/portable caveats, clean-profile first-run smoke test."
+description: "The Nucleus packaging ritual: npm run dist pipeline, artifact verification, autostart/portable caveats, clean-profile first-run smoke test."
 whenToUse: "Before shipping a build, after version bumps, or whenever dist output or installer behavior is in question."
 ---
 
 # Release check
 
-`npm run dist` (aliased as `npm run build`) = `node scripts/make-icons.mjs` (regenerates `assets/tray.ico` + png via `src/main/icon-gen.js`), then `node scripts/bump-build.mjs` (increments `build.buildNumber` in `package.json`), then electron-builder. Targets: portable + NSIS oneClick, per-machine false, `appId local.radialwheel`. Signing is electron-builder's default (do not set `forceCodeSigning`): when `CSC_LINK` or `WIN_CSC_LINK` plus the password, or a certificate selected via `signtoolOptions`, is present, the app exe and the NSIS setup are signed. With no certificate the build still completes and the executables stay unsigned (`no signing info identified, signing is skipped` is a debug log).
+`npm run dist` (aliased as `npm run build`) = `node scripts/make-icons.mjs` (regenerates `assets/tray.ico` + png via `src/main/icon-gen.js`), then `node scripts/bump-build.mjs` (increments `build.buildNumber` in `package.json`), then electron-builder. Targets: portable + NSIS oneClick, per-machine false, `appId local.nucleus`. Signing is electron-builder's default (do not set `forceCodeSigning`): when `CSC_LINK` or `WIN_CSC_LINK` plus the password, or a certificate selected via `signtoolOptions`, is present, the app exe and the NSIS setup are signed. With no certificate the build still completes and the executables stay unsigned (`no signing info identified, signing is skipped` is a debug log).
 
 ## Pre-flight
 
-- The build number is automatic: `dist` bumps `build.buildNumber` every run — do not increment it by hand. Expect artifacts `dist/RadialWheel-<version>-b<build>-portable.exe` and `dist/RadialWheel-<version>-b<build>-setup.exe`; the electron-builder `${buildNumber}` macro degrades to a literal `undefined` in names only if the key is deleted AND electron-builder is run directly (never via `dist`).
+- The build number is automatic: `dist` bumps `build.buildNumber` every run — do not increment it by hand. Expect artifacts `dist/Nucleus-<version>-b<build>-portable.exe` and `dist/Nucleus-<version>-b<build>-setup.exe`; the electron-builder `${buildNumber}` macro degrades to a literal `undefined` in names only if the key is deleted AND electron-builder is run directly (never via `dist`).
 - Confirm `version` in `package.json` is bumped; when cutting a new version, reset `build.buildNumber` to `"0"` (or drop the key) to restart the series. Commit the mutated `package.json` with the release.
 - Only `src/`, `assets/`, and `package.json` are bundled (`package.json:28-32`) — a new runtime file outside those paths works in dev and silently vanishes only in the packaged app. Check the whitelist whenever adding files.
 
 ## Artifact checks
 
-- Launch the portable exe: tray icon appears, first run creates `config.json` under `%APPDATA%\Radial Wheel\`, shows the welcome balloon, and opens settings (`src/main/main.js:106-113`).
-- Verify the `[radial-wheel] ready` marker path works packaged-in (`main.js:117`) and the wheel pops on the configured hotkey.
+- Launch the portable exe: tray icon appears, first run creates `config.json` under `%APPDATA%\Nucleus\`, shows the welcome balloon, and opens settings (`src/main/main.js:106-113`).
+- Verify the `[nucleus] ready` marker path works packaged-in (`main.js:117`) and the wheel pops on the configured hotkey.
 - The exe's Windows `FileVersion` must read `<version>.<build>` (electron-builder maps `buildNumber` into it), and the log banner plus the welcome screen's version line must show `(build N)` with the same N.
 - A build produced with no certificate is unsigned — expect SmartScreen prompts. Do not describe that build as signed.
 
 ## Autostart caveat (classic trap)
 
-- A login item is registered only for an installed NSIS copy: packaged, `PORTABLE_EXECUTABLE_FILE` unset, and an `Uninstall *.exe` beside the executable (`src/main/autostart.js`). Portable, `dist\win-unpacked`, and `npm start` call `set(false)` for **this** exe only and do not rewrite `behavior.autostart` in the shared `%APPDATA%\Radial Wheel` config.
+- A login item is registered only for an installed NSIS copy: packaged, `PORTABLE_EXECUTABLE_FILE` unset, and an `Uninstall *.exe` beside the executable (`src/main/autostart.js`). Portable, `dist\win-unpacked`, and `npm start` call `set(false)` for **this** exe only and do not rewrite `behavior.autostart` in the shared `%APPDATA%\Nucleus` config.
 - On the installed app, startup is applied when the welcome guide finishes: the last step's checkbox, or off if the guide is closed before that step. After the guide has been seen, each launch reconciles the registry to `behavior.autostart`.
 - The second-instance handler honors `--hidden` and must not open settings on login.
 
 ## Clean-profile smoke
 
-1. Rename (don't delete) `%APPDATA%\Radial Wheel\` to force first-run behavior.
+1. Rename (don't delete) `%APPDATA%\Nucleus\` to force first-run behavior (also rename/remove `%APPDATA%\Radial Wheel\` or the first-launch migration will restore the old profile).
 2. Launch the installer or portable exe; verify config creation, hotkey registration, tray menu, wheel popup, and config live-reload.
 3. Uninstall via NSIS keeps user data (`deleteAppDataOnUninstall: false`) — confirm config survives so an upgrade re-imports settings.
 4. Restore the renamed folder if the user had a real setup.

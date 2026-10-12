@@ -79,6 +79,25 @@ test('focusExistingApp survives a save round-trip', () => {
   assert.equal(validate(JSON.parse(JSON.stringify(saved))).behavior.focusExistingApp, true);
 });
 
+/* ------------- behaviour: where opened APP WINDOWS appear (winplace) ------------- */
+test('appOpenPosition defaults to default (the app decides)', () => {
+  assert.equal(bhv({}).appOpenPosition, 'default');
+  assert.equal(bhv({ behavior: {} }).appOpenPosition, 'default');
+});
+
+test('appOpenPosition accepts only cursor and center', () => {
+  assert.equal(bhv({ behavior: { appOpenPosition: 'cursor' } }).appOpenPosition, 'cursor');
+  assert.equal(bhv({ behavior: { appOpenPosition: 'center' } }).appOpenPosition, 'center');
+  for (const junk of ['Centre', 'CENTRE', 'top-left', true, 1, {}, [], 'wheelPosition']) {
+    assert.equal(bhv({ behavior: { appOpenPosition: junk } }).appOpenPosition, 'default', String(junk));
+  }
+});
+
+test('appOpenPosition survives a save round-trip', () => {
+  const saved = validate({ behavior: { appOpenPosition: 'center' } });
+  assert.equal(validate(JSON.parse(JSON.stringify(saved))).behavior.appOpenPosition, 'center');
+});
+
 /* --------------------------------- hotkey ---------------------------------- */
 test('validate keeps mouse-button specs as written', () => {
   for (const spec of ['mmiddle', 'mback', 'mfwd', 'ctrl+mmiddle', 'ctrl+alt+mmiddle', 'ctrl+alt+shift+win+mfwd']) {
@@ -249,6 +268,39 @@ test('wheelSound is opt-in: default false, only a real true turns audio on', () 
   for (const junk of ['yes', 1, {}, 'on']) {
     assert.equal(bhv({ behavior: { wheelSound: junk } }).wheelSound, false, `junk ${JSON.stringify(junk)} stays silent`);
   }
+});
+
+
+/* ------------------------- behavior.audioHidden ---------------------------- */
+const hidden = (raw) => bhv({ behavior: { audioHidden: raw } }).audioHidden;
+const DEV = '{0.0.0.00000000}.{0513e965-c2aa-40eb-8cbf-95f51c737d4e}';
+
+test('audioHidden defaults to a complete, empty {render, capture} pair', () => {
+  assert.deepEqual(bhv({}).audioHidden, { render: [], capture: [] });
+  // A half-written field still comes back complete — the picker filter may
+  // index either flow without null-checks.
+  assert.deepEqual(hidden({ render: [{ id: DEV, name: 'Speakers' }] }),
+    { render: [{ id: DEV, name: 'Speakers' }], capture: [] });
+  assert.deepEqual(hidden('junk').render, []);
+  assert.deepEqual(hidden(null), { render: [], capture: [] });
+});
+
+test('audioHidden keeps only {id, name} entries with usable ids', () => {
+  assert.deepEqual(hidden({ render: [DEV, null, 7, {}, { id: '' }, { id: '  ' }], capture: [] }).render, []);
+  assert.deepEqual(hidden({ render: [{ id: DEV }] }).render, [{ id: DEV, name: '' }]);
+  assert.equal(hidden({ render: [{ id: ' ' + DEV + ' ', name: '  Spk ' }] }).render[0].id, DEV, 'trim, not reject');
+  assert.equal(hidden({ render: [{ id: DEV, name: 'üñî' }] }).render[0].name, 'üñî', 'the label is free text');
+  for (const bad of ['x'.repeat(513), 'line\nbreak', 'nul\x00', 'ünïcödé']) {
+    assert.deepEqual(hidden({ render: [{ id: bad }] }).render, [], `id ${JSON.stringify(bad)} is not endpoint vocabulary`);
+  }
+  assert.equal(hidden({ render: [{ id: DEV, name: 'n'.repeat(4000) }] }).render[0].name.length, 512);
+});
+
+test('audioHidden dedupes by id and caps the list', () => {
+  assert.deepEqual(hidden({ render: [{ id: DEV, name: 'A' }, { id: DEV, name: 'B' }] }).render,
+    [{ id: DEV, name: 'A' }], 'first entry wins, once');
+  const many = Array.from({ length: 200 }, (_, i) => ({ id: 'id-' + i }));
+  assert.equal(hidden({ render: many }).render.length, 128);
 });
 
 

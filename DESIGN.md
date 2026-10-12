@@ -1,5 +1,5 @@
 ---
-name: Radial Wheel
+name: Nucleus
 description: A machined midnight action hub for Windows — launcher, macro recorder, and system-actions panel at the cursor.
 colors:
   pilot-blue: "#4c9ff0"
@@ -158,7 +158,7 @@ components:
     padding: "5px 11px"
 ---
 
-# Design System: Radial Wheel
+# Design System: Nucleus
 
 ## Overview
 

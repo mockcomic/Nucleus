@@ -59,7 +59,7 @@ test('buildBundle embeds honest bytes + the URL origin; missing cache files skip
   assert.ok(built.ok, built.error);
   assert.equal(built.icons, 2);
   assert.deepEqual(built.skipped, ['custom:' + 'f'.repeat(16) + '.png']);
-  assert.equal(built.bundle.bundle, 'radial-wheel');
+  assert.equal(built.bundle.bundle, 'nucleus');
   assert.equal(built.bundle.version, 1);
   assert.deepEqual(built.bundle.config, config, 'config rides verbatim');
   assert.notEqual(built.bundle.config, config, '…but not by reference');
@@ -94,7 +94,8 @@ test('buildBundle ABORTS (never truncates) past the total cap', () => {
 
 /* --------------------------------- parsing --------------------------------- */
 test('looksLikeBundle gates the import path', () => {
-  assert.equal(bundle.looksLikeBundle({ bundle: 'radial-wheel', version: 1 }), true);
+  assert.equal(bundle.looksLikeBundle({ bundle: 'nucleus', version: 1 }), true);
+  assert.equal(bundle.looksLikeBundle({ bundle: 'radial-wheel', version: 1 }), true, 'pre-rename exports keep importing');
   assert.equal(bundle.looksLikeBundle({ rings: {} }), false);                 // plain config export
   assert.equal(bundle.looksLikeBundle(null), false);
   assert.equal(bundle.looksLikeBundle('nope'), false);

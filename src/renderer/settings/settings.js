@@ -297,7 +297,7 @@ const TYPE_META = {
   file:    { chip: 'file',       menu: 'Open a file', group: 0 },
   sys:     { chip: 'Windows',    menu: 'Windows action — lock, volume, Explorer…', group: 0 },
   mixer:   { chip: 'mixer',      menu: 'App volume mixer — flyout with quick sliders and device pickers', group: 0 },
-  setting: { chip: 'app toggle', menu: 'Flip one of Radial Wheel\u2019s own switches', group: 0 },
+  setting: { chip: 'app toggle', menu: 'Flip one of Nucleus\u2019s own switches', group: 0 },
   folder:  { chip: 'folder',     menu: 'Folder — sub-menu that branches on hover', group: 1 },
   recent:  { chip: 'recents',    menu: 'Recents — fills itself with your most-used segments', group: 1 },
   command: { chip: 'command',    menu: 'Run a command or script — for power users', group: 2 },
@@ -644,6 +644,17 @@ async function loadAudioDevices(flow, force = false) {
   const list = (r && r.ok && Array.isArray(r.devices)) ? r.devices : [];
   list.forEach((d) => { if (d && d.id) audioDeviceNames.set(d.id, d.name || d.id); });
   audioDeviceCache[flow] = list;
+  return list;
+}
+
+/* The hidden-device manager's view of the SAME endpoint list: main filters
+   the shared audio:devices channel app-wide, so the manager asks for the
+   unfiltered truth (strict includeHidden === true) and offers Hide/Restore
+   for every endpoint Windows has, not just the visible ones. */
+async function loadAllAudioDevices(flow) {
+  const r = await safe(() => api.audioDevices(flow, true));
+  const list = (r && r.ok && Array.isArray(r.devices)) ? r.devices : null;
+  if (list) list.forEach((d) => { if (d && d.id) audioDeviceNames.set(d.id, d.name || d.id); });
   return list;
 }
 
@@ -2206,6 +2217,20 @@ function wireBehaviorCheckboxes() {
   if (auto) auto.disabled = !autostartAllowed;
   if (autoLbl) autoLbl.classList.toggle('dim', !autostartAllowed);
   if (autoHint) autoHint.classList.toggle('hidden', autostartAllowed);
+  /* Where a program opened FROM THE WHEEL places its fresh window: the app
+     itself (default), under the cursor, or centered on the cursor's display
+     (src/main/winplace.js). The wheel overlay always follows the cursor.
+     Read live by main at every segment fire — nothing to restart. */
+  const posSel = $('#bh-app-open');
+  if (posSel) {
+    const v = cfg.behavior && cfg.behavior.appOpenPosition;
+    posSel.value = (v === 'cursor' || v === 'center') ? v : 'default';
+    posSel.onchange = () => {
+      cfg.behavior.appOpenPosition =
+        (posSel.value === 'cursor' || posSel.value === 'center') ? posSel.value : 'default';
+      touch(false);
+    };
+  }
   /* Sub-menu dwell: how long a folder must be hovered before it branches. */
   const fly = $('#bh-flyout'), flyOut = $('#bh-flyout-out');
   if (fly) {
@@ -2415,7 +2440,7 @@ async function wireAdvanced() {
       quit.classList.add('armed');
       clearTimeout(quitTimer);
       quitTimer = setTimeout(() => {
-        if (quit.isConnected) { quitArmed = false; quit.textContent = 'Exit Radial Wheel'; quit.classList.remove('armed'); }
+        if (quit.isConnected) { quitArmed = false; quit.textContent = 'Exit Nucleus'; quit.classList.remove('armed'); }
       }, 3000);
       return;
     }
@@ -2453,7 +2478,7 @@ async function wireAudio() {
   const info = await safe(() => api.audioAvailable());
   // One line in the log file (preload forwards page console) — the audio
   // equivalent of the "why is nothing happening" breadcrumb that makes the
-  // mixer features debuggable from %APPDATA%\Radial Wheel\logs alone.
+  // mixer features debuggable from %APPDATA%\Nucleus\logs alone.
   console.log('[audio] available:', !!(info && info.ok !== false), (info && (info.reason || info.error)) || '');
   const notice = $('#au-unavailable');
   const live = !!info && info.ok !== false;
@@ -2509,6 +2534,87 @@ async function wireAudio() {
       loading = false;
       fillDevices(devices);
     }
+
+    /* ---- hidden devices (behavior.audioHidden) ----
+       Hiding here removes an endpoint from EVERY picker (this list, the
+       wheel's mixer card, the segment editor) — main filters the shared
+       audio:devices channel, so all surfaces agree. The manager itself
+       fetches the full list (loadAllAudioDevices) and keeps hidden names in
+       the store, so an unplugged device still reads as its name. The current
+       default is exempt app-wide: hiding can never make a picker misreport
+       what Windows actually plays through. */
+    const mg = $(spec.manage), panel = $(spec.panel);
+    let allCache = null;                        // the full live list, while the panel is open
+    const hiddenList = () => {
+      const b = ((cfg.behavior || {}).audioHidden || {})[spec.flow];
+      return Array.isArray(b) ? b : [];
+    };
+    const setHidden = (list) => {
+      cfg.behavior = cfg.behavior || {};
+      cfg.behavior.audioHidden = cfg.behavior.audioHidden || { render: [], capture: [] };
+      cfg.behavior.audioHidden[spec.flow] = list;
+      touch(false);                             // the same debounced save every other edit uses
+    };
+    function hRow(parent, name, note, btnText, btnTitle, onClick, disabled) {
+      const row = el('div', 'au-hrow', {}, parent);
+      el('span', 'au-hname', { text: name }, row);
+      if (note) el('span', 'au-hnote muted', { text: note }, row);
+      const b = el('button', 'btn small', { type: 'button', text: btnText, title: btnTitle }, row);
+      b.disabled = !!disabled;
+      b.addEventListener('click', onClick);
+      return row;
+    }
+    async function toggleHidden(id, name, hide) {
+      const cur = hiddenList();
+      setHidden(hide
+        ? cur.concat([{ id, name: String(name || '').slice(0, 512) }])
+        : cur.filter((h) => h.id !== id));
+      allCache = await loadAllAudioDevices(spec.flow);
+      if (panel.isConnected) buildHiddenPanel();
+      await loadDevices(true);                  // the dropdown re-reads main's filtered list
+    }
+    function buildHiddenPanel() {
+      panel.innerHTML = '';
+      const hidden = hiddenList();
+      const hiddenIds = new Set(hidden.map((h) => h.id));
+      const live = allCache || [];
+      el('div', 'hint muted', {
+        text: 'Hidden devices disappear from every picker — here, the wheel\u2019s mixer card, and the segment editor. The current default is always shown, so this list can never hide what you are actually listening through.'
+      }, panel);
+      live.forEach((d) => {
+        const isDef = d.isDefault === true;
+        const isHid = hiddenIds.has(d.id) && !isDef;   // default shows whatever the list says
+        hRow(panel, d.name || d.id,
+          isDef ? '\u00b7 current default' : (isHid ? '\u00b7 hidden' : ''),
+          isHid ? 'Restore' : 'Hide',
+          isDef ? 'The current default device is always shown'
+            : (isHid ? 'Show this device in the pickers again' : 'Remove this device from the pickers'),
+          () => { void toggleHidden(d.id, d.name || d.id, !isHid); },
+          isDef);
+      });
+      const orphans = hidden.filter((h) => !live.some((d) => d.id === h.id));
+      if (orphans.length) {
+        el('div', 'au-hsec muted', { text: 'Hidden while unplugged' }, panel);
+        for (const h of orphans) {
+          hRow(panel, h.name || audioDeviceLabel(h.id), '\u00b7 unplugged',
+            'Restore', 'Show this device again if it comes back',
+            () => { void toggleHidden(h.id, h.name, false); });
+        }
+      }
+      if (!live.length && !orphans.length) {
+        el('div', 'hint muted', { text: '(no devices found)' }, panel);
+      }
+    }
+    if (mg && panel) {
+      mg.addEventListener('click', async () => {
+        const open = !panel.classList.toggle('hidden');
+        mg.setAttribute('aria-expanded', String(open));
+        if (!open) return;
+        allCache = await loadAllAudioDevices(spec.flow);
+        if (mg.isConnected) buildHiddenPanel();
+      });
+    }
+
     async function readLevels() {
       const r = await safe(() => api.audioLevels(spec.flow));
       if (!r || r.ok === false) return;
@@ -2553,12 +2659,19 @@ async function wireAudio() {
       toast('Default ' + spec.noun + ' switched');
       await Promise.all([loadDevices(true), readLevels()]);
     });
-    rg.onclick = async () => { await Promise.all([loadDevices(true), readLevels()]); };
+    rg.onclick = async () => {
+      await Promise.all([loadDevices(true), readLevels()]);
+      // The panel keeps its own (unfiltered) view — refresh it in step too.
+      if (mg && panel && !panel.classList.contains('hidden')) {
+        allCache = await loadAllAudioDevices(spec.flow);
+        if (mg.isConnected) buildHiddenPanel();
+      }
+    };
 
     return { reload: async () => { await loadDevices(false); await readLevels(); }, readLevels };
   }
-  const outCtl = wireDevice({ sel: '#au-out-select', refresh: '#au-out-refresh', vol: '#au-out-vol', out: '#au-out-vol-out', mute: '#au-out-mute', flow: 'render', noun: 'output device' });
-  const inCtl = wireDevice({ sel: '#au-in-select', refresh: '#au-in-refresh', vol: '#au-in-vol', out: '#au-in-vol-out', mute: '#au-in-mute', flow: 'capture', noun: 'input device' });
+  const outCtl = wireDevice({ sel: '#au-out-select', refresh: '#au-out-refresh', manage: '#au-out-manage', panel: '#au-out-hidden', vol: '#au-out-vol', out: '#au-out-vol-out', mute: '#au-out-mute', flow: 'render', noun: 'output device' });
+  const inCtl = wireDevice({ sel: '#au-in-select', refresh: '#au-in-refresh', manage: '#au-in-manage', panel: '#au-in-hidden', vol: '#au-in-vol', out: '#au-in-vol-out', mute: '#au-in-mute', flow: 'capture', noun: 'input device' });
   audioRefreshLevels = () => Promise.all([outCtl.readLevels(), inCtl.readLevels()]).then(() => {});
 
   /* ---- per-app mixer ---- rows keyed by pid (system-sounds keeps its own),

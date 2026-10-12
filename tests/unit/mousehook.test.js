@@ -66,7 +66,7 @@ test('an injected event is ignored (never summon from synthesized input)', () =>
 test('the test-input hatch accepts injected presses only when armed to', () => {
   const off = st();
   assert.equal(hookStep(off, { msg: WM_MDOWN, injected: true }, alwaysDown).fire, false);
-  const on = st({ acceptInjected: true });          // RADIAL_WHEEL_TEST_INPUT=1 only
+  const on = st({ acceptInjected: true });          // NUCLEUS_TEST_INPUT=1 (or legacy RADIAL_WHEEL_TEST_INPUT) only
   assert.equal(hookStep(on, { msg: WM_MDOWN, injected: true }, alwaysDown).fire, true);
 });
 

@@ -232,7 +232,7 @@ api.onConfigChanged((payload) => {
   $('ver').textContent = 'v' + info.version;
   if (info.importedFrom) {
     const n = $('import-note');
-    n.textContent = 'Your segments were imported from an older Radial Wheel config — open Settings → Segments to see what came over.';
+    n.textContent = 'Your segments were imported from an older config — open Settings → Segments to see what came over.';
     n.classList.remove('hidden');
   }
   if (info.hotkeyError) setHotkeyError(info.hotkeyError);

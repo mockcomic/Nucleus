@@ -316,7 +316,7 @@ async function fetchImage(url) {
     const res = await fetch(url, {
       signal: AbortSignal.timeout(FETCH_TIMEOUT),
       redirect: 'follow',
-      headers: { 'user-agent': 'radial-wheel (custom icon fetch)' }
+      headers: { 'user-agent': 'nucleus-launcher (custom icon fetch)' }
     });
     if (!res.ok) return { error: `The server answered ${res.status}` };
     const len = Number(res.headers.get('content-length'));

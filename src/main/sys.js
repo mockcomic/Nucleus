@@ -29,7 +29,7 @@ const CATALOG = [
   { id: 'task_manager', label: 'Task Manager', icon: '\uE9D9', group: 'System' },
   { id: 'action_center', label: 'Action Center', icon: '\uE81E', group: 'System' },
   { id: 'run_dialog', label: 'Run dialog', icon: '\uE756', group: 'System' },
-  { id: 'exit_app', label: 'Quit Radial Wheel', icon: '\uE711', group: 'System' },
+  { id: 'exit_app', label: 'Quit Nucleus', icon: '\uE711', group: 'System' },
   { id: 'mute', label: 'Mute audio', icon: '\uE74E', group: 'Audio' },
   { id: 'volume_up', label: 'Volume up', icon: '\uE995', group: 'Audio' },
   { id: 'volume_down', label: 'Volume down', icon: '\uE993', group: 'Audio' },
@@ -88,7 +88,7 @@ const CATALOG = [
 const IDS = new Set(CATALOG.map(c => c.id));
 
 /* Shown in the Windows shutdown dialog during the grace window. */
-const CANCEL_NOTE = 'Radial Wheel: cancel with "shutdown /a" (Task Manager → Run)';
+const CANCEL_NOTE = 'Nucleus: cancel with "shutdown /a" (Task Manager → Run)';
 
 /* Ids whose action injects keystrokes (SendInput) rather than spawning a
    process. ipc.js waits for the pre-wheel window to regain focus before

@@ -6,12 +6,20 @@ const path = require('path');
 const os = require('os');
 
 // Which profile to inject into: the running app must be reading this file.
-// Default is the real app profile; set RADIAL_WHEEL_CONFIG to point at an
-// isolated dev profile (e.g. .dev-userdata/config.json for start:agent runs).
-const CFG = process.env.RADIAL_WHEEL_CONFIG
-  ? path.resolve(process.env.RADIAL_WHEEL_CONFIG)
-  : path.join(process.env.APPDATA, 'Radial Wheel', 'config.json');
+// Default is the real app profile (falls back to the pre-rename Radial Wheel
+// profile when Nucleus has no config yet); set NUCLEUS_CONFIG (or the legacy
+// RADIAL_WHEEL_CONFIG) to point at an isolated dev profile
+// (e.g. .dev-userdata/config.json for start:agent runs).
+const CFG = process.env.NUCLEUS_CONFIG || process.env.RADIAL_WHEEL_CONFIG
+  ? path.resolve(process.env.NUCLEUS_CONFIG || process.env.RADIAL_WHEEL_CONFIG)
+  : pickProfile();
 const PROOF = path.join(__dirname, '..', '.cache', 'click-proof.txt');
+
+function pickProfile() {
+  const now = path.join(process.env.APPDATA, 'Nucleus', 'config.json');
+  if (fs.existsSync(now)) return now;
+  return path.join(process.env.APPDATA, 'Radial Wheel', 'config.json');
+}
 
 if (process.argv[2] === 'prepare') {
   const cfg = JSON.parse(fs.readFileSync(CFG, 'utf8'));

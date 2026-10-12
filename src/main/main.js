@@ -17,6 +17,7 @@ const macro = require('./macro');
 const mousehook = require('./mousehook');
 const autostart = require('./autostart');
 const log = require('./logger');
+const migrate = require('./migrate');
 /* The logger is safe to call from here on — it degrades to console-only until
    init() pins the userData log file (done once the app is ready, below). */
 
@@ -172,6 +173,11 @@ function bootstrap() {
   nativeTheme.themeSource = 'dark';
   Menu.setApplicationMenu(null);
 
+  /* Radial Wheel → Nucleus rename: copy the old %APPDATA%\Radial Wheel
+     profile into this one exactly once (see migrate.js). Fail-soft — a fresh
+     profile is the fallback. */
+  try { migrate.runOnce(app); } catch { /* never break boot over migration */ }
+
   let icons;
   try {
     icons = ensureRuntimeIcons(path.join(app.getPath('userData'), 'icons'));
@@ -250,7 +256,7 @@ function bootstrap() {
      copy clears a login item for THIS exe only — the disable inside
      autostart.set(false) verifies the stored command line points at our own
      exe before deleting, because Electron deletes HKCU Run values by NAME and
-     every copy shares 'local.radialwheel'. Portable and dev share the config
+     every copy shares 'local.nucleus'. Portable and dev share the config
      with the installed app and must not rewrite that preference. */
   if (!autostart.allowed()) {
     try {
@@ -269,7 +275,7 @@ function bootstrap() {
 
   if (init.createdNew && tray) {
     // display() renders mouse triggers too: "Middle click", not "mmiddle".
-    tray.balloon('Radial Wheel is running',
+    tray.balloon('Nucleus is running',
       `Press ${HotkeyManager.display(store.get().hotkey)} anywhere to open the wheel${store.importedFrom ? ' (settings imported from your old config)' : ''}.`);
     /* (Settings no longer auto-opens on first run — the FTU welcome window
        below hands off to it when the user is ready.) */
@@ -311,7 +317,7 @@ if (!app.requestSingleInstanceLock()) {
   log.warn('another instance already holds the single-instance lock — this launch exits');
   app.quit();
 } else {
-  app.setAppUserModelId('local.radialwheel');
+  app.setAppUserModelId('local.nucleus');
 
   /* Tray-resident launcher: never hostage to a usable GPU process. A locked
      or corrupt GPUPersistentCache (e.g. squatting handles left by an orphan
@@ -326,7 +332,7 @@ if (!app.requestSingleInstanceLock()) {
      errors; this only turns a process death into a loud log + balloon. */
   const survives = (where) => (err) => {
     log.error(`${where}:`, (err && (err.stack || err.message)) || err);
-    try { tray && tray.balloon('Radial Wheel recovered from an internal error', String((err && err.message) || err), 'error'); } catch { /* best effort */ }
+    try { tray && tray.balloon('Nucleus recovered from an internal error', String((err && err.message) || err), 'error'); } catch { /* best effort */ }
   };
   process.on('uncaughtException', survives('uncaughtException'));
   process.on('unhandledRejection', survives('unhandledRejection'));

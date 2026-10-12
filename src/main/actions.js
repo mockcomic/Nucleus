@@ -5,6 +5,7 @@ const { shell } = require('electron');
 const { spawn } = require('child_process');
 const macro = require('./macro');
 const sys = require('./sys');
+const winplace = require('./winplace');
 const { splitArgs } = require('./args');
 
 /* Fire-and-forget launch that still surfaces STARTUP failures: 'error'
@@ -105,12 +106,14 @@ async function executeAction(item, ctx = {}) {
   switch (type) {
     case 'url': {
       if (!value) throw new Error('no URL configured');
+      winplace.beginWatch(ctx);   // no-op unless behavior.appOpenPosition says otherwise
       const err = await shell.openExternal(safeExternalUrl(value));
       if (err) throw new Error(err);
       return;
     }
     case 'file': {
       if (!value) throw new Error('no file configured');
+      winplace.beginWatch(ctx);
       const err = await shell.openPath(value);
       if (err) throw new Error(err === '' ? 'could not open file' : err);
       return;
@@ -126,6 +129,9 @@ async function executeAction(item, ctx = {}) {
         const base = exeBaseForAppValue(value);
         if (base && macro.focusAppWindowByExe(base)) return;
       }
+      // Arm AFTER the focus-existing check: raising a window that already
+      // exists is not an "opening", so placement never chases it.
+      winplace.beginWatch(ctx);
       const target = value.replace(/^"|"$/g, '');
       const rawArgs = String(item.args || '').trim();
       const tokens = splitArgs(rawArgs);

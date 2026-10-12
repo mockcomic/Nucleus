@@ -199,7 +199,7 @@ async function fetchBuffer(url, maxBytes) {
   const res = await fetch(url, {
     signal: AbortSignal.timeout(FETCH_TIMEOUT),
     redirect: 'follow',
-    headers: { 'user-agent': 'radial-wheel (dashboard icon fetch)' }
+    headers: { 'user-agent': 'nucleus-launcher (dashboard icon fetch)' }
   });
   if (!res.ok) return null;
   const len = Number(res.headers.get('content-length'));
@@ -280,7 +280,7 @@ async function fetchIcon(slugRaw) {
         const res = await fetch(iconUrl(slug, kind), {
           signal: AbortSignal.timeout(FETCH_TIMEOUT),
           redirect: 'follow',
-          headers: { 'user-agent': 'radial-wheel (dashboard icon fetch)' }
+          headers: { 'user-agent': 'nucleus-launcher (dashboard icon fetch)' }
         });
         if (!res.ok) continue;
         // jsDelivr answers unknown files with a text/plain 404 body — reject

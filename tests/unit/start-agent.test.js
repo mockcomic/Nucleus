@@ -73,7 +73,7 @@ test('seedProfile: falls back to a minimal autostart-off seed without a live con
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rw-agent-'));
   try {
     const agent = path.join(dir, 'agent');
-    const how = seedProfile(agent, path.join(dir, 'missing'));
+    const how = seedProfile(agent, path.join(dir, 'missing'), path.join(dir, 'missing-legacy'));
     assert.match(how, /seeded/);
     const cfg = JSON.parse(fs.readFileSync(path.join(agent, 'config.json'), 'utf8'));
     assert.equal(cfg.behavior.autostart, false);

@@ -1,7 +1,7 @@
 'use strict';
 /* Application file logging — the exe equivalent of the dev console.
    Every line lands on stdout/stderr (visible when launched via `npm run start`)
-   AND in %APPDATA%\Radial Wheel\logs\radial-wheel-YYYY-MM-DD.log, so a
+   AND in %APPDATA%\Nucleus\logs\nucleus-YYYY-MM-DD.log, so a
    packaged run that shows no terminal still leaves a debuggable trail.
    Renderer pages have no console anyone can read in a packaged build — their
    console.* and window errors ride an IPC channel into the SAME file (see
@@ -14,8 +14,8 @@
 
    Levels: debug < info < warn < error. Packaged builds default to info;
    dev builds also print debug. Override per run:
-     RADIALWHEEL_LOG_LEVEL=debug   (or --log-level=debug)
-   The verify ritual greps this file for the `[radial-wheel] ready` marker. */
+     NUCLEUS_LOG_LEVEL=debug   (the legacy RADIALWHEEL_LOG_LEVEL is honored too; also --log-level=debug)
+   The verify ritual greps this file for the `[nucleus] ready` marker. */
 
 const fs = require('fs');
 const path = require('path');
@@ -25,7 +25,7 @@ const path = require('path');
    app yet, the logger degrades to console-only and catches up on first init. */
 function appSafe() { try { return require('electron').app; } catch { return undefined; } }
 
-const TAG = '[radial-wheel]';
+const TAG = '[nucleus]';
 const KEEP_DAYS = 14;             // prune daily files older than this many
 const MAX_FILE_BYTES = 8 * 1024 * 1024; // per-day cap; overflow lines are dropped
 const MAX_LINE_CHARS = 2000;      // one serialized argument list, clamped
@@ -37,7 +37,7 @@ const LEVEL_TAG = { debug: 'DEBUG', info: 'INFO ', warn: 'WARN ', error: 'ERROR'
 
 function requestedLevel() {
   const fromArgv = (process.argv.find((a) => /^--log-level=/i.test(a)) || '').split('=')[1];
-  const want = String(fromArgv || process.env.RADIALWHEEL_LOG_LEVEL || '').toLowerCase();
+  const want = String(fromArgv || process.env.NUCLEUS_LOG_LEVEL || process.env.RADIALWHEEL_LOG_LEVEL || '').toLowerCase();
   if (LEVELS[want] != null) return want;
   /* dev builds want the chatty lines (hotkey probes, mouse-hook stats); a
      resident packaged build should only accrue what matters: info and up. */
@@ -64,7 +64,7 @@ function stamp(d) {
 
 function dayName(d) {
   const p = (n) => String(n).padStart(2, '0');
-  return `radial-wheel-${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}.log`;
+  return `nucleus-${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}.log`;
 }
 
 function safeName(c) {
@@ -107,7 +107,8 @@ function openToday() {
 function pruneOldFiles(today) {
   let names;
   try { names = fs.readdirSync(dir); } catch { return; }
-  const daily = names.filter((n) => /^radial-wheel-\d{4}-\d{2}-\d{2}\.log$/.test(n)).sort();
+  // the radial-wheel prefix is the pre-rename file shape — prune those too
+  const daily = names.filter((n) => /^(?:nucleus|radial-wheel)-\d{4}-\d{2}-\d{2}\.log$/.test(n)).sort();
   const doomed = daily.slice(0, Math.max(0, daily.length - KEEP_DAYS + (today ? 0 : 1)));
   for (const n of doomed) {
     if (today && n === today) continue;

@@ -10,7 +10,7 @@ Read-only passes over the whole tree. Report findings with `file:line`, ranked C
 
 ## Threat model (what makes this app unusual)
 
-- The app is always-on and launches actions assembled from `%APPDATA%\Radial Wheel\config.json` — any medium-integrity process can edit that file, so the entire config is semi-trusted input at read time; `validate()` and the launch-side restrictions in actions.js are the actual security boundary.
+- The app is always-on and launches actions assembled from `%APPDATA%\Nucleus\config.json` — any medium-integrity process can edit that file, so the entire config is semi-trusted input at read time; `validate()` and the launch-side restrictions in actions.js are the actual security boundary.
 - Renderer pages are assumed compromised: every IPC payload, item shape, and URL arriving from a window is hostile. The sender-frame gate in ipc.js is the first line of defense.
 - The koffi FFI layer can inject keystrokes machine-wide (SendInput). Unvalidated input injection is automatically Critical.
 

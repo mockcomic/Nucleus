@@ -100,6 +100,13 @@ function defaults() {
     behavior: {
       autostart: true, dismissOnEscape: true, dismissOnRightClick: true,
       reTriggerToggles: true,
+      /* Where freshly-opened APP WINDOWS land when a segment launches them
+         (winplace.js; the wheel overlay itself always follows the cursor):
+         'default' = leave placement to the app (today's behavior),
+         'cursor'  = center the window on the pointer at click time,
+         'center'  = center it on the work area of the pointer's display.
+         Whitelisted in validate; anything else falls back to 'default'. */
+      appOpenPosition: 'default',
       /* When the summon trigger's main key is a mouse button, the press is
          swallowed by default so Middle click doesn't ALSO paste (etc.).
          True = the app under the cursor still receives the click. Inert for
@@ -130,7 +137,13 @@ function defaults() {
          visible window, raise that window instead of launching a second
          instance (macro.focusAppWindowByExe). Off by default — launching a
          new instance is what every existing install does today. */
-      focusExistingApp: false
+      focusExistingApp: false,
+      /* Devices the pickers hold back (app-level hiding — Windows itself is
+         untouched). [{id, name}] per flow; the id hides, the name keeps the
+         Manage panel readable when the device is unplugged. The CURRENT
+         default is never filtered out of any list (audio.js rule), so this
+         list can never make the picker lie. */
+      audioHidden: { render: [], capture: [] }
     },
     theme: { id: DEFAULT_THEME_ID, customized: false, colors: { ...DEFAULT_COLORS } },
     userThemes: [],
@@ -162,6 +175,37 @@ const clamp = (v, lo, hi, dflt) =>
 
 const TYPES = new Set(['app', 'url', 'file', 'command', 'macro', 'sys', 'setting', 'folder', 'recent', 'mixer']);
 const HOTKEY_RE = /^[a-z0-9+ ]{1,40}$/;
+
+/* ---- behavior.audioHidden sanitization --------------------------------------
+   The hidden-device lists ride the store like any other behavior field, so a
+   hand-edited or imported config can never smuggle junk into the endpoint-id
+   vocabulary: ids are held to the printable-ASCII shape Core Audio itself
+   produces (the same policy as audio.js's sanitizeDeviceId), names are plain
+   capped strings kept only so the Manage panel stays readable while a device
+   is unplugged. Entries are objects {id, name}; anything else — bare
+   strings, nulls, keyless objects — drops. Deduped by id, capped per flow:
+   the lists are hand-built, so 128 is generous headroom, not a limit anyone
+   meets. */
+const HIDDEN_ID_RE = /^[\x20-\x7e]+$/;         // printable ASCII, no control chars
+const HIDDEN_MAX_PER_FLOW = 128;
+function normalizeHiddenList(raw) {
+  const out = [];
+  const seen = new Set();
+  for (const e of Array.isArray(raw) ? raw : []) {
+    if (!e || typeof e !== 'object') continue;
+    const id = String(e.id == null ? '' : e.id).trim();
+    if (!id || id.length > 512 || !HIDDEN_ID_RE.test(id)) continue;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push({ id, name: String(e.name == null ? '' : e.name).trim().slice(0, 512) });
+    if (out.length >= HIDDEN_MAX_PER_FLOW) break;
+  }
+  return out;
+}
+function normalizeHiddenDevices(raw) {
+  const src = raw && typeof raw === 'object' ? raw : {};
+  return { render: normalizeHiddenList(src.render), capture: normalizeHiddenList(src.capture) };
+}
 
 function validate(raw) {
   const base = defaults();
@@ -330,6 +374,10 @@ function validate(raw) {
       dismissOnEscape: bhvIn.dismissOnEscape !== false,
       dismissOnRightClick: bhvIn.dismissOnRightClick !== false,
       reTriggerToggles: bhvIn.reTriggerToggles !== false,
+      // Whitelist: only 'cursor' / 'center' engage window placement; anything
+      // else (junk included) is 'default' — apps position themselves as today.
+      appOpenPosition: bhvIn.appOpenPosition === 'cursor' || bhvIn.appOpenPosition === 'center'
+        ? bhvIn.appOpenPosition : 'default',
       // Fail-closed on purpose: junk/absent means "swallow the click", the safe default.
       mouseClickThrough: bhvIn.mouseClickThrough === true,
       flyoutDwellMs: clamp(bhvIn.flyoutDwellMs, 0, 600, base.behavior.flyoutDwellMs),
@@ -345,7 +393,10 @@ function validate(raw) {
       // Opt-in, fail-closed like mouseClickThrough: absent/junk = silent wheel.
       wheelSound: bhvIn.wheelSound === true,
       // Same opt-in discipline: absent/junk = always launch (legacy behavior).
-      focusExistingApp: bhvIn.focusExistingApp === true
+      focusExistingApp: bhvIn.focusExistingApp === true,
+      // Always the full {render, capture} shape — a half-written field can
+      // never leave one direction missing for the picker filter.
+      audioHidden: normalizeHiddenDevices(bhvIn.audioHidden)
     },
     theme: {
       id: themeId,

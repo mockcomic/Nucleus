@@ -1,4 +1,4 @@
-# Project agent instructions — radial-wheel
+# Project agent instructions — nucleus-launcher (Nucleus; formerly radial-wheel)
 
 ## Mouse/keyboard take-over: always prompt first
 
@@ -14,7 +14,7 @@ This covers, at minimum:
   - `tests/click-at.js` (koffi `SendInput`)
   - `tests/click-e2e.ps1`, `tests/click-e2e-app.ps1`, `tests/pixel-check.ps1` (`SetCursorPos` + clicks)
 - Any ad-hoc PowerShell/Node snippet that injects input via `user32.dll`.
-- Driving the app's own input injection end-to-end, e.g. launching radial-wheel
+- Driving the app's own input injection end-to-end, e.g. launching Nucleus
   and triggering a `macro` action (`src/main/macro.js`, `SendInput` via koffi).
 - Keyboard injection falls under the same rule — it can steal focus from
   whatever window the user is working in.

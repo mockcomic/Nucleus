@@ -1,4 +1,4 @@
-; Custom NSIS additions for Radial Wheel (wired up as `nsis.include` in package.json).
+; Custom NSIS additions for Nucleus (wired up as `nsis.include` in package.json).
 ;
 ; Why this file exists
 ; --------------------
@@ -11,7 +11,7 @@
 ;     File "/oname=${UNINSTALL_FILENAME}" "${UNINSTALLER_OUT_FILE}"
 ;
 ; which surfaces as the stock NSIS "Error opening file for writing:
-; ...\AppData\Local\Programs\radial-wheel\Uninstall Radial Wheel.exe"
+; ...\AppData\Local\Programs\nucleus\Uninstall Nucleus.exe"
 ; Abort / Retry / Ignore dialog. Both of the useful-looking buttons are traps:
 ;
 ;   * Retry can never succeed - by then $INSTDIR may not exist at all, and nothing
@@ -37,10 +37,10 @@
 
 
 !macro RW_KILL_UNINSTALLER_HOLDERS
-  ; A stalled "Uninstall Radial Wheel.exe" - from a cancelled or still-draining
+  ; A stalled "Uninstall Nucleus.exe" - from a cancelled or still-draining
   ; uninstall - keeps the file we are about to overwrite locked. Called only
   ; after the user asks us to close it. Safe to force: this Setup process is
-  ; "Radial Wheel Setup <version>.exe", so taskkill cannot hit us; the app
+  ; "Nucleus Setup <version>.exe", so taskkill cannot hit us; the app
   ; itself is left to the built-in CHECK_APP_RUNNING prompt, which asks the
   ; user before closing it. Output is discarded because "no such process" is
   ; the normal, healthy answer.
@@ -61,7 +61,7 @@
       Goto rw_unlock_done
     ${EndIf}
 
-    MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "The previous uninstaller is still open, so Radial Wheel cannot replace it:$\r$\n$INSTDIR\Uninstall ${PRODUCT_FILENAME}.exe$\r$\n$\r$\nNothing has been installed yet.$\r$\n$\r$\nRetry closes that uninstaller and continues. Cancel leaves the current install untouched." IDRETRY rw_unlock_kill
+    MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "The previous uninstaller is still open, so Nucleus cannot replace it:$\r$\n$INSTDIR\Uninstall ${PRODUCT_FILENAME}.exe$\r$\n$\r$\nNothing has been installed yet.$\r$\n$\r$\nRetry closes that uninstaller and continues. Cancel leaves the current install untouched." IDRETRY rw_unlock_kill
       Abort
 
     rw_unlock_kill:
@@ -73,7 +73,7 @@
         FileClose $R7
         Goto rw_unlock_done
       ${EndIf}
-      MessageBox MB_OK|MB_ICONEXCLAMATION "Radial Wheel still cannot replace the uninstaller. Close Uninstall ${PRODUCT_FILENAME}.exe yourself, then run Setup again. Nothing has been installed."
+      MessageBox MB_OK|MB_ICONEXCLAMATION "Nucleus still cannot replace the uninstaller. Close Uninstall ${PRODUCT_FILENAME}.exe yourself, then run Setup again. Nothing has been installed."
       Abort
 
   rw_unlock_done:
@@ -113,10 +113,34 @@
 
     ; Roughly ten seconds of futility. Tell the user what to do instead of
     ; handing them a dialog whose buttons both make things worse.
-    MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "Radial Wheel cannot write to:$\r$\n$INSTDIR$\r$\n$\r$\nNothing has been installed yet, so nothing is left half-broken.$\r$\n$\r$\nReal-time protection (Malwarebytes, Windows Defender's ransomware protection, and similar) commonly blocks this folder for unsigned installers: an NSIS setup creating an .exe under AppData\Local\Programs is the behaviour those shields target, not a property of this app.$\r$\n$\r$\nAllow-list this installer and the folder above, then press Retry.$\r$\n$\r$\nCancel to bail out; the unpacked build in dist\win-unpacked and the portable .exe both run without an installer." IDRETRY rw_writable_loop
+    MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "Nucleus cannot write to:$\r$\n$INSTDIR$\r$\n$\r$\nNothing has been installed yet, so nothing is left half-broken.$\r$\n$\r$\nReal-time protection (Malwarebytes, Windows Defender's ransomware protection, and similar) commonly blocks this folder for unsigned installers: an NSIS setup creating an .exe under AppData\Local\Programs is the behaviour those shields target, not a property of this app.$\r$\n$\r$\nAllow-list this installer and the folder above, then press Retry.$\r$\n$\r$\nCancel to bail out; the unpacked build in dist\win-unpacked and the portable .exe both run without an installer." IDRETRY rw_writable_loop
       Abort
 
   rw_writable_done:
+!macroend
+
+
+; The product was "Radial Wheel" before the rename to Nucleus.
+
+
+!macro RW_UNINSTALL_LEGACY
+  ; Radial Wheel -> Nucleus rename: silently remove the previously installed
+  ; product (its own uninstaller, then its folder), and drop its orphaned
+  ; login-item + AUMID registrations. The old profile (%APPDATA%\Radial Wheel)
+  ; is left in place — src/main/migrate.js copies it into %APPDATA%\Nucleus
+  ; on first launch, and the folder stays for rollback.
+  IfFileExists "$LOCALAPPDATA\Programs\radial-wheel\Uninstall Radial Wheel.exe" 0 rw_legacy_runkey
+    ; Close the old app if it is still running (its exe name differs from the
+    ; new one, so CHECK_APP_RUNNING would not catch it). Output discarded:
+    ; "no such process" is the normal answer.
+    ExecWait '$SYSDIR\cmd.exe /C taskkill /F /IM "Radial Wheel.exe" >NUL 2>&1'
+    ; _?= keeps the uninstaller running from its own folder (no temp copy) so
+    ; the RMDir below can remove everything it owned.
+    ExecWait '"$LOCALAPPDATA\Programs\radial-wheel\Uninstall Radial Wheel.exe" /S _?=$LOCALAPPDATA\Programs\radial-wheel'
+    RMDir /r "$LOCALAPPDATA\Programs\radial-wheel"
+  rw_legacy_runkey:
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "local.radialwheel"
+    DeleteRegKey /ifempty HKCU "Software\Classes\AppUserModelId\local.radialwheel"
 !macroend
 
 
@@ -127,6 +151,7 @@
   ; so this is stated rather than assumed.)
   SetOverwrite try
 
+  !insertmacro RW_UNINSTALL_LEGACY
   !insertmacro RW_ENSURE_WRITABLE
   !insertmacro RW_UNLOCK_UNINSTALLER
 !macroend

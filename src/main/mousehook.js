@@ -60,7 +60,8 @@ let _cbHandle = null;      // koffi-registered callback; pinned, reused across i
 let _hook = null;          // live HHOOK, or null when nothing is installed
 let _ffiError = null;      // first install failure, for the user-facing message
 
-/* Manual-verification hatch: with RADIAL_WHEEL_TEST_INPUT=1, presses injected
+/* Manual-verification hatch: with NUCLEUS_TEST_INPUT=1 (legacy name
+   RADIAL_WHEEL_TEST_INPUT also works), presses injected
    through SendInput (which arrive flagged LLMHF_INJECTED) are accepted like real
    ones, so a scripted click can drive the trigger during development. Read ONCE
    at load so the hook body never touches process.env, and never enabled by the
@@ -68,7 +69,7 @@ let _ffiError = null;      // first install failure, for the user-facing message
    injection is not a reliable check anyway — SendInput from a sandboxed shell may
    never reach the hook — so the real evidence is --mouse-hook-probe with a hand
    on the mouse.) */
-const TEST_INPUT = /^(1|true|yes)$/i.test(String(process.env.RADIAL_WHEEL_TEST_INPUT || ''));
+const TEST_INPUT = /^(1|true|yes)$/i.test(String(process.env.NUCLEUS_TEST_INPUT || process.env.RADIAL_WHEEL_TEST_INPUT || ''));
 
 /* Cheap counters for diagnostics/log lines: is the hook actually being called,
    and what has it done? Integer increments only — still off the critical path. */
@@ -199,7 +200,7 @@ function hookProc(nCode, wParam, lParam) {
     if (d.swallow) stats.swallowed++;
     if (d.fire) {
       stats.fired++;
-      if (TEST_INPUT) console.log('[radial-wheel] mouse trigger fired');       // verification evidence
+      if (TEST_INPUT) console.log('[nucleus] mouse trigger fired');       // verification evidence
       const cb = _onFire;
       if (cb) setImmediate(() => { try { cb(); } catch { /* the trigger must never break the app */ } });
     }

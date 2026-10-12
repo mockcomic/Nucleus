@@ -11,7 +11,7 @@
    setLoginItemSettings({openAtLogin:false}) deletes the HKCU Run value by NAME
    alone — the `path` option is ignored on that branch (browser_win.cc) — and
    every copy of this app shares one name because main.js pins
-   app.setAppUserModelId('local.radialwheel'). A portable/dev launch that
+   app.setAppUserModelId('local.nucleus'). A portable/dev launch that
    cleared "its own" entry would therefore wipe the INSTALLED copy's login item
    — which is exactly how start-on-login kept disappearing. So every disable
    goes through an ownership check first: read the stored command line (macro
@@ -25,11 +25,14 @@ const log = require('./logger');
 
 const ARGS = ['--hidden'];
 /* Electron writes the Run value under the process AUMID (browser_win.cc's
-   GetAppUserModelID); setAppUserModelId('local.radialwheel') makes that the
+   GetAppUserModelID); setAppUserModelId('local.nucleus') makes that the
    name for every copy. The 'electron.app.<productName>' form is probed too, so
    entries created before the AUMID was pinned (or by a copy that failed to set
    it) can still be claimed or cleaned up instead of orphaning. */
-const AUMID_VALUE_NAME = 'local.radialwheel';
+const AUMID_VALUE_NAME = 'local.nucleus';
+/* Pre-rename Run-value names (the product was "Radial Wheel"). They are probed
+   so their entries can be claimed or cleaned, never blindly rewritten. */
+const LEGACY_VALUE_NAMES = ['local.radialwheel', 'electron.app.Radial Wheel'];
 
 /** True when this process is the NSIS-installed app, not portable / unpacked / dev. */
 function allowsLoginItem({ packaged, portableFile, hasUninstaller }) {
@@ -52,9 +55,10 @@ function allowed() {
   });
 }
 
-/** Run-value names this app may own: the pinned AUMID, plus the AUMID fallback. */
+/** Run-value names this app may own: the pinned AUMID, the AUMID fallback,
+ *  and the pre-rename (Radial Wheel) names, so upgrades can reclaim orphans. */
 function ownedValueNames() {
-  const names = [AUMID_VALUE_NAME];
+  const names = [AUMID_VALUE_NAME, ...LEGACY_VALUE_NAMES];
   try {
     const n = app && typeof app.getName === 'function' ? String(app.getName() || '') : '';
     if (n) names.push(`electron.app.${n}`);
@@ -74,6 +78,15 @@ function probe(name) {
 }
 
 const norm = (s) => String(s == null ? '' : s).trim().replace(/\s+/g, ' ').toLowerCase();
+
+/* True when a stored Run command line points at an exe that no longer exists
+   on disk — the Radial Wheel → Nucleus upgrade deletes the old product's
+   folder, orphaning its login item, and an orphan is safe to remove by name. */
+function storedExeGone(storedData) {
+  const m = /^\s*"?([^"]+?\.exe)/i.exec(String(storedData || ''));
+  if (!m) return false;
+  try { return !fs.existsSync(m[1]); } catch { return false; }
+}
 
 /** Mirror Electron's Run-value quoting (AddQuoteForArg): the exe path always
  *  gets quoted (a Windows path contains '\'), args quoted only if they carry
@@ -131,6 +144,15 @@ function disable() {
 function enable() {
   const exe = process.execPath;
   app.setLoginItemSettings({ openAtLogin: true, args: ARGS, path: exe });
+  /* Rename cleanup: a leftover Run entry under a legacy name whose exe was
+     removed by the upgrade is an orphan — Electron deletes Run values by
+     name, so this can never touch another product that still exists. */
+  for (const name of LEGACY_VALUE_NAMES) {
+    const r = probe(name);
+    if (r.state === 'value' && storedExeGone(r.data)) {
+      try { app.setLoginItemSettings({ openAtLogin: false, path: exe, name }); } catch { /* best effort */ }
+    }
+  }
   for (const name of ownedValueNames()) {
     if (name === AUMID_VALUE_NAME) continue;
     const r = probe(name);

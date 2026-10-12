@@ -132,6 +132,24 @@ function fallbackName(id) {
   return (t || s).slice(0, 60);
 }
 
+/** Drop the user-hidden endpoints from one device list (the behavior.audioHidden
+ *  feature — the filtering happens in ipc.js, right after listDevices).
+ *  The CURRENT default is exempt by rule: a hidden device that Windows makes
+ *  the default must still appear in every picker, so the list can never fail
+ *  to show the truth. `hidden` is the store's already-validated [{id, name}]
+ *  array, but junk entries are ignored rather than trusted. Pure — unit
+ *  tested; no COM. */
+function filterHiddenDevices(devices, hidden) {
+  const list = Array.isArray(devices) ? devices : [];
+  const set = new Set(
+    (Array.isArray(hidden) ? hidden : [])
+      .filter((h) => h && typeof h === 'object' && typeof h.id === 'string' && h.id)
+      .map((h) => h.id)
+  );
+  if (!set.size) return list.slice();
+  return list.filter((d) => !d || !set.has(d.id) || d.isDefault === true);
+}
+
 /** Group raw session rows (one per stream) into mixer rows (one per process),
  *  Windows-Volume-Mixer semantics: the system-sounds session keeps its own
  *  row; processes fold their streams into the row of their first stream.
@@ -759,5 +777,6 @@ module.exports = {
   _guidBytes: guidBytes, _parseFlow: parseFlow, _clampPercent: clampPercent,
   _percentToScalar: percentToScalar, _scalarToPercent: scalarToPercent,
   _sanitizeDeviceId: sanitizeDeviceId, _fallbackName: fallbackName, _groupSessions: groupSessions,
+  _filterHiddenDevices: filterHiddenDevices,
   _policyRoutes: POLICY_ROUTES
 };

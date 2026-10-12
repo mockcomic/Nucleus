@@ -1550,4 +1550,42 @@ html[data-mode='light'] {
 .au-row.au-system .au-name {
 	font-style: italic;
 }
+/* Hidden-device manager (Manage…): the dropdown only ever lists what survives
+   behavior.audioHidden, so this panel is the one place the full endpoint list
+   (and every hidden entry, unplugged included) is shown — one row per device,
+   state note, and the single action that flips it. */
+.au-hidden {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	margin: 8px 0 2px;
+	padding: 8px 10px;
+	background: var(--field);
+	border: 1px solid var(--line);
+	border-radius: 8px;
+}
+.au-hidden .au-hrow {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+.au-hidden .au-hname {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.au-hidden .au-hnote {
+	flex: none;
+	color: var(--dim);
+	font-size: 11px;
+}
+.au-hidden .au-hsec {
+	margin-top: 6px;
+	font-size: 11px;
+}
+.au-hidden .hint {
+	margin: 0 0 4px;
+}
 

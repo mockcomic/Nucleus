@@ -20,7 +20,7 @@
       -> --no-sandbox, plus an isolated --user-data-dir inside the repo.
 
    The isolated profile also keeps a dev run off the real
-   %APPDATA%\Radial Wheel\ files. First-run seeding forces
+   %APPDATA%\Nucleus\ files. First-run seeding forces
    behavior.autostart=false so the dev profile does not record a startup
    preference. An unpackaged exe is not an installed copy, so main.js will
    not register a login item for electron.exe either.
@@ -34,7 +34,10 @@ const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
 const AGENT_PROFILE = path.join(ROOT, '.dev-userdata');
-const REAL_PROFILE = process.env.APPDATA ? path.join(process.env.APPDATA, 'Radial Wheel') : null;
+const REAL_PROFILE = process.env.APPDATA ? path.join(process.env.APPDATA, 'Nucleus') : null;
+/* Pre-rename profile (the product was "Radial Wheel") — a dev seed falls back
+   to it when the new profile has no config yet, mirroring src/main/migrate.js. */
+const LEGACY_PROFILE = process.env.APPDATA ? path.join(process.env.APPDATA, 'Radial Wheel') : null;
 const RUN_AS_NODE = 'ELECTRON_RUN_AS_NODE';
 
 function hasFlag(argv, flag) {
@@ -67,12 +70,13 @@ function buildLaunch(env, extraArgs = [], opts = {}) {
 /* Creates the isolated profile's config.json so Electron's first-run path does
    not register a dev-tree login item. Existing files are left untouched — the
    config watcher hot-reloads them, so dev edits persist across runs. */
-function seedProfile(agentDir = AGENT_PROFILE, realDir = REAL_PROFILE) {
+function seedProfile(agentDir = AGENT_PROFILE, realDir = REAL_PROFILE, legacyDir = LEGACY_PROFILE) {
   const cfg = path.join(agentDir, 'config.json');
   if (fs.existsSync(cfg)) return 'kept';
   fs.mkdirSync(agentDir, { recursive: true });
 
-  const src = realDir ? path.join(realDir, 'config.json') : null;
+  const dirs = [realDir, legacyDir].filter(Boolean);
+  const src = dirs.map((d) => path.join(d, 'config.json')).find((p) => fs.existsSync(p)) || null;
   if (src && fs.existsSync(src)) {
     try {
       const copied = JSON.parse(fs.readFileSync(src, 'utf8'));

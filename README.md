@@ -1,4 +1,6 @@
-# Radial Wheel
+# Nucleus
+
+*(formerly **Radial Wheel** — the app was renamed; settings from the old name migrate automatically on first launch)*
 
 A polished, always-running radial launcher for Windows. Press a global hotkey and a
 crisp, animated wheel pops up **at your mouse cursor** — click a segment to launch
@@ -12,7 +14,7 @@ straight to the Win32 API through `user32.dll` (via `koffi`).
 
 ```powershell
 npm install          # first time only (downloads the Electron runtime)
-npm start            # launches tray-resident Radial Wheel
+npm start            # launches tray-resident Nucleus
 ```
 
 Default hotkey: **Ctrl + Alt + Space** — or use a mouse button instead: **Middle**, **Back**
@@ -58,7 +60,7 @@ in Settings. Replay the guide anytime from tray → **Show welcome…**.
 | `command` | `taskkill /f /im foo.exe` | detached shell command |
 | `macro` | `ctrl+c, wait=0.2, ctrl+v` · `type:hello` · `click, scroll=3` | real SendInput keys **and** mouse |
 | `sys` | `lock`, `mute`, `screenshot`, `wifi`, … | built-in Windows actions |
-| `setting` | `toggle_wheel_sound`, `toggle_game_mode`, … | flips one radial-wheel setting on the spot (dropdown picker, app icon by default) |
+| `setting` | `toggle_wheel_sound`, `toggle_game_mode`, … | flips one Nucleus setting on the spot (dropdown picker, app icon by default) |
 | `folder` | — (no value) | sub-menu that branches outward on hover |
 | `recent` | — (no value) | self-filling sub-menu of your most-recently-used segments; you edit only its label/icon |
 
@@ -167,11 +169,11 @@ Open from the tray (double-click icon → **Open Settings**). Five tabs:
 All edits autosave (debounced) to:
 
 ```
-%APPDATA%\Radial Wheel\config.json
+%APPDATA%\Nucleus\config.json
 ```
 
 Before **Import…** or **Reset to defaults** replaces that file, the outgoing
-config is copied to `%APPDATA%\Radial Wheel\backups` as
+config is copied to `%APPDATA%\Nucleus\backups` as
 `config-20261004-063015-import-r12.json`; the newest **12** are kept. Ordinary
 autosaves join that rotation at most once every 5 minutes (and never when the
 content didn't change), so a burst of typing can't bury the copies that matter —
@@ -189,8 +191,8 @@ imported automatically on first run.
 
 ```powershell
 npm run dist    # bumps build.buildNumber in package.json, then → dist/:
-                #    RadialWheel-1.0.0-b1-portable.exe     (no-install single exe)
-                #    RadialWheel-1.0.0-b1-setup.exe        (one-click NSIS installer)
+                #    Nucleus-1.0.0-b1-portable.exe         (no-install single exe)
+                #    Nucleus-1.0.0-b1-setup.exe            (one-click NSIS installer)
 ```
 
 Every `dist` run increments that build number (also stamped into the exe's
@@ -200,7 +202,7 @@ read). When cutting a new `version`, reset `build.buildNumber` to `"0"` in
 `package.json` to start the series over.
 
 Packaged builds are the recommended way to run long-term: the Start-with-Windows
-entry (registry value `local.radialwheel` under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`)
+entry (registry value `local.nucleus` under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`)
 then points at the real exe and carries the app icon (in dev mode it points at
 Electron). Install the Setup exe, launch it once, and it lives in the tray from then on.
 
@@ -218,7 +220,7 @@ To launch from source with no console (e.g. a Startup entry during development):
 - **Custom segment images**: in the icon picker, **Browse image…** takes a local
   **PNG, JPG, GIF, WebP, BMP, ICO** or **SVG** file (up to 2 MB), or paste an
   image **URL** and hit **Use URL**. The bytes are stored once, content-addressed,
-  under `%APPDATA%\Radial Wheel\icons\custom` and `config.json` keeps only a
+  under `%APPDATA%\Nucleus\icons\custom` and `config.json` keeps only a
   `custom:<hash>.<ext>` key — so configs stay small and shareable. A pasted URL is
   downloaded once and kept, so the wheel shows it offline too; a URL-sourced icon
   re-downloads itself on a new machine, while one picked from disk falls back to
@@ -236,7 +238,7 @@ To launch from source with no console (e.g. a Startup entry during development):
   Quitting unhooks it, so Middle click goes back to being an ordinary Middle click.
 - Some mice report the Back / Forward button id in the **high word** of the hook event's
   `mouseData` instead of the documented low word; Windows apps then ignore those buttons
-  entirely (they "do nothing"). Radial Wheel reads either word, so the side buttons still
+  entirely (they "do nothing"). Nucleus reads either word, so the side buttons still
   summon the wheel on such mice.
 - Gaming mode samples the foreground window every ~1.5 s while enabled (zero cost
   when off; pause fires after ~3 s, resume is immediate). Fullscreen video players
@@ -318,7 +320,7 @@ app's hook took it first). Dev builds only — inert once packaged.
     macro timing intact). `state.json` keeps the counts; config.json stays clean.
     Advanced → **Clear recent-items data** → the fan goes empty until you use the wheel again.
 15. Package: pick a disk image as a segment icon → Advanced → **Export package…**:
-    the file carries config + icon. Delete/rename `%APPDATA%\Radial Wheel\icons\custom`,
+    the file carries config + icon. Delete/rename `%APPDATA%\Nucleus\icons\custom`,
     then **Import…** the package → icons come back with no network (plain-exported
     configs still import exactly as before, minus the art).
 16. Sound: Behavior → tick **Sound feedback** → summon; the selection (pointer
@@ -337,8 +339,9 @@ app's hook took it first). Dev builds only — inert once packaged.
     down, Ctrl held a second while typing `c`, then Ctrl+V twice. A step that
     overruns the bounds — e.g. `repeat=99:click` or 20 × `wait=5` — is refused with
     a balloon before anything is typed, and the wheel stays usable.
-19. Backups: Advanced → **Import…** a different config → `%APPDATA%\Radial
-    Wheel\backups` gains `config-<timestamp>-import-r<n>.json` holding the config it
+19. Backups: Advanced → **Import…** a different config → the config is copied to
+    `%APPDATA%\Nucleus\backups`
+    gains `config-<timestamp>-import-r<n>.json` holding the config it
     replaced; **Restore a backup…** opens right there, and its toast **Undo** puts
     the previous config back. Type 20 edits in a row → the autosaves do NOT each add
     a backup (one at most per 5 min); save 13 forced replacements → only the newest

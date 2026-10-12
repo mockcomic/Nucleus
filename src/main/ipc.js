@@ -167,6 +167,10 @@ function registerIpc(deps) {
     return {
       quit: () => deps.quitApp(),
       focusExistingApp: bhv.focusExistingApp === true,
+      /* Freshly-opened APP WINDOW placement (winplace.js): 'default' | 'cursor'
+         | 'center', read per click like focusExistingApp so it applies at once.
+         The validated store value is already whitelisted — pass it through. */
+      appOpenPosition: bhv.appOpenPosition,
       applySetting: async (id) => {
         const merged = await appsettings.apply(id, store);
         try {
@@ -212,7 +216,7 @@ function registerIpc(deps) {
   guardHandle('config:export', async (ev) => {
     const w = settings.win;
     const r = await dialog.showSaveDialog(w, {
-      title: 'Export config', defaultPath: 'radial-wheel-config.json',
+      title: 'Export config', defaultPath: 'nucleus-config.json',
       filters: [{ name: 'JSON', extensions: ['json'] }]
     });
     if (r.canceled || !r.filePath) return { ok: false, canceled: true };
@@ -227,8 +231,8 @@ function registerIpc(deps) {
   guardHandle('config:export-bundle', async (ev) => {
     const w = settings.win;
     const r = await dialog.showSaveDialog(w, {
-      title: 'Export package (config + icons)', defaultPath: 'radial-wheel-package.json',
-      filters: [{ name: 'Radial Wheel package', extensions: ['json'] }]
+      title: 'Export package (config + icons)', defaultPath: 'nucleus-package.json',
+      filters: [{ name: 'Nucleus package', extensions: ['json'] }]
     });
     if (r.canceled || !r.filePath) return { ok: false, canceled: true };
     let built;
@@ -300,7 +304,7 @@ function registerIpc(deps) {
     try { fs.mkdirSync(dir, { recursive: true }); } catch { /* the dialog reports it */ }
     const r = await dialog.showOpenDialog(settings.win, {
       title: 'Restore a config backup', defaultPath: dir,
-      filters: [{ name: 'Radial Wheel config', extensions: ['json'] }], properties: ['openFile']
+      filters: [{ name: 'Nucleus config', extensions: ['json'] }], properties: ['openFile']
     });
     if (r.canceled || !r.filePaths[0]) return { ok: false, canceled: true };
     const got = await importConfigFile(r.filePaths[0], 'restore');
@@ -359,7 +363,7 @@ function registerIpc(deps) {
     const d = log.dir();
     if (!d) return { ok: false, error: 'log folder unavailable', lines: [] };
     try {
-      const files = fs.readdirSync(d).filter((f) => /^radial-wheel-\d{4}-\d{2}-\d{2}\.log$/.test(f)).sort();
+      const files = fs.readdirSync(d).filter((f) => /^(?:nucleus|radial-wheel)-\d{4}-\d{2}-\d{2}\.log$/.test(f)).sort();
       if (!files.length) return { ok: true, lines: [], file: null };
       const file = files[files.length - 1];
       const lines = fs.readFileSync(path.join(d, file), 'utf8').split(/\r?\n/).filter(Boolean);
@@ -572,7 +576,25 @@ function registerIpc(deps) {
      three writers); argument shapes are clamped in main/audio.js before
      anything reaches COM. */
   guardHandle('audio:available', () => audio.available());
-  guardHandle('audio:devices', (ev, flow) => audio.listDevices(flow));
+  guardHandle('audio:devices', (ev, flow, includeHidden) => {
+    const r = audio.listDevices(flow);
+    /* The app-level hidden list (behavior.audioHidden) applies HERE — every
+       surface (Settings tab, wheel card, editor picker) reads through this
+       channel, so none can disagree about what is "in the list", and a
+       renderer can't opt out of the filter. The one legitimate exception is
+       the Settings Audio tab's hidden-device manager, which passes
+       includeHidden === true (strict) to see the whole picture; anything else
+       — absent, junk, a truthy string — stays filtered. The current default
+       is exempt inside filterHiddenDevices, and audio:set-default is
+       deliberately unfiltered: a device hidden after being bound to a segment
+       must still be switchable. */
+    if (r.ok && includeHidden !== true) {
+      const hidden = (store.get().behavior || {}).audioHidden || {};
+      r.devices = audio._filterHiddenDevices(r.devices,
+        audio._parseFlow(flow) === 1 ? hidden.capture : hidden.render);
+    }
+    return r;
+  });
   guardHandle('audio:levels', (ev, flow) => audio.getLevels(flow));
   guardHandle('audio:sessions', () => audio.listSessions());
   guardHandle('audio:set-default', (ev, flow, deviceId) => audio.setDefaultDevice(flow, deviceId));

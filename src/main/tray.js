@@ -28,7 +28,7 @@ class TrayManager {
   _tip() {
     const cfg = this.getCfg ? this.getCfg() : null;
     // safeDisp() renders mouse triggers too: "Middle click", not "mmiddle".
-    let tip = cfg ? `Radial Wheel — ${safeDisp(cfg.hotkey)}` : 'Radial Wheel';
+    let tip = cfg ? `Nucleus — ${safeDisp(cfg.hotkey)}` : 'Nucleus';
     const game = this.handlers.getGameMode ? this.handlers.getGameMode() : null;
     if (this.paused) tip += ' — paused';
     else if (game && game.active) tip += ` — Game mode: paused (${game.reason || 'game'})`;
@@ -60,7 +60,7 @@ class TrayManager {
     // Gaming mode shows itself (and why) but needs no interaction — "Show wheel"
     // above stays enabled as the deliberate escape hatch.
     if (game && game.active) template.push({ label: `Game mode: paused (${game.reason || 'game'})`, enabled: false });
-    template.push({ type: 'separator' }, { label: 'Quit Radial Wheel', click: () => this.handlers.onQuit() });
+    template.push({ type: 'separator' }, { label: 'Quit Nucleus', click: () => this.handlers.onQuit() });
     this.tray.setContextMenu(Menu.buildFromTemplate(template));
   }
 

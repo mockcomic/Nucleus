@@ -84,6 +84,31 @@ test('fallbackName trims an id into something a human can scan', () => {
   assert.equal(audio._fallbackName(''), '');
 });
 
+/* ---- filterHiddenDevices (behavior.audioHidden filtering, ipc.js side) ---- */
+const dev = (id, isDefault) => ({ id, name: id, isDefault: !!isDefault });
+test('filterHiddenDevices drops hidden ids and keeps everything else', () => {
+  const list = [dev('a'), dev('b', true), dev('c')];
+  assert.deepEqual(audio._filterHiddenDevices(list, [{ id: 'a', name: 'A' }]).map((d) => d.id), ['b', 'c']);
+  assert.deepEqual(audio._filterHiddenDevices(list, []).map((d) => d.id), ['a', 'b', 'c']);
+  assert.deepEqual(audio._filterHiddenDevices(list, null).map((d) => d.id), ['a', 'b', 'c']);
+});
+
+test('the CURRENT default is never hidden, whatever the hidden list claims', () => {
+  const list = [dev('a', true), dev('b')];
+  assert.deepEqual(audio._filterHiddenDevices(list, [{ id: 'a' }]).map((d) => d.id), ['a', 'b'],
+    'a picker that could hide the live default would misreport Windows');
+  // The exemption is exactly isDefault — a hidden peer is still dropped.
+  assert.deepEqual(audio._filterHiddenDevices(list, [{ id: 'a' }, { id: 'b' }]).map((d) => d.id), ['a']);
+});
+
+test('filterHiddenDevices survives junk lists and junk hidden entries', () => {
+  const list = [dev('a'), null, dev('b', true)];
+  // 'a-string' hides nothing (ids only come from {id} objects); {id:'b'} hits
+  // the exempt default; null rows pass through untouched.
+  assert.deepEqual(audio._filterHiddenDevices(list, ['a-string', { id: '' }, { nope: 1 }, { id: 'b' }]).map((d) => (d && d.id) || d), ['a', null, 'b']);
+  assert.deepEqual(audio._filterHiddenDevices('not-a-list', [{ id: 'x' }]), []);
+});
+
 /* ---- groupSessions (Volume-Mixer semantics) ---- */
 const row = (o) => Object.assign({ pid: 1, title: '', exe: '', isSystem: false, volume: 50, muted: false }, o);
 

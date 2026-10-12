@@ -41,5 +41,5 @@ Priority target: `validate()` fuzzing — clamp bounds (`config.js:90-104`), typ
 
 ## Isolation rules
 
-- Unit tests must never launch Electron, register global hotkeys, or touch the real `%APPDATA%\Radial Wheel\` — route every fs-using path through the tmpdir stub above.
+- Unit tests must never launch Electron, register global hotkeys, or touch the real `%APPDATA%\Nucleus\` — route every fs-using path through the tmpdir stub above.
 - If a module is too entangled to test this way, extract the pure part rather than mocking deeper.
