@@ -97,7 +97,10 @@ test('side-effect surfaces sit on their legitimate pages only', () => {
 
 test('the gate itself is intact (frameOn match + refused() invoke shape)', () => {
   assert.match(src, /ev\.senderFrame && ev\.senderFrame\.url/, 'frameOn reads senderFrame.url');
-  assert.match(src, /u\.includes\('\/renderer\/' \+ n \+ '\/'\)/, 'frameOn matches /renderer/<page>/');
+  assert.match(src, /protocol !== 'file:'/, 'frameOn accepts only file URLs');
+  assert.match(src, /fileURLToPath/, 'frameOn resolves the file URL to a path');
+  assert.match(src, /getAppPath\(\)/, 'frameOn compares against this app directory, not a URL substring');
+  assert.doesNotMatch(src, /u\.includes\('\/renderer\/'/, 'a substring of the URL must not grant a page');
   assert.match(src, /SEND_CHANNELS\.has\(ch\) \? undefined : \{ ok: false, error: 'untrusted frame' \}/,
     'gated invoke channels must answer {ok:false}, never undefined');
 });

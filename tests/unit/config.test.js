@@ -17,6 +17,29 @@ const clean = (it) =>
   validate({ rings: { 1: [{ id: 'x', label: 'L', ...it }] } }).rings['1'][0];
 
 /* ---------------------------------- args ---------------------------------- */
+test('validate gives a repeated segment id a fresh one, including a profile copy', () => {
+  const item = { id: 'same', label: 'A', type: 'app', value: 'a.exe' };
+  const out = validate({
+    rings: {
+      1: [
+        item,
+        { ...item, label: 'B', value: 'b.exe' },
+        { id: 'same', type: 'folder', label: 'F', children: [{ id: 'same', type: 'app', value: 'c.exe', label: 'C' }] }
+      ]
+    },
+    profiles: [{ id: 'p', name: 'P', apps: ['code.exe'], rings: { 1: [{ ...item, label: 'Profile', value: 'p.exe' }] } }]
+  });
+  const ids = [];
+  const walk = (arr) => { for (const it of arr || []) { ids.push(it.id); if (it.children) walk(it.children); } };
+  walk(out.rings['1']);
+  walk(out.profiles[0].rings['1']);
+  assert.equal(ids[0], 'same', 'the first copy keeps the id the click walker would have found');
+  assert.equal(new Set(ids).size, ids.length, `ids must be unique, got ${ids.join(',')}`);
+  assert.equal(out.rings['1'][1].value, 'b.exe');
+  assert.equal(out.profiles[0].rings['1'][0].value, 'p.exe');
+  assert.notEqual(out.profiles[0].rings['1'][0].id, 'same');
+});
+
 test('validate keeps app args verbatim (trimmed only at launch)', () => {
   assert.equal(clean({ type: 'app', value: 'a.exe', args: '--x y' }).args, '--x y');
   assert.equal(clean({ type: 'app', value: 'a.exe', args: 'C:\\My File.txt /z' }).args, 'C:\\My File.txt /z');

@@ -30,9 +30,13 @@ test('hostile and exotic schemes are defused into https URLs', () => {
     'ldap://example.com/x',
     'search-ms://example',
     'ms-ms-settings:whatever',
+    'https:file://C:/Windows/System32/calc.exe',
   ]) {
     const out = safeExternalUrl(bad);
+    assert.notEqual(out, bad, `${bad} must not be forwarded as written`);
     assert.ok(out.startsWith('https://'), `${bad} must not reach openExternal as written (got ${out})`);
     assert.ok(!/^https:\/\/https?:|^https:\/\/mailto:/i.test(out), 'no double-scheme mangling of allowed forms');
+    const parsed = new URL(out);
+    assert.equal(parsed.protocol, 'https:');
   }
 });

@@ -7,6 +7,12 @@ const assert = require('node:assert/strict');
 const os = require('node:os');
 const fs = require('node:fs');
 const path = require('node:path');
+const { pathToFileURL } = require('node:url');
+
+/* The sender-frame gate compares the URL to app.getAppPath(), so the stub
+   and every legitimate frame in this file share one root. */
+const APP_ROOT = path.join(os.tmpdir(), 'nucleus-app-gate');
+const pageUrl = (page) => pathToFileURL(path.join(APP_ROOT, 'src', 'renderer', page, 'index.html')).href;
 
 /* ---- electron stub, injected before any src/main require ---- */
 const handle = new Map();
@@ -20,7 +26,7 @@ const electronPath = require.resolve('electron');
 require.cache[electronPath] = {
   id: electronPath, filename: electronPath, loaded: true,
   exports: {
-    app: { getPath: () => os.tmpdir(), getVersion: () => '0.0.0-test' },
+    app: { getPath: () => os.tmpdir(), getVersion: () => '0.0.0-test', getAppPath: () => APP_ROOT },
     ipcMain: { on: (ch, fn) => onMap.set(ch, fn), handle: (ch, fn) => handle.set(ch, fn) },
     globalShortcut: fakeGlobalShortcut,
     dialog: {}, shell: {}, Tray: function () {}, Menu: { buildFromTemplate: () => ({}) },
@@ -130,7 +136,7 @@ test('ConfigStore.set() throws, and config:set answers {ok:false} — never reje
     registerHotkey: () => ({ ok: true }), toggleWheel: () => {}, quitApp: () => {}, isQuitting: () => false
   });
   const h = handle.get('config:set');
-  const ev = { senderFrame: { url: 'file:///app/src/renderer/settings/index.html' } };
+  const ev = { senderFrame: { url: pageUrl('settings') } };
   const r = await h(ev, before);
   assert.equal(r.ok, false);
   assert.match(r.error, /could not save config/);
@@ -145,10 +151,18 @@ test('privileged channels refuse frames that are not their own window', async ()
     tray: { balloon: () => {} }, getState: () => ({}), setState: () => {},
     registerHotkey: () => ({ ok: true }), toggleWheel: () => {}, quitApp: () => {}, isQuitting: () => false
   });
-  const impostor = { senderFrame: { url: 'file:///app/src/renderer/wheel/index.html' } };   // overlay pretending to be settings
+  const impostor = { senderFrame: { url: pageUrl('wheel') } };   // overlay pretending to be settings
   const r = await handle.get('config:set')(impostor, {});
   assert.equal(r.ok, false);
   assert.equal(persisted, 0, 'a refused frame must not reach the store');
+
+  const lookalike = await handle.get('config:set')(
+    { senderFrame: { url: 'https://evil.test/renderer/settings/index.html' } }, {});
+  assert.equal(lookalike.ok, false, 'an https URL that merely contains /renderer/settings/ is not Settings');
+  const outside = pathToFileURL(path.join(os.tmpdir(), 'elsewhere', 'src', 'renderer', 'settings', 'index.html')).href;
+  const foreign = await handle.get('config:set')({ senderFrame: { url: outside } }, {});
+  assert.equal(foreign.ok, false, 'a file URL outside the app directory is not Settings');
+  assert.equal(persisted, 0);
 });
 
 /* ------------------ ipc.js: autostart flag persisted NEW, not stale --------- */
@@ -162,7 +176,7 @@ test('autostart:set persists the NEW flag and only after registry success', asyn
     tray: { balloon: () => {} }, getState: () => ({}), setState: () => {},
     registerHotkey: () => ({ ok: true }), toggleWheel: () => {}, quitApp: () => {}, isQuitting: () => false
   });
-  const ev = { senderFrame: { url: 'file:///app/src/renderer/settings/index.html' } };
+  const ev = { senderFrame: { url: pageUrl('settings') } };
   const r = await handle.get('autostart:set')(ev, true);
   assert.equal(r.ok, true);
   assert.equal(saved.behavior.autostart, true, 'config must carry the NEW flag, not the stale clone');
@@ -193,7 +207,7 @@ test('config:import and config:reset include rev (parity with config:set)', asyn
     tray: { balloon: () => {} }, getState: () => ({}), setState: () => {},
     registerHotkey: () => ({ ok: true }), toggleWheel: () => {}, quitApp: () => {}, isQuitting: () => false
   });
-  const ev = { senderFrame: { url: 'file:///app/src/renderer/settings/index.html' } };
+  const ev = { senderFrame: { url: pageUrl('settings') } };
   const r = await handle.get('config:reset')(ev);
   assert.equal(r.ok, true);
   assert.equal(r.rev, 7);
@@ -214,7 +228,7 @@ test('wheel:segment-click ignores an unrecognised item id and executes the store
       tray: { balloon: () => {} }, getState: () => ({}), setState: () => {},
       registerHotkey: () => ({ ok: true }), toggleWheel: () => {}, quitApp: () => {}, isQuitting: () => false
     });
-    const ev = { senderFrame: { url: 'file:///app/src/renderer/wheel/index.html' } };
+    const ev = { senderFrame: { url: pageUrl('wheel') } };
     await onMap.get('wheel:segment-click')(ev, { id: 'evil', type: 'command', value: 'calc' });
     assert.equal(executed.length, 0, 'a payload id missing from the live config must be dropped');
     await onMap.get('wheel:segment-click')(ev, { id: 'good', type: 'command', value: 'POWERSHELL.exe' });

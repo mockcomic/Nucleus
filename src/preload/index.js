@@ -5,13 +5,19 @@ const { contextBridge, ipcRenderer } = require('electron');
    channels it legitimately uses. A compromised overlay or welcome page can
    no longer reach setConfig / previewAction / requestQuit through a stray
    XSS, because those functions were never bridged into its world.
-   location.pathname distinguishes the pages: .../renderer/<page>/index.html
-   (same shape packaged under asar and unpacked in dev). */
-const page = (() => {
-  try { return String(location.pathname).replace(/\\/g, '/'); }
-  catch { return ''; }
-})();
-const on = (name) => page.includes('/renderer/' + name + '/');
+   The page must be a file URL whose path ends at
+   .../renderer/<page>/index.html (dev tree and asar use that shape).
+   Main remains the authority: ipc.js accepts only the exact file under
+   app.getAppPath(), so a lookalike path that merely ends the same way
+   still cannot call a privileged channel. */
+function on(name) {
+  try {
+    const u = new URL(location.href);
+    if (u.protocol !== 'file:') return false;
+    const p = decodeURIComponent(u.pathname).replace(/\\/g, '/').toLowerCase();
+    return p.endsWith('/renderer/' + name + '/index.html');
+  } catch { return false; }
+}
 
 const invoke = (ch) => (...args) => ipcRenderer.invoke(ch, ...args);
 const send = (ch) => (...args) => ipcRenderer.send(ch, ...args);

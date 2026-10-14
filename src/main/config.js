@@ -219,6 +219,11 @@ function validate(raw) {
   for (const k of ['edge', 'stroke', 'shadow', 'sheen']) if (HEX.test(colorsIn[k] || '')) colors[k] = colorsIn[k];
   if (colorsIn.mode === 'dark' || colorsIn.mode === 'light') colors.mode = colorsIn.mode;
 
+  /* One id pool for the default wheel, every folder child, and every profile.
+     Segment click keeps the first match, and default rings are walked first,
+     so a profile that reused an id launched the default item. The first copy
+     keeps the id; every later copy gets a fresh one. */
+  const seenIds = new Set();
   const cleanItem = (it, i, depth = 0) => {
     it = it && typeof it === 'object' ? it : {};
     let type = String(it.type || 'app').toLowerCase();
@@ -230,8 +235,11 @@ function validate(raw) {
     // (the overlay panel reads/writes Core Audio through the audio channels),
     // so it launches nothing and carries nothing.
     const isContainer = isFolder || type === 'recent' || type === 'mixer';
+    let id = typeof it.id === 'string' && it.id ? it.id : nid();
+    while (seenIds.has(id)) id = nid();
+    seenIds.add(id);
     return {
-      id: typeof it.id === 'string' && it.id ? it.id : nid(),
+      id,
       label: String(it.label ?? `Item ${i + 1}`).slice(0, 40),
       icon: typeof it.icon === 'string' ? Array.from(it.icon).slice(0, 2).join('') : '',
       // Logo/artwork slot: a Dashboard Icons slug, a `custom:<hash>.<kind>`

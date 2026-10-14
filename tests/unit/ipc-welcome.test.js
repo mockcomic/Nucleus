@@ -11,6 +11,10 @@ const assert = require('node:assert/strict');
 const os = require('node:os');
 const fs = require('node:fs');
 const path = require('node:path');
+const { pathToFileURL } = require('node:url');
+
+const APP_ROOT = path.join(os.tmpdir(), 'nucleus-app-welcome');
+const welcomeUrl = pathToFileURL(path.join(APP_ROOT, 'src', 'renderer', 'welcome', 'index.html')).href;
 
 /* ---- electron stub, injected before any src/main require ---- */
 const on = new Map();     // ipcMain.on      -> channel: listener
@@ -24,7 +28,8 @@ function fakeWindow() {
     handlers,
     webContents: {
       send: (ch, payload) => { win.sent.push([ch, payload]); },
-      on: () => {}
+      on: () => {},
+      setWindowOpenHandler: () => {}
     },
     once: (ev, fn) => { handlers[ev] = fn; },
     on: (ev, fn) => { handlers[ev] = fn; },
@@ -41,7 +46,7 @@ const electronPath = require.resolve('electron');
 require.cache[electronPath] = {
   id: electronPath, filename: electronPath, loaded: true,
   exports: {
-    app: { getPath: () => os.tmpdir(), getVersion: () => '0.0.0-test' },
+    app: { getPath: () => os.tmpdir(), getVersion: () => '0.0.0-test', getAppPath: () => APP_ROOT },
     ipcMain: { on: (ch, fn) => on.set(ch, fn), handle: (ch, fn) => handle.set(ch, fn) },
     dialog: {}, shell: {},
     BrowserWindow: function BrowserWindow() { const w = fakeWindow(); windows.push(w); return w; },
@@ -82,7 +87,7 @@ function fire(channel, ...args) {
   assert.ok(fn, `no ipcMain.on listener registered for ${channel}`);
   // Privileged channels now answer only their own window's frame (ipc.js
   // sender-frame gate) — the fake event has to look like the welcome page.
-  fn({ sender: {}, senderFrame: { url: 'file:///app/src/renderer/welcome/index.html' } }, ...args);
+  fn({ sender: {}, senderFrame: { url: welcomeUrl } }, ...args);
 }
 
 /* ----------------------------- welcome:done ----------------------------- */

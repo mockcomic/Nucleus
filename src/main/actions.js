@@ -35,10 +35,11 @@ function launchDetached(cmd, args, label = cmd, opts = {}) {
  * shell:true is DELIBERATE here and only here: a `command` segment's value is
  * the user's own command line (Run-dialog semantics — pipes, &&, redirection
  * are the point of the type). Every other exec path in this file goes through
- * launchDetached with an explicit argv array, which keeps the argument
- * boundary. Do NOT route anything into this function that the user did not
- * type themselves (config import passes it through the same string, exactly
- * like editing config.json by hand — the trusted-input contract of the store).
+ * launchDetached. Paths that need ShellExecute go through startViaCmd, which
+ * quotes each token so cmd cannot re-parse `&` or `%`. Do NOT route anything
+ * into this function that the user did not type themselves (config import
+ * passes it through the same string, exactly like editing config.json by
+ * hand — the trusted-input contract of the store).
  */
 function runShellCommand(value) {
   return new Promise((resolve, reject) => {
@@ -64,9 +65,52 @@ function runShellCommand(value) {
  * lacks the `://` form and would otherwise be mangled by the default — pages
  * opened by other schemes belong to the sys action's ms-settings targets.
  */
+/* One argv element for `cmd /c`. Node only quotes space and `"`, so a raw
+   `C:\A&B\app.exe` is pasted into the command line and cmd splits on `&`.
+   Always wrap. Internal quotes are doubled (cmd's own escape). Each `%` is
+   a quote-break `"%"`: percent-expansion runs even inside quotes and could
+   otherwise insert a `"` that ends the token early. CR/LF would open a
+   second command on the same `/c` line. */
+function quoteCmdArg(arg) {
+  const s = String(arg);
+  if (/[\r\n]/.test(s)) throw new Error('launch argument contains a newline');
+  let out = '"';
+  for (const ch of s) {
+    if (ch === '"') out += '""';
+    else if (ch === '%') out += '"%"';
+    else out += ch;
+  }
+  return out + '"';
+}
+
+/* `start "" <file> <args…>` as a single `/c` string. windowsVerbatimArguments
+   is required: Node would otherwise wrap this string in another pair of
+   quotes and undo the escaping. The command does not itself start with a
+   quote, so cmd's `/s` will not strip the token quotes. */
+function startCommand(target, tokens) {
+  return ['start', '""', quoteCmdArg(target), ...(tokens || []).map(quoteCmdArg)].join(' ');
+}
+
+function startViaCmd(target, tokens, label) {
+  return launchDetached(
+    'cmd.exe',
+    ['/d', '/s', '/c', startCommand(target, tokens)],
+    label || target,
+    { windowsVerbatimArguments: true }
+  );
+}
+
 function safeExternalUrl(value) {
-  const s = String(value);
-  return /^(https?:|mailto:)/i.test(s) ? s : 'https://' + s;
+  const raw = String(value).trim();
+  /* `https?:` alone is not enough: `https:file://…` matches that prefix and
+     ShellExecute does not parse it the way the WHATWG URL parser does.
+     Require `://` (mailto has none) and confirm the parsed protocol. */
+  const candidate = /^(https?:\/\/|mailto:)/i.test(raw) ? raw : 'https://' + raw;
+  try {
+    const u = new URL(candidate);
+    if (u.protocol === 'http:' || u.protocol === 'https:' || u.protocol === 'mailto:') return candidate;
+  } catch { /* not a URL we will hand to the shell */ }
+  return 'https://invalid.invalid/';
 }
 
 /**
@@ -141,7 +185,7 @@ async function executeAction(item, ctx = {}) {
         // Start-Menu shortcuts, batch files, and any program taking launch
         // parameters need ShellExecute semantics: cmd's `start ""` resolves
         // them exactly like a double-click and forwards the arguments.
-        return launchDetached('cmd.exe', ['/d', '/s', '/c', 'start', '""', target, ...tokens], target);
+        return startViaCmd(target, tokens, target);
       }
       if (exists) {
         const err = await shell.openPath(target);
@@ -156,7 +200,7 @@ async function executeAction(item, ctx = {}) {
       // Not a file on disk (notepad, ms-settings, a store link). `start` resolves
       // PATH, App Paths, and protocol handlers. This stays off Node's shell:true;
       // a free-form shell line belongs to a command segment.
-      return launchDetached('cmd.exe', ['/d', '/s', '/c', 'start', '""', target, ...tokens], target);
+      return startViaCmd(target, tokens, target);
     }
     case 'command': {
       if (!value) throw new Error('no command configured');
@@ -166,22 +210,14 @@ async function executeAction(item, ctx = {}) {
       let exists = false;
       try { exists = fs.existsSync(script); } catch {}
       if (exists && /\.(bat|cmd)$/i.test(script)) {
-        const child = spawn('cmd.exe', ['/d', '/s', '/c', 'start', '""', script],
-          { detached: true, stdio: 'ignore', windowsHide: true });
-        child.unref();
-        return;
+        return startViaCmd(script, [], script);
       }
       if (exists && /\.ps1$/i.test(script)) {
         // Same `start ""` route as the batch files: powershell.exe spawned
         // directly with detached:true silently never runs (verified on real
         // machines); through cmd's ShellExecute it launches reliably.
         // No -ExecutionPolicy Bypass — the script runs under the machine policy.
-        const child = spawn('cmd.exe',
-          ['/d', '/s', '/c', 'start', '""', 'powershell.exe',
-            '-NoProfile', '-File', script],
-          { detached: true, stdio: 'ignore', windowsHide: true });
-        child.unref();
-        return;
+        return startViaCmd('powershell.exe', ['-NoProfile', '-File', script], script);
       }
       await runShellCommand(value);
       return;
@@ -224,4 +260,4 @@ async function executeAction(item, ctx = {}) {
   }
 }
 
-module.exports = { executeAction, safeExternalUrl, exeBaseForAppValue };
+module.exports = { executeAction, safeExternalUrl, exeBaseForAppValue, quoteCmdArg, startCommand };

@@ -29,7 +29,9 @@ require.cache[cpPath] = {
 
 const actionsPath = require.resolve('../../src/main/actions.js');
 delete require.cache[actionsPath];
-const { executeAction } = require(actionsPath);
+const { executeAction, quoteCmdArg, startCommand } = require(actionsPath);
+
+const cmdLine = (call) => (call && call.args || []).join(' ');
 if (savedCp) require.cache[cpPath] = savedCp;
 else delete require.cache[cpPath];
 
@@ -44,17 +46,38 @@ test('unresolved app names use cmd start, and ps1 scripts are not launched with 
     fs.rmSync(dir, { recursive: true, force: true });
   }
 
-  const appCall = calls.find((c) => c.args.includes('radial-wheel-missing-app'));
+  const appCall = calls.find((c) => cmdLine(c).includes('radial-wheel-missing-app'));
   assert.ok(appCall, 'a name that is not a file should still be spawned');
   assert.equal(appCall.cmd, 'cmd.exe');
-  assert.ok(appCall.args.includes('start'));
+  assert.deepEqual(appCall.args.slice(0, 3), ['/d', '/s', '/c']);
+  assert.equal(appCall.args[3], startCommand('radial-wheel-missing-app', []));
+  assert.equal(appCall.opts.windowsVerbatimArguments, true);
   assert.notEqual(appCall.opts.shell, true);
 
-  const psCall = calls.find((c) => c.args.includes(ps1));
+  const psCall = calls.find((c) => cmdLine(c).includes(ps1));
   assert.ok(psCall, 'the ps1 path should spawn powershell via start');
-  assert.ok(psCall.args.includes('-File'));
-  assert.equal(psCall.args.includes('-ExecutionPolicy'), false);
-  assert.equal(psCall.args.includes('Bypass'), false);
+  assert.match(cmdLine(psCall), /-File/);
+  assert.equal(cmdLine(psCall).includes('-ExecutionPolicy'), false);
+  assert.equal(cmdLine(psCall).includes('Bypass'), false);
+  assert.equal(psCall.opts.windowsVerbatimArguments, true);
+});
+
+test('cmd start quotes & and % so they cannot split the command', async () => {
+  assert.equal(quoteCmdArg('C:\\A&B\\app.exe'), '"C:\\A&B\\app.exe"');
+  assert.equal(quoteCmdArg('100%done'), '"100"%"done"');
+  assert.equal(quoteCmdArg('say "hi"'), '"say ""hi"""');
+  assert.throws(() => quoteCmdArg('a\nb'), /newline/);
+
+  const before = calls.length;
+  await executeAction({ type: 'app', value: 'C:\\A&B\\tool.lnk', args: 'foo&calc' });
+  await executeAction({ type: 'app', value: '100%done' });
+  const amp = calls[before];
+  const pct = calls[before + 1];
+  assert.equal(amp.cmd, 'cmd.exe');
+  assert.equal(amp.args[3], startCommand('C:\\A&B\\tool.lnk', ['foo&calc']));
+  assert.equal(amp.opts.windowsVerbatimArguments, true);
+  assert.equal(pct.args[3], 'start "" "100"%"done"');
+  await assert.rejects(() => executeAction({ type: 'app', value: 'notepad\r\ncalc' }), /newline/);
 });
 
 test('container segments refuse to launch — folder, recent, and the mixer card alike', async () => {

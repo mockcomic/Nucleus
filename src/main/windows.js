@@ -14,10 +14,26 @@ const log = require('./logger');
    these webContents events catch what no page console call reports: Chromium's
    own network errors, a crashed render process, failed page loads. Idempotent
    per webContents so overlay re-ensure / window reuse never double-listens. */
+/* A privileged preload decides which API to bridge from the page URL, and
+   ipc.js trusts that same URL. Drag-drop, window.open, and any later
+   navigation would re-run the preload on an attacker document. The initial
+   loadFile does not emit will-navigate, so blocking every subsequent
+   navigation and every new window leaves only the page we loaded. */
+function lockNavigation(win) {
+  const wc = win && win.webContents;
+  if (!wc || wc.__rwNavLock) return;
+  wc.__rwNavLock = true;
+  const block = (e) => { try { e.preventDefault(); } catch { /* already committed */ } };
+  wc.on('will-navigate', block);
+  wc.on('will-redirect', block);
+  if (typeof wc.setWindowOpenHandler === 'function') wc.setWindowOpenHandler(() => ({ action: 'deny' }));
+}
+
 function attachLogHooks(win, name) {
   const wc = win && win.webContents;
   if (!wc || wc.__rwLogHooks) return;
   wc.__rwLogHooks = true;
+  lockNavigation(win);
   const LEVELS = { logging: 'debug', verbose: 'debug', info: 'info', warning: 'warn', error: 'error' };
   wc.on('console-message', (e) => {
     // Older Electron shape: (event, level 0-3, message, line, sourceId).
@@ -261,4 +277,4 @@ class SettingsWindow {
   destroy() { if (this.win && !this.win.isDestroyed()) this.win.destroy(); this.win = null; }
 }
 
-module.exports = { Overlay, SettingsWindow, supportsVibrancy, attachLogHooks };
+module.exports = { Overlay, SettingsWindow, supportsVibrancy, attachLogHooks, lockNavigation };

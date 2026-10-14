@@ -96,7 +96,8 @@ test('flag on but the value names no .exe: no focus attempt, launch unchanged', 
   await executeAction({ type: 'app', value: 'ms-settings:bluetooth' }, { focusExistingApp: true });
   assert.deepEqual(focusCalls, [], 'lnk and ms-settings values must not reach the window probe');
   assert.equal(calls.length, 2, 'both still go through cmd start as before');
-  assert.ok(calls.every((c) => c.cmd === 'cmd.exe' && c.args.includes('start')));
+  assert.ok(calls.every((c) => c.cmd === 'cmd.exe' && c.opts.windowsVerbatimArguments === true
+    && String(c.args[3] || '').startsWith('start "" ')));
 });
 
 /* ------------------- pure basename extraction (exeBaseForAppValue) ---------- */

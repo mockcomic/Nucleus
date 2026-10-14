@@ -16,6 +16,7 @@
 const fs = require('fs');
 const path = require('path');
 const { readCapped } = require('./capped-fetch');
+const { looksLikeSvg } = require('./custom-icons');
 
 const REPO = 'homarr-labs/dashboard-icons';
 const METADATA_URL = 'https://raw.githubusercontent.com/' + REPO + '/main/metadata.json';
@@ -114,10 +115,14 @@ function searchMetadata(metadata, query, limit = SEARCH_LIMIT) {
   const out = [];
   const taken = new Set();
   for (const r of scored) {
+    /* Catalog keys are remote JSON. A key that is not a slug must not become
+       an <img src> (path traversal, a scheme, a quote). */
+    const slug = sanitizeSlug(r.slug);
+    if (!slug) continue;
     const parent = variantOf.get(r.slug);
     if (parent && taken.has(parent)) continue;   // hide dagster-dark when dagster is shown
     taken.add(r.slug);
-    out.push({ slug: r.slug, kind: r.kind, categories: r.categories, url: iconUrl(r.slug, r.kind) });
+    out.push({ slug, kind: r.kind, categories: r.categories, url: iconUrl(slug, r.kind) });
     if (out.length >= limit) break;
   }
   return out;
@@ -134,7 +139,9 @@ function cachedDataUrl(slug) {
       const p = iconPath(slug, kind);
       const st = fs.statSync(p);
       if (st.size > 0 && st.size <= ICON_MAX_BYTES) {
-        return { kind, dataUrl: dataUrl(kind, fs.readFileSync(p)) };
+        const buf = fs.readFileSync(p);
+        if (kind === 'svg' && !looksLikeSvg(buf)) continue;   // poisoned cache: miss, do not paint it
+        return { kind, dataUrl: dataUrl(kind, buf) };
       }
     } catch { /* miss */ }
   }
@@ -157,6 +164,7 @@ function iconOnDisk(slug) {
 
 function writeCache(slug, kind, buf) {
   if (!cacheDir) return;
+  if (kind === 'svg' && !looksLikeSvg(buf)) return;
   try {
     fs.mkdirSync(cacheDir, { recursive: true });
     const p = iconPath(slug, kind);
@@ -292,6 +300,7 @@ async function fetchIcon(slugRaw) {
         const got = await readCapped(res, ICON_MAX_BYTES);
         const buf = got.buf;
         if (!buf || !buf.length) continue;   // overflow, mid-stream failure, or empty
+        if (kind === 'svg' && !looksLikeSvg(buf)) continue;
         writeCache(slug, kind, buf);
         return { ok: true, slug, kind, dataUrl: dataUrl(kind, buf) };
       } catch { /* try the next format / report below */ }
@@ -341,5 +350,6 @@ module.exports = {
   configure, searchIcons, fetchIcon, dataUrlFor, warm, loadMetadata,
   // pure, exported for tests
   sanitizeSlug, slugify, normalize, searchMetadata, iconUrl, entryKind,
+  cachedDataUrl, writeCache,
   METADATA_TTL, ICON_MAX_BYTES, SEARCH_LIMIT, MIME
 };

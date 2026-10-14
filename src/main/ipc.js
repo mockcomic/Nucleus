@@ -2,6 +2,7 @@
 const { app, ipcMain, dialog, shell } = require('electron');
 const fs = require('fs');
 const path = require('path');
+const { fileURLToPath } = require('url');
 const actions = require('./actions');
 const appsettings = require('./appsettings');
 const audio = require('./audio');
@@ -38,10 +39,23 @@ function registerIpc(deps) {
      compromised overlay can't invoke config:set directly even if it
      reconstructs the channel name. Read-only channels stay ungated — their
      data is already on-screen in every window. */
+  /* Exact file URL of a page we ship, not a substring. A document at
+     https://evil/renderer/settings/ or C:\temp\renderer\settings\index.html
+     contains the old needle and must not inherit the Settings bridge.
+     Compared case-insensitively: Windows file URLs do not preserve case. */
+  const isAppPageUrl = (url, page) => {
+    let parsed;
+    try { parsed = new URL(String(url || '')); } catch { return false; }
+    if (parsed.protocol !== 'file:') return false;
+    let actual;
+    try { actual = fileURLToPath(parsed); } catch { return false; }
+    const expected = path.join(app.getAppPath(), 'src', 'renderer', page, 'index.html');
+    return path.normalize(actual).toLowerCase() === path.normalize(expected).toLowerCase();
+  };
   const frameOn = (ev, ...names) => {
     try {
       const u = (ev.senderFrame && ev.senderFrame.url) || '';
-      return names.some((n) => u.includes('/renderer/' + n + '/'));
+      return names.some((n) => isAppPageUrl(u, n));
     } catch { return false; }
   };
   const PRIVILEGED = {

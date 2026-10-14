@@ -3,9 +3,12 @@
    sanitation and metadata ranking. Network paths are intentionally excluded. */
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 
 const {
-  sanitizeSlug, slugify, normalize, searchMetadata
+  sanitizeSlug, slugify, normalize, searchMetadata, configure, cachedDataUrl, writeCache
 } = require('../../src/main/dashboard-icons');
 
 test('sanitizeSlug accepts clean slugs, normalizes case/space, rejects traversal and paths', () => {
@@ -95,6 +98,37 @@ test('a variant stands on its own when the parent does not match every token', (
 test('category tokens surface otherwise-unmatched icons', () => {
   const hits = searchMetadata(META, 'adblock').map((h) => h.slug);
   assert.ok(hits.includes('pi-hole'));
+});
+
+test('searchMetadata drops catalog keys that are not safe slugs', () => {
+  const hits = searchMetadata({
+    '../evil': { base: 'svg', aliases: ['bad'], categories: [] },
+    'ok-app': { base: 'svg', aliases: [], categories: [] }
+  }, 'bad');
+  assert.deepEqual(hits, []);
+  const ok = searchMetadata({ 'ok-app': { base: 'svg', aliases: [], categories: [] } }, 'ok-app');
+  assert.equal(ok.length, 1);
+  assert.equal(ok[0].slug, 'ok-app');
+  assert.match(ok[0].url, /\/svg\/ok-app\.svg$/);
+});
+
+test('a script-bearing SVG is neither cached nor served', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rw-dash-'));
+  configure(dir);
+  const evil = Buffer.concat([
+    Buffer.from('<svg xmlns="http://www.w3.org/2000/svg">', 'utf8'),
+    Buffer.alloc(5000, 0x20),
+    Buffer.from('<script>alert(1)</script></svg>', 'utf8')
+  ]);
+  writeCache('evil', 'svg', evil);
+  assert.equal(fs.existsSync(path.join(dir, 'evil.svg')), false, 'writeCache must refuse the file');
+  fs.writeFileSync(path.join(dir, 'evil.svg'), evil);
+  assert.equal(cachedDataUrl('evil'), null, 'a poisoned cache file is a miss');
+  const ok = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><rect width="1" height="1"/></svg>', 'utf8');
+  writeCache('ok', 'svg', ok);
+  const hit = cachedDataUrl('ok');
+  assert.equal(hit.kind, 'svg');
+  assert.match(hit.dataUrl, /^data:image\/svg\+xml;base64,/);
 });
 
 test('result list is capped by the limit argument', () => {

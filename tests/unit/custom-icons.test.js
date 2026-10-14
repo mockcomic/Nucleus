@@ -96,6 +96,13 @@ test('looksLikeSvg refuses SVG that carries a script surface', () => {
   assert.equal(ci.looksLikeSvg(Buffer.from('<svg><script>alert(1)</script></svg>', 'utf8')), false);
   assert.equal(ci.looksLikeSvg(Buffer.from('<svg><a href="javascript:x"/></svg>', 'utf8')), false);
   assert.equal(ci.looksLikeSvg(Buffer.from('<?xml version="1.0"?><html/>', 'utf8')), false, 'xml prolog but no svg root');
+  const buried = Buffer.concat([
+    Buffer.from('<svg xmlns="http://www.w3.org/2000/svg">', 'utf8'),
+    Buffer.alloc(5000, 0x20),
+    Buffer.from('<script>alert(1)</script></svg>', 'utf8')
+  ]);
+  assert.equal(ci.looksLikeSvg(buried), false, 'a script past the 4 KB probe is still a script');
+  assert.equal(ci.sniffImage(buried), null);
 });
 
 /* -------------------------------- URLs ------------------------------------ */

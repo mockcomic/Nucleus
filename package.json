@@ -19,13 +19,13 @@
     "koffi": "^2.9.2"
   },
   "devDependencies": {
-    "electron": "^44.5.1",
+    "electron": "^44.7.2",
     "electron-builder": "^26.0.12"
   },
   "build": {
     "appId": "local.nucleus",
     "productName": "Nucleus",
-    "buildNumber": "16",
+    "buildNumber": "17",
     "directories": {
       "output": "dist"
     },

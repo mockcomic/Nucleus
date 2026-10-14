@@ -82,14 +82,16 @@ function startsWith(buf, bytes, at = 0) {
 }
 
 /* Text that only claims to be SVG is rejected outright: an XML prolog or an
-   <svg> root within the probe window, and no script surface at all. */
+   <svg> root within the probe window. The script/handler rejection covers the
+   WHOLE buffer — a <script> or onload= parked past the 4 KB probe used to
+   pass, and the file cap is 2 MB. */
 function looksLikeSvg(buf) {
-  const body = buf.slice(0, SVG_PROBE_BYTES).toString('utf8');
-  const head = body.replace(/^\uFEFF/, '').trimStart().toLowerCase();
+  if (!Buffer.isBuffer(buf)) return false;
+  const probed = buf.slice(0, SVG_PROBE_BYTES).toString('utf8');
+  const head = probed.replace(/^\uFEFF/, '').trimStart().toLowerCase();
   if (!head.startsWith('<svg') && !head.startsWith('<?xml')) return false;
-  const low = body.toLowerCase();
-  if (!low.includes('<svg')) return false;
-  return !/<\s*script|javascript\s*:|\son[a-z]+\s*=/i.test(body);
+  if (!probed.toLowerCase().includes('<svg')) return false;
+  return !/<\s*script|javascript\s*:|\son[a-z]+\s*=/i.test(buf.toString('utf8'));
 }
 
 /* The one authority on what an accepted icon is. Returns a KINDS key or null. */
