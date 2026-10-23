@@ -16,6 +16,7 @@ const usage = require('./usage');
 const macro = require('./macro');
 const mousehook = require('./mousehook');
 const autostart = require('./autostart');
+const update = require('./update');
 const log = require('./logger');
 const migrate = require('./migrate');
 /* The logger is safe to call from here on — it degrades to console-only until
@@ -149,6 +150,76 @@ function quitApp() {
   app.quit();
 }
 
+/* ------------------------------ update check ------------------------------
+   GitHub Releases, check + notify only (see update.js): a scheduled poll a few
+   seconds after start, then once a day, plus manual checks from the tray and
+   Settings. Fail-soft everywhere — an app that cannot reach GitHub (or whose
+   repo has no releases yet) behaves exactly as it did before this feature. */
+let appPublishMs = NaN;
+
+/* One label for every surface (tray row, balloon, Settings chip), so they can
+   never disagree about what the last check found. */
+function updateLabel(snap) {
+  const ver = snap.info && snap.info.version ? ' ' + snap.info.version : '';
+  if (snap.status === 'available') return snap.kind === 'build'
+    ? `New build available${ver}` : `Update available${ver}`;
+  if (snap.status === 'upToDate') return `Up to date${snap.info ? ` (${snap.info.version})` : ''}`;
+  if (snap.status === 'checking') return 'Checking for updates\u2026';
+  if (snap.status === 'error') return 'Update check failed';
+  return 'No releases published yet';
+}
+
+/* One check end-to-end; always answers with the current snapshot (the caller
+   never needs to know whether the request itself succeeded). */
+async function runUpdateCheck() {
+  try { await update.check({ appVersion: app.getVersion(), appPublishMs }); }
+  catch (err) { log.warn('update check failed:', err && err.message); }
+  const snap = update.snapshot(app.getVersion(), appPublishMs);
+  try { if (tray) tray.update(); } catch { /* menu refresh is cosmetic */ }
+  return snap;
+}
+
+/* Manual check (tray item / Settings button): always announces its result —
+   that is the whole point of asking by hand. */
+async function manualUpdateCheck() {
+  const snap = await runUpdateCheck();
+  if (tray) {
+    if (snap.status === 'available' && snap.info) {
+      setState('updateSeenTag', snap.info.tag);     // the schedule must not double-balloon it
+      tray.balloon('Nucleus update available', `${updateLabel(snap)} \u2014 pick "Update available" in the tray or Settings to open the release page.`);
+    } else if (snap.status === 'upToDate') {
+      tray.balloon('Nucleus is up to date', snap.info ? `Version ${snap.info.version} is the latest release.` : 'You have the latest release.');
+    } else if (snap.status === 'error') {
+      tray.balloon('Update check failed', (snap.error || 'Could not reach GitHub.') + ' Check your connection and try again.', 'error');
+    } else {
+      tray.balloon('No releases found', 'Nucleus has not published a GitHub release yet.');
+    }
+  }
+  return snap;
+}
+
+async function scheduledUpdateCheck() {
+  try {
+    if (!store.get().behavior.updateChecks) return;   // background checks are off; manual still works
+    const snap = await runUpdateCheck();
+    /* Balloon once per tag: opening the release page (or a manual check)
+       records updateSeenTag in state.json, so a dismissed update never nags
+       again until a NEWER one appears. */
+    if (snap.status === 'available' && snap.info && tray && getState('updateSeenTag', null) !== snap.info.tag) {
+      setState('updateSeenTag', snap.info.tag);
+      tray.balloon('Nucleus update available', `${updateLabel(snap)} \u2014 pick "Update available" in the tray or Settings to open the release page.`);
+    }
+  } catch (err) { log.warn('scheduled update check failed:', err && err.message); }
+}
+
+/* unref'd so neither timer can ever hold a quit (or a test run) open. */
+function startUpdateSchedule() {
+  const first = setTimeout(() => { scheduledUpdateCheck(); }, 15000);
+  const loop = setInterval(() => { scheduledUpdateCheck(); }, 24 * 3600e3);
+  if (first.unref) first.unref();
+  if (loop.unref) loop.unref();
+}
+
 function handleConfigChanged({ config, rev, hotkeyChanged, autostartChanged, reload }) {
   if (hotkeyChanged) {
     hotkeyMgr.unregister();
@@ -205,6 +276,19 @@ function bootstrap() {
       onOpenLogs: () => { const d = log.dir(); if (d) { try { fs.mkdirSync(d, { recursive: true }); } catch {} shell.openPath(d); } },
       onPauseToggle: (paused) => { manualPaused = paused; applyHotkeyState(); },
       getGameMode: () => ({ active: gamePaused, reason: gameReason }),
+      /* Update row: the label comes from the last snapshot (local data only —
+         opening the tray never costs a request). The item itself is a click
+         target only when something is on offer. */
+      getUpdateStatus: () => {
+        const snap = update.snapshot(app.getVersion(), appPublishMs);
+        return { label: updateLabel(snap), available: snap.status === 'available', error: snap.status === 'error' };
+      },
+      onOpenUpdate: async () => {
+        const snap = update.snapshot(app.getVersion(), appPublishMs);
+        const got = await update.openRelease(snap.info && snap.info.url);
+        if (got.ok && snap.info) setState('updateSeenTag', snap.info.tag);   // viewed = seen: no repeat balloon
+      },
+      onCheckUpdate: () => { manualUpdateCheck(); },
       onQuit: quitApp
     });
     tray.build(() => store.get());
@@ -212,6 +296,16 @@ function bootstrap() {
     tray = null;
     log.error('continuing WITHOUT a tray icon — nothing writable under ' + app.getPath('userData') + '?');
   }
+
+  /* Update check boot: read back the last good release (sanitized again by
+     the module), stamp when THIS build was made (asar mtime packaged; the
+     working-tree dir mtime in dev — it only ever feeds the same-version
+     publish-date tie-break), and arm the schedule. All fail-soft. */
+  try { update.configure(app.getPath('userData')); }
+  catch (err) { log.warn('update configure failed:', err && err.message); }
+  try { appPublishMs = fs.statSync(app.getAppPath()).mtimeMs; }
+  catch { /* no clock anchor: the tie-break can only ever answer "up to date" */ }
+  startUpdateSchedule();
 
   /* Gaming mode: pause the hotkey while a fullscreen / listed app owns the foreground. */
   gameWatcher = new GameModeWatcher(() => store.get(), () => macro.foregroundProbe(), { ourPid: process.pid });
@@ -231,7 +325,20 @@ function bootstrap() {
 
   registerIpc({
     store, hotkeyMgr, overlay, settings: settingsWin, welcome, tray,
-    getState, setState, registerHotkey, toggleWheel, quitApp, isQuitting
+    getState, setState, registerHotkey, toggleWheel, quitApp, isQuitting,
+    /* Update trio: local snapshot, manual check (announces via balloon like
+       the tray item), and the fixed-target release-page opener. openRelease
+         (the URL is matched against main's sanitized copy inside update.js). */
+    updateSnapshot: () => update.snapshot(app.getVersion(), appPublishMs),
+    checkUpdate: () => manualUpdateCheck(),
+    openRelease: async (url) => {
+      const got = await update.openRelease(url);
+      if (got.ok) {
+        const snap = update.snapshot(app.getVersion(), appPublishMs);
+        if (snap.info) setState('updateSeenTag', snap.info.tag);
+      }
+      return got;
+    }
   });
 
   store.on('changed', handleConfigChanged);

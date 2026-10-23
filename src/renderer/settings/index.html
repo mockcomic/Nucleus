@@ -19,6 +19,11 @@
     <div class="side-foot">
       <div id="save-state" class="save-state" aria-live="polite"></div>
       <div id="ver" class="muted"></div>
+      <div id="update-line" class="update-line">
+        <button class="update-chip muted hidden" id="update-chip" type="button" aria-live="polite"></button>
+        <button class="update-check" id="btn-update-check" type="button" title="Ask GitHub for the latest release">Check for updates</button>
+      </div>
+      <button class="donate-side" id="btn-donate-side" type="button" title="Support Nucleus on PayPal">&#xEB51; Support the developer</button>
     </div>
   </aside>
 
@@ -107,6 +112,8 @@
         <div class="hint muted">A gentle blip when the selection lands on a segment and when a segment fires. The ticks are synthesized on the fly (no audio files, no network); off by default.</div>
         <label class="chk"><input type="checkbox" id="bh-focus"> Focus an app that's already open instead of opening another copy</label>
         <div class="hint muted">When a program segment fires and that app already has a window on screen, the existing window comes to the front instead of a second copy starting — a running app with no window (tray-only) still launches normally. Applies to segments that point at an .exe; shortcuts, scripts, and links always open as before. Off by default.</div>
+        <label class="chk"><input type="checkbox" id="bh-update-checks"> Check GitHub Releases for new versions</label>
+        <div class="hint muted">A few seconds after startup and once a day, Nucleus asks the GitHub Releases page whether a newer version is out and announces it with a tray notification. Nothing is downloaded or installed by the app — clicking the update opens the release page in your browser. Turning this off keeps the manual "Check for updates" in the tray menu and below.</div>
         <div class="slider-row" style="margin-top:10px">
           <label class="slider-lbl" for="bh-flyout">Sub-menu delay
             <input type="range" id="bh-flyout" min="0" max="600" step="10" style="flex:1">
@@ -235,6 +242,14 @@
           <li><b>Macro</b> (<code>macro</code>) — synthesize keyboard <i>and</i> mouse input. Use the <b>Steps</b> helper in the editor, or write the spec directly: <code>ctrl+c, wait=0.2, ctrl+v</code> · <code>type:hello world</code> · <code>click</code> / <code>rclick</code> / <code>mclick</code> / <code>dblclick</code> / <code>back</code> / <code>forward</code> · <code>scroll=3</code> (negative = up) · <code>hold=ctrl+c=1.5</code> · <code>repeat=3:ctrl+v</code>. Mouse steps fire at the current cursor position</li>
         </ul>
         <div class="hint muted">The Type dropdown groups these as <b>Everyday actions</b>, <b>Organize the wheel</b>, and <b>Power user</b> — the two technical types sit in that last group.</div>
+      </div>
+      <div class="card">
+        <div class="card-title">Support Nucleus</div>
+        <div class="hint muted">Nucleus is free, open, and ad-free — built and maintained in my spare time. If the wheel has earned a place on your desktop, a small donation supports me and my work (and keeps the updates coming).</div>
+        <div class="row-line wrap">
+          <button class="btn primary" id="btn-donate"><span class="g">&#xEB51;</span> Donate via PayPal</button>
+          <span class="hint muted"><code>paypal.com/paypalme/kurtishight</code></span>
+        </div>
       </div>
       <div class="card">
         <button class="btn danger" id="btn-quit">Exit Nucleus</button>

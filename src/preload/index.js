@@ -85,6 +85,9 @@ const settingsSurface = {
   restoreBackup: invoke('config:restore-backup'),
   openConfigFolder: invoke('config:open-folder'),
   openLogsFolder: invoke('log:open-folder'),
+  // Support card: opens the developer's fixed PayPal.me link; the URL lives
+  // only in main (src/main/donate.js), nothing is passed in from the page.
+  openDonate: invoke('donate:open'),
   sysCatalog: invoke('sys:catalog'),
   // Audio: Settings-window controls for endpoints and the mixer. The three
   // writers (setDefault/setVolume/setSession) are Settings-gated in main;
@@ -100,6 +103,12 @@ const settingsSurface = {
   // itself runs in main when the segment fires).
   appSettingsCatalog: invoke('appsettings:catalog'),
   appVersion: invoke('app:version'),
+  // Update chip (GitHub Releases; main/update.js owns fetch + validation).
+  // openRelease's url is only honored when it matches main's own sanitized
+  // release URL — the page can never steer openExternal somewhere else.
+  updateState: invoke('update:state'),
+  checkUpdate: invoke('update:check'),
+  openRelease: (url) => ipcRenderer.invoke('update:open-release', typeof url === 'string' ? url : ''),
   env: invoke('env:get'),
   closeSettings: () => ipcRenderer.send('settings:close'),
   requestQuit: () => ipcRenderer.send('app:quit'),

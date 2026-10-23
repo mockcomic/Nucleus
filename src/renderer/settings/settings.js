@@ -2189,6 +2189,9 @@ function wireBehaviorCheckboxes() {
     'bh-sound': ['behavior', 'wheelSound'],
     // Opt-in, same fail-closed discipline: focus a running app's window instead of a new instance.
     'bh-focus': ['behavior', 'focusExistingApp'],
+    // Update poll is opt-OUT (default on, mirroring validate); the manual
+    // "Check for updates" button below ignores the flag.
+    'bh-update-checks': ['behavior', 'updateChecks'],
     // Master switch for the Segments tab's profile chips.
     'bh-profiles': ['behavior', 'profilesEnabled']
   };  for (const [id, [sec, key]] of Object.entries(map)) {
@@ -2303,8 +2306,66 @@ async function restoreConfig(snapshot) {
   }
 }
 
+/* Update chip + manual check (sidebar under the version). The chip is a
+   status light, not a log: it appears only when there is something to act on
+   (an available update, or a failed check worth retrying); "up to date" and
+   "never checked" leave it hidden so the sidebar stays quiet. All data is
+   main-supplied and already sanitized (update.js); this page never sees a URL
+   it could steer anywhere — openRelease re-validates against main's copy. */
+async function wireUpdateChip() {
+  const chip = $('#update-chip');
+  const btn = $('#btn-update-check');
+  if (!chip || !btn) return;
+  let busy = false;
+  let releaseUrl = '';
+  const paint = (s) => {
+    const st = (s && s.status) || 'none';
+    const avail = st === 'available' && s.info;
+    releaseUrl = avail ? s.info.url : '';
+    chip.classList.toggle('available', !!avail);
+    if (avail) {
+      chip.textContent = (s.kind === 'build' ? 'New build available — ' : 'Update available — ')
+        + (s.info.version || '') + ' \u00b7 get it';
+      chip.title = 'Open the release page in your browser';
+      chip.classList.remove('hidden');
+    } else if (st === 'checking') {
+      chip.textContent = 'Checking for updates\u2026';
+      chip.classList.remove('hidden');
+    } else if (st === 'error') {
+      chip.textContent = 'Update check failed \u00b7 retry';
+      chip.title = s.error || 'Could not reach GitHub';
+      chip.classList.remove('hidden');
+    } else {
+      chip.classList.add('hidden');
+    }
+    btn.disabled = busy;
+    btn.textContent = busy ? 'Checking\u2026' : 'Check for updates';
+  };
+  chip.onclick = async () => {
+    if (chip.classList.contains('available')) {
+      const r = await safe(() => api.openRelease(releaseUrl));
+      if (!r.ok) toast('Could not open the browser: ' + (r.error || 'unknown'), true);
+    } else {
+      await runCheck();
+    }
+  };
+  async function runCheck() {
+    if (busy) return;
+    busy = true;
+    paint({ status: 'checking' });
+    const s = await safe(() => api.checkUpdate());
+    busy = false;
+    paint(s);
+    if (s.status === 'available' && s.info) toast((s.kind === 'build' ? 'New build ' : 'Version ') + s.info.version + ' is available');
+  }
+  btn.onclick = runCheck;
+  const s0 = await safe(() => api.updateState());
+  paint(s0);
+}
+
 async function wireAdvanced() {
   $('#ver').textContent = 'v' + (await api.appVersion());
+  wireUpdateChip();
   $('#btn-export').onclick = async () => {
     const r = await safe(() => api.exportConfig());
     if (r.ok) toast('Exported to ' + r.path);
@@ -2428,6 +2489,18 @@ async function wireAdvanced() {
     const r = await safe(() => api.openLogsFolder());
     if (r && r.ok === false) toast(r.error || 'Could not open the logs folder', true);
   };
+  /* Support the developer: the PayPal.me URL is fixed in main (src/main/donate.js),
+     so both entry points — the Advanced card and the sidebar link — share one
+     unprivileged-by-argument call. A refusal (no default browser handler) only
+     toasts; nothing else in the window is involved. */
+  const donateClick = async () => {
+    const r = await safe(() => api.openDonate());
+    if (r && r.ok === false) toast(r.error || 'Could not open the donation page', true);
+  };
+  const donateBtn = $('#btn-donate');
+  if (donateBtn) donateBtn.onclick = donateClick;
+  const donateSide = $('#btn-donate-side');
+  if (donateSide) donateSide.onclick = donateClick;
   /* Quit is the highest-stakes click in this window — answer it in-brand,
      with the same armed second-click the theme delete and guarded Try use.
      A native confirm() is Windows chrome wearing none of this system's voice. */

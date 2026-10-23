@@ -138,6 +138,11 @@ function defaults() {
          instance (macro.focusAppWindowByExe). Off by default — launching a
          new instance is what every existing install does today. */
       focusExistingApp: false,
+      /* On by default: ask GitHub Releases for a newer build a few seconds
+         after start and once a day (update.js). Check + notify only — the app
+         never downloads or installs anything itself. The manual tray/Settings
+         check ignores this flag; it only gates the background checks. */
+      updateChecks: true,
       /* Devices the pickers hold back (app-level hiding — Windows itself is
          untouched). [{id, name}] per flow; the id hides, the name keeps the
          Manage panel readable when the device is unplugged. The CURRENT
@@ -402,6 +407,9 @@ function validate(raw) {
       wheelSound: bhvIn.wheelSound === true,
       // Same opt-in discipline: absent/junk = always launch (legacy behavior).
       focusExistingApp: bhvIn.focusExistingApp === true,
+      // Opt-out like autostart: absent/junk keeps background update checks ON
+      // (a check-only network poll; the manual check ignores this flag).
+      updateChecks: bhvIn.updateChecks !== false,
       // Always the full {render, capture} shape — a half-written field can
       // never leave one direction missing for the picker filter.
       audioHidden: normalizeHiddenDevices(bhvIn.audioHidden)

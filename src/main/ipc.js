@@ -11,6 +11,7 @@ const apps = require('./apps');
 const bundle = require('./bundle');
 const dashboardIcons = require('./dashboard-icons');
 const customIcons = require('./custom-icons');
+const donate = require('./donate');
 const iconGen = require('./icon-gen');
 const usage = require('./usage');
 const sys = require('./sys');
@@ -75,6 +76,11 @@ function registerIpc(deps) {
     'icons:search': ['settings'], 'icons:fetch': ['settings'],
     'icons:data-url': ['settings', 'wheel'],
     'log:open-folder': ['settings'], 'logs:tail': ['settings'],
+    // Opens the developer's fixed PayPal.me link (hard-coded in main/donate.js —
+    // the renderer never supplies a URL). Touches the machine (default browser),
+    // so it is gated like the other open-folder channels. Settings-only: the
+    // Support card and the sidebar link both live in this window.
+    'donate:open': ['settings'],
     'wheel:segment-click': ['wheel'], 'wheel:dismiss': ['wheel'],
     // growCanvas lets an opened flyout ask for more transparent window; the
     // value is geometry only — clamped and re-centered in Overlay.grow.
@@ -104,7 +110,12 @@ function registerIpc(deps) {
     // read channels (audio:devices/levels/sessions/available) stay ungated
     // like sys:catalog: they hand back data the on-screen UI already shows.
     'audio:set-default': ['settings', 'wheel'],
-    'audio:set-volume': ['settings', 'wheel'], 'audio:set-session': ['settings', 'wheel']
+    'audio:set-volume': ['settings', 'wheel'], 'audio:set-session': ['settings', 'wheel'],
+    // The update trio is Settings-only: the chip and the Check-now button live
+    // in this window (the tray reaches main directly, not through IPC).
+    // open-release still re-validates its URL against main's sanitized
+    // snapshot — a compromised page can at worst force the fixed releases page.
+    'update:state': ['settings'], 'update:check': ['settings'], 'update:open-release': ['settings']
   };
   const SEND_CHANNELS = new Set(['config:flush', 'wheel:segment-click', 'wheel:dismiss', 'wheel:grow', 'wheel:filter', 'welcome:done', 'settings:close', 'app:quit']);
   const refused = (ch, ev) => {
@@ -350,6 +361,10 @@ function registerIpc(deps) {
 
   guardHandle('config:open-folder', () => shell.openPath(path.dirname(store.file())));
 
+  /* Support the developer — opens the fixed PayPal.me URL from main/donate.js
+     in the default browser. No argument crosses the bridge. */
+  guardHandle('donate:open', () => donate.openDonate());
+
   /* Recents live in the state.json sidecar, not the config — clearing them
      never touches the user's segments. */
   guardHandle('usage:clear', () => {
@@ -581,6 +596,24 @@ function registerIpc(deps) {
   });
 
   guardHandle('sys:catalog', () => sys.CATALOG);
+
+  /* ---- updates (GitHub Releases; main/update.js owns all the logic) ----
+     The renderer only ever sees sanitized strings and main's own rebuilt
+     release URL; the fetch, the cache file, and the openExternal target all
+     live in main. Deps arrive through registerIpc so the channels stay
+     callable without the update wiring (stub-safe for tests). */
+  const uSnap = () => (deps.updateSnapshot ? deps.updateSnapshot()
+    : { ok: true, status: 'none', kind: null, info: null, lastCheckMs: 0, error: null });
+  guardHandle('update:state', () => uSnap());
+  guardHandle('update:check', async () => {
+    try { return deps.checkUpdate ? await deps.checkUpdate() : uSnap(); }
+    catch (err) { return { ok: false, status: 'error', error: String((err && err.message) || err), info: null }; }
+  });
+  guardHandle('update:open-release', async (ev, url) => {
+    try { return deps.openRelease ? await deps.openRelease(url) : { ok: false, error: 'updates unavailable' }; }
+    catch (err) { return { ok: false, error: String((err && err.message) || err) }; }
+  });
+
   /* ---- audio (Core Audio control; every answer is {ok,…}|{ok:false,error}) --
      Reads are ungated like sys:catalog — endpoint ids, display names, and
      volume levels are exactly what the on-screen UI shows. The writers

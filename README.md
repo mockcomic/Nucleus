@@ -27,7 +27,7 @@ copy does not register a login item. The hotkey and startup are both changeable 
 in Settings. Replay the guide anytime from tray → **Show welcome…**.
 
 - The app lives in the system tray — no taskbar entry, no console.
-- Tray menu: Show wheel · Open Settings · Show welcome… · Reload config · Pause hotkey · Quit.
+- Tray menu: Show wheel · Open Settings · Show welcome… · Reload config · Pause hotkey · Support Nucleus ♥ · Quit.
 - Second launch (or double-clicking the tray icon) focuses Settings instead of duplicating.
 
 ## Using the wheel
@@ -164,7 +164,8 @@ Open from the tray (double-click icon → **Open Settings**). Five tabs:
   to the glyph fallback), **Restore a backup…** (the rolling config backups, see
   below), a **Usage** panel listing your most-fired segments with counts and
   last-used times, **Clear recent-items data**, open the config folder,
-  action type reference, exit.
+  action type reference, a **Support Nucleus** card (donate via PayPal — see
+  [Support the project](#support-the-project)), exit.
 
 All edits autosave (debounced) to:
 
@@ -376,3 +377,18 @@ app's hook took it first). Dev builds only — inert once packaged.
     no-op — and names **Windows sound settings** as the door still left. On such
     an image the card opens with that line already showing: levels and app rows
     stay live, only the switch is impossible.
+
+## Support the project
+
+Nucleus is free, open, and ad-free — designed, built, and maintained in my
+spare time. If the wheel has earned a place on your desktop and you'd like to
+support me and my work, every donation directly funds more features, fixes,
+and polish.
+
+[![Donate via PayPal](https://img.shields.io/badge/PayPal-Donate-00457c?logo=paypal&logoColor=white)](https://www.paypal.com/paypalme/kurtishight)
+
+**→ https://www.paypal.com/paypalme/kurtishight**
+
+The same link lives in the app: **Settings → Advanced → Support Nucleus** (or
+the quiet heart link at the bottom of the Settings sidebar), and in the tray
+menu under **Support Nucleus ♥**. Thank you! — *Kurtis Hight*

@@ -1,0 +1,67 @@
+name: Build & Release
+
+# main-only: no CI is burned on dev, feature branches, or forks.
+# Pushes to other branches never match; the manual button is also gated
+# (see `if` below) so a dispatch started from a non-main ref exits immediately.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+# One release job at a time; a fast double-merge to main would otherwise
+# race two electron-builder runs writing the same dist/ paths and tag.
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    if: github.ref == 'refs/heads/main'
+    runs-on: windows-latest
+    permissions:
+      contents: write # required for the Release + its assets
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      # node:test suites only (tests/unit/* stub SendInput — no injected
+      # mouse/keyboard on the runner, per AGENTS.md).
+      - name: Test
+        run: npm test
+
+      # `--` forwards the flag to the tail of the dist chain, i.e. to
+      # electron-builder: make-icons.mjs -> bump-build.mjs -> electron-builder.
+      # Running the repo's own script (not a hand-rolled electron-builder call)
+      # keeps the exe FileVersion, the artifact name, and the generated
+      # src/main/build-info.js banner in lockstep — see README "Packaging".
+      # --publish never: no electron-updater in this app, so the Release step
+      # below owns publication; no publish feed / blockmap URL is needed.
+      - name: Build
+        run: npm run dist -- --publish never
+
+      - name: Version
+        id: ver
+        shell: bash
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      # One Release per version bump: tag_name is v<package.json version>, so
+      # repeated pushes to main refresh it (update + overwrite_files, no asset
+      # pile-up) and bumping `version` in package.json cuts a brand-new one.
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.ver.outputs.version }}
+          name: Nucleus ${{ steps.ver.outputs.version }} (${{ github.sha }})
+          update: true
+          overwrite_files: true
+          generate_release_notes: true
+          files: |
+            dist/Nucleus-*-portable.exe
+            dist/Nucleus-*-setup.exe

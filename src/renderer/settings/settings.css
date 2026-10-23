@@ -181,6 +181,77 @@ nav {
 	margin-top: auto;
 	padding: 10px;
 }
+/* Sidebar donation link — quiet until hovered; the Support card in Advanced
+   is the loud version of the same call. */
+.donate-side {
+	display: block;
+	width: 100%;
+	margin-top: 6px;
+	padding: 5px 8px;
+	background: none;
+	border: 0;
+	border-radius: 8px;
+	color: var(--dim);
+	font: inherit;
+	font-size: 11.5px;
+	text-align: left;
+	cursor: pointer;
+	transition: color 0.15s ease, background 0.15s ease;
+}
+.donate-side:hover {
+	color: var(--text);
+	background: rgba(255, 255, 255, 0.06);
+}
+.donate-side:active {
+	transform: scale(0.985);
+}
+/* Update chip + manual check (sidebar, under the version line). Same quiet
+   treatment as the donate link; the accent only appears when an update is
+   actually on offer, so a colored line is a call to action, not decoration. */
+.update-line {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 1px;
+}
+.update-chip,
+.update-check {
+	display: block;
+	width: 100%;
+	margin-top: 4px;
+	padding: 3px 8px;
+	background: none;
+	border: 0;
+	border-radius: 8px;
+	color: var(--dim);
+	font: inherit;
+	font-size: 11.5px;
+	text-align: left;
+	cursor: pointer;
+	transition: color 0.15s ease, background 0.15s ease;
+}
+.update-chip {
+	color: var(--dim);
+}
+.update-chip.available {
+	color: var(--accent);
+	font-weight: 600;
+}
+.update-chip:hover,
+.update-check:hover {
+	color: var(--text);
+	background: rgba(255, 255, 255, 0.06);
+}
+.update-chip.available:hover {
+	background: var(--ring-accent);
+}
+.update-chip:active,
+.update-check:active {
+	transform: scale(0.985);
+}
+.update-check {
+	font-size: 11px;
+}
 
 /* content */
 #content {

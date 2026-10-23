@@ -70,7 +70,10 @@ test('side-effect surfaces sit on their legitimate pages only', () => {
     'config:export-bundle', 'usage:clear',
     // The stats panel reads the private sidecar and the backup pair reaches into
     // userData — none of that belongs to the overlay or the FTU page.
-    'usage:stats', 'config:backups', 'config:restore-backup'])
+    'usage:stats', 'config:backups', 'config:restore-backup',
+    // The update trio reaches the network and the browser through main —
+    // Settings-only like every other writer (the tray never uses IPC).
+    'update:state', 'update:check', 'update:open-release'])
     assert.deepEqual(gated.get(ch), ['settings'], `${ch} owner drift`);
   // The mixer card's default-device pickers switch SYSTEM policy from the
   // overlay, so audio:set-default joined the two level writers on the wheel
