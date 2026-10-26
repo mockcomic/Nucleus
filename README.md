@@ -10,9 +10,9 @@ actions. Everything is configurable from a real Settings window.
 Built with Electron + vanilla web tech; keystroke synthesis and system actions go
 straight to the Win32 API through `user32.dll` (via `koffi`).
 
-[![Nucleus launch demo — press Ctrl + Space and the wheel pops up at your cursor](media/brag.jpg)](media/brag.mp4)
+[![Nucleus in Settings — add and remove rings and segments on the live preview](media/promo/settings.jpg)](media/promo/settings.mp4)
 
-*20-second launch film — click the thumbnail to play. The wheel shown is a real user's `config.json` (Brave · DeepSeek · GitHub · Cursor inside; ChatGPT · Recycle Bin · Settings · File Explorer ▸ · Volume Mixer outside).*
+*Click the thumbnail to play — the Settings page adds and removes rings and segments, and recolors them on the **live preview**. The wheel is a real user's `config.json`. More films: **[horizontal 16:9](media/promo/wide.mp4)** · **[vertical 9:16](media/promo/vertical.mp4)** · **[square 1:1](media/promo/square.mp4)**.*
 
 ## Quick start
 
