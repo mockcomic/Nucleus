@@ -7,3 +7,6 @@ dist/
 .codebase-memory/
 assets/tray.ico
 assets/tray-32.png
+
+# /brag working dir (regenerable Hyperframes project); published media lives in media/
+brag-output/

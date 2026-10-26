@@ -10,6 +10,10 @@ actions. Everything is configurable from a real Settings window.
 Built with Electron + vanilla web tech; keystroke synthesis and system actions go
 straight to the Win32 API through `user32.dll` (via `koffi`).
 
+[![Nucleus launch demo — press Ctrl + Space and the wheel pops up at your cursor](media/brag.jpg)](media/brag.mp4)
+
+*20-second launch film — click the thumbnail to play. The wheel shown is a real user's `config.json` (Brave · DeepSeek · GitHub · Cursor inside; ChatGPT · Recycle Bin · Settings · File Explorer ▸ · Volume Mixer outside).*
+
 ## Quick start
 
 ```powershell
