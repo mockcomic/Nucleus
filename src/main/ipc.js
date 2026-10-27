@@ -11,6 +11,7 @@ const apps = require('./apps');
 const bundle = require('./bundle');
 const dashboardIcons = require('./dashboard-icons');
 const customIcons = require('./custom-icons');
+const exeIcon = require('./exe-icon');
 const donate = require('./donate');
 const iconGen = require('./icon-gen');
 const usage = require('./usage');
@@ -69,6 +70,12 @@ function registerIpc(deps) {
     // pick-image opens a modal on the Settings window and reads the chosen path
     // in main, so it is gated like every other privileged channel.
     'icons:pick-image': ['settings'], 'icons:add-url': ['settings'],
+    // from-program names a path (the program just picked in the editor), but
+    // main only runs the shell's icon extraction on it after the allow-list
+    // in exe-icon.js (absolute, program extension, exists, isFile) — the
+    // observable result is that file's public icon, installed like any
+    // picked image. Gated to the page that owns the app picker.
+    'icons:from-program': ['settings'],
     // Downloads and log-folder operations have hard-coded targets (fixed CDN
     // host, fixed log dir) — but they still touch network/disk, so they are
     // gated like every other channel. Only Settings bridges these; the wheel
@@ -493,6 +500,17 @@ function registerIpc(deps) {
   guardHandle('icons:add-url', async (ev, url) => {
     const got = await customIcons.addUrl(url);
     if (!got.ok) log.warn('custom icon URL rejected:', got.error);
+    return got;
+  });
+
+  /* Wear a program's own icon (exe-icon.js): the Settings app picker calls
+     this right after a target is set, and the icon modal exposes it as a
+     button for hand-typed paths. Answers the same {ok,key,dataUrl} shape as
+     a picked image; every rejection is a clean {ok:false,error} the caller
+     may fold into a glyph fallback. */
+  guardHandle('icons:from-program', async (ev, p) => {
+    const got = await exeIcon.fromPath(p);
+    if (!got.ok) log.warn('program icon rejected:', got.error);
     return got;
   });
 

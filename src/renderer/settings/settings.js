@@ -858,7 +858,13 @@ function segEditor(ctx, withFields = true) {
       b.onclick = async (ev) => {
         ev.stopPropagation();
         const p = await api.pickFile(browseOpts);
-        if (p) { item.value = p; touch(); }
+        if (p) {
+          item.value = p;
+          touch();
+          // Same courtesy as the app picker: a browsed program file wears its
+          // own icon when the segment has no art yet (silent glyph fallback).
+          if (item.type === 'app' && !item.icon && !item.iconImage) autoProgramIcon(item, p);
+        }
       };
     }
     if (item.type === 'app') {
@@ -1356,6 +1362,10 @@ function appCombo(item, inV, f) {
     list.classList.add('hidden');
     touch(false);
     toast(`Target set to ${a.name}`);
+    // Adding a program → wear the program's own icon (fail-soft: a silent
+    // glyph fallback when Windows has none to give). Only when the segment
+    // has no art yet, so a glyph or logo the user chose is never clobbered.
+    if (!item.icon && !item.iconImage) autoProgramIcon(item, a.path);
   }
   function showList() { clearTimeout(listHideTimer); list.classList.remove('hidden'); ensureLoaded(); renderList(); }
   async function ensureLoaded(force) {
@@ -1613,6 +1623,11 @@ function openIconModal(item, opener) {
   // Pre-fill the fetch term from the label — always editable, always re-runnable.
   q.value = (item.label || '').trim();
   $('#di-clear-img').classList.toggle('hidden', !item.iconImage);
+  // The program-icon shortcut only makes sense for an app segment that
+  // actually points somewhere yet — and it stays useful even when art is set,
+  // because re-taking the program's own icon is exactly how you replace it.
+  $('#ci-program').classList.toggle('hidden',
+    !(item.type === 'app' && String(item.value || '').trim()));
   const staleGrid = $('#di-grid');
   staleGrid.innerHTML = ''; staleGrid.classList.add('hidden');   // never reopen onto last time's results
   iconModal.classList.remove('hidden');
@@ -1750,6 +1765,28 @@ function applyCustomIcon(r) {
   toast(`Custom image set — ${String(r.kind || '').toUpperCase() || 'artwork'}`);
 }
 
+/* ----------------------- the program's own icon ----------------------------
+   A brand-new program segment wears that program's real icon instead of the
+   generic app glyph: main reads the icon out of the .exe/.lnk itself
+   (src/main/exe-icon.js) and installs it as a custom image, so the wheel,
+   the preview and export packages carry it like any picked artwork.
+   The AUTO pass is deliberately shy — silent on failure (the segment just
+   keeps its glyph) and it re-checks the live segment by id before writing,
+   so an external config swap or an explicit icon chosen while the read was
+   in flight always wins. */
+async function autoProgramIcon(item, programPath) {
+  const r = await safe(() => api.iconFromProgram(programPath));
+  if (!r || !r.ok) return;
+  const t = allItems().find((x) => x && x.id === item.id);
+  if (!t) return;                                        // segment deleted while we read
+  if (t.icon || t.iconImage) return;                     // art chosen mid-flight — the user wins
+  if (String(t.value || '') !== String(programPath)) return;   // target moved on
+  imgCache.set(r.key, r.dataUrl);
+  failedAt.delete(r.key);
+  t.iconImage = r.key;
+  touch();
+}
+
 /* The native dialog and the download each outlive a single click: the trigger
    disables while in flight, and a result arriving after the modal closed is
    dropped rather than resurrecting a write to a stale target. */
@@ -1761,6 +1798,24 @@ $('#ci-pick').onclick = async () => {
   btn.disabled = false;
   if (!iconModalTarget) return;
   if (r.canceled) { diStatus(iconModalHint(modalTarget())); return; }
+  applyCustomIcon(r);
+};
+
+/* The explicit route to the program's own icon: same read as the auto pass on
+   pick, but this one speaks up on failure (the user asked for it) and an
+   explicit click may REPLACE art that's already set — the button is the whole
+   intent. The path is the segment's own value, re-read at click time, so a
+   target edited while the modal sat open still resolves against the truth. */
+$('#ci-program').onclick = async () => {
+  const btn = $('#ci-program');
+  const t0 = modalTarget();
+  const p = t0 && String(t0.value || '').trim();
+  if (btn.disabled || !p) return;
+  btn.disabled = true;
+  diStatus('Reading the program icon…');
+  const r = await safe(() => api.iconFromProgram(p));
+  btn.disabled = false;
+  if (!iconModalTarget) return;                    // dialog closed while reading — drop the result
   applyCustomIcon(r);
 };
 

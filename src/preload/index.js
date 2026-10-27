@@ -71,6 +71,12 @@ const settingsSurface = {
   // can paint immediately. The open dialog lives in main, not here.
   pickIconImage: invoke('icons:pick-image'),
   addIconFromUrl: invoke('icons:add-url'),
+  // The target program's OWN icon (its .exe/.lnk file): answers the same
+  // installed {ok, key, dataUrl} shape as a picked image, so one apply path
+  // serves both. main/exe-icon.js allow-lists the path before the shell reads
+  // anything, and every failure is {ok:false, error} (the segment keeps its
+  // glyph — the auto pass on program pick never nags).
+  iconFromProgram: invoke('icons:from-program'),
   previewAction: invoke('action:preview'),
   testWheel: invoke('overlay:show'),
   exportConfig: invoke('config:export'),

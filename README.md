@@ -116,6 +116,8 @@ Open from the tray (double-click icon → **Open Settings**). Five tabs:
   file browse for apps, and an **installed-programs dropdown** when type is `app`:
   type to search the Start Menu + registry program list, click to fill the target
   (entries launch exactly like double-clicking their Start Menu shortcut; ↻ re-scans).
+  A picked program also lends the segment its **own icon** automatically — see
+  Notes & limits.
   At the top, an **Editing** bar switches the whole editor + live preview between the
   **default wheel** and any **app profile** — a profile owns its own rings and its own
   comma-separated exe list, and takes over the wheel whenever one of those apps has
@@ -231,6 +233,17 @@ To launch from source with no console (e.g. a Startup entry during development):
   re-downloads itself on a new machine, while one picked from disk falls back to
   that segment's glyph. Either way nothing renders blank. Files are validated by
   their bytes, not their extension, and an `<img>`-loaded SVG cannot run script.
+- **Program icons**: picking a program from the installed-programs list (or
+  **Browse…**-ing an `.exe`/`.lnk` target) pulls that program's **own icon** out
+  of the file via the Windows shell and installs it as a custom image, so a new
+  app segment wears the real artwork instead of the generic glyph — unless it
+  already has a glyph or logo you chose, which is never overwritten. For
+  hand-typed targets (or to re-take the icon later), the icon picker has a
+  **Use program icon** button. The path is allow-listed in main before the shell
+  reads it (absolute, `.exe`/`.lnk`/`.dll`/`.msi`/`.ico`, no wildcards); a file
+  Windows has no icon for just keeps the glyph. Like any disk-picked artwork the
+  bytes are machine-local, so a package carries the icon along, and on a machine
+  without that program the segment degrades to its glyph.
 - No acrylic/backdrop blur behind the overlay (a transparent Electron window can
   only blur its own content) — depth comes from shadows + tuned fills.
 - If a global hotkey fails to register at startup (taken by another app), the app
@@ -396,3 +409,9 @@ and polish.
 The same link lives in the app: **Settings → Advanced → Support Nucleus** (or
 the quiet heart link at the bottom of the Settings sidebar), and in the tray
 menu under **Support Nucleus ♥**. Thank you! — *Kurtis Hight*
+
+## License
+
+Released under the [MIT License](LICENSE) — use it, modify it, share it,
+even sell copies, no warranty. Bundled icons come from Segoe Fluent Icons /
+Segoe MDL2 Assets, governed by Microsoft's font licensing.
