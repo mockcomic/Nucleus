@@ -2,6 +2,13 @@
 
 *(formerly **Radial Wheel** — the app was renamed; settings from the old name migrate automatically on first launch)*
 
+**Website:** <https://kurtishight.com/projects/nucleus/> — product page with download links.
+**Downloads:** <https://github.com/mockcomic/Nucleus/releases> — latest setup + portable builds.
+
+*(The product page is served from kurtishight.com and its source is [`docs/`](docs/index.html);
+GitHub Pages is **not** enabled for this repo, so no link — README, updater, or the
+tray/Settings update action — points at `mockcomic.github.io`.)*
+
 A polished, always-running radial launcher for Windows. Press a global hotkey and a
 crisp, animated wheel pops up **at your mouse cursor** — click a segment to launch
 apps, open URLs, run commands, replay keystroke macros, or trigger built-in Windows
@@ -13,6 +20,14 @@ straight to the Win32 API through `user32.dll` (via `koffi`).
 [![Nucleus in Settings — add and remove rings and segments on the live preview](media/promo/settings.jpg)](media/promo/settings.mp4)
 
 *Click the thumbnail to play — the Settings page adds and removes rings and segments, and recolors them on the **live preview**. The wheel is a real user's `config.json`. More films: **[horizontal 16:9](media/promo/wide.mp4)** · **[vertical 9:16](media/promo/vertical.mp4)** · **[square 1:1](media/promo/square.mp4)**.*
+
+**[▶ The launch film — 21 s, sound on](media/promo/brag.mp4)** ([vertical 9:16 cut](media/promo/brag-vertical.mp4)) — summon, sweep, release, and the wheel re-tinted through six of its fourteen themes, all captured from the running app:
+
+[![Nucleus launch film poster — the wheel on a real desktop, segment glowing](media/promo/brag.jpg)](media/promo/brag.mp4)
+
+Eight of the fourteen themes, same `config.json`:
+
+[![Eight built-in themes: Space Gray, Midnight, Ember, Grape, Solar, Meadow, Aqua, Porcelain](media/promo/wheel-themes-mosaic.png)](media/promo/wheel-themes-mosaic.png)
 
 ## Quick start
 

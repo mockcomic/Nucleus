@@ -112,9 +112,14 @@ const settingsSurface = {
   // Update chip (GitHub Releases; main/update.js owns fetch + validation).
   // openRelease's url is only honored when it matches main's own sanitized
   // release URL — the page can never steer openExternal somewhere else.
+  // updateNow takes no argument at all: it re-opens main's own "update now?"
+  // prompt, so the page can neither choose a URL nor a download path.
   updateState: invoke('update:state'),
   checkUpdate: invoke('update:check'),
+  updateNow: invoke('update:install'),
   openRelease: (url) => ipcRenderer.invoke('update:open-release', typeof url === 'string' ? url : ''),
+  // Main → page: installer-download progress (and its failure) for the chip.
+  onUpdateProgress: (cb) => ipcRenderer.on('update:download', (_e, p) => cb(p && typeof p === 'object' ? p : {})),
   env: invoke('env:get'),
   closeSettings: () => ipcRenderer.send('settings:close'),
   requestQuit: () => ipcRenderer.send('app:quit'),

@@ -139,9 +139,12 @@ function defaults() {
          new instance is what every existing install does today. */
       focusExistingApp: false,
       /* On by default: ask GitHub Releases for a newer build a few seconds
-         after start and once a day (update.js). Check + notify only — the app
-         never downloads or installs anything itself. The manual tray/Settings
-         check ignores this flag; it only gates the background checks. */
+         after start and once a day (update.js). Check + ASK — when something
+         newer is out, main.js prompts, and only a "yes" downloads the
+         published installer (to Downloads, checksum-verified) and offers to
+         run it. Nothing is ever installed without that yes. The manual
+         tray/Settings check ignores this flag; it only gates the background
+         checks. */
       updateChecks: true,
       /* Devices the pickers hold back (app-level hiding — Windows itself is
          untouched). [{id, name}] per flow; the id hides, the name keeps the

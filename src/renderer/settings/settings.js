@@ -2363,43 +2363,56 @@ async function restoreConfig(snapshot) {
 
 /* Update chip + manual check (sidebar under the version). The chip is a
    status light, not a log: it appears only when there is something to act on
-   (an available update, or a failed check worth retrying); "up to date" and
-   "never checked" leave it hidden so the sidebar stays quiet. All data is
-   main-supplied and already sanitized (update.js); this page never sees a URL
-   it could steer anywhere — openRelease re-validates against main's copy. */
+   (an update to take, a download in flight, or a failed check worth retrying);
+   "up to date" and "never checked" leave it hidden so the sidebar stays quiet.
+   All data is main-supplied and already sanitized (update.js) — this page
+   never sees a URL, a path or a version it could steer anywhere: clicking the
+   chip only asks main, which owns the prompt, the download and the run. */
 async function wireUpdateChip() {
   const chip = $('#update-chip');
   const btn = $('#btn-update-check');
   if (!chip || !btn) return;
   let busy = false;
-  let releaseUrl = '';
+  let last = { status: 'none', kind: null, info: null };   // for repaints driven by pushes
+  let dl = null;                                          // main's download state
   const paint = (s) => {
-    const st = (s && s.status) || 'none';
-    const avail = st === 'available' && s.info;
-    releaseUrl = avail ? s.info.url : '';
-    chip.classList.toggle('available', !!avail);
-    if (avail) {
-      chip.textContent = (s.kind === 'build' ? 'New build available — ' : 'Update available — ')
-        + (s.info.version || '') + ' \u00b7 get it';
-      chip.title = 'Open the release page in your browser';
-      chip.classList.remove('hidden');
+    if (s && 'download' in s) dl = s.download || null;
+    const snap = s || last;
+    if (s) last = s;
+    const st = (snap && snap.status) || 'none';
+    const info = (snap && snap.info) || null;
+    const avail = st === 'available' && !!info;
+    const active = !!(dl && !dl.done);
+    const failed = !!(dl && dl.done && dl.error);
+    chip.classList.toggle('available', avail || failed);
+    if (active) {
+      chip.textContent = 'Downloading update\u2026' + (dl.pct == null ? '' : ' ' + dl.pct + '%');
+      chip.title = dl.path || 'Downloading the new build';
+    } else if (failed) {
+      chip.textContent = 'Update download failed \u00b7 try again';
+      chip.title = dl.error || 'Could not download the update';
+    } else if (avail) {
+      chip.textContent = (snap.kind === 'build' ? 'New build available \u2014 ' : 'Update available \u2014 ')
+        + (info.version || '') + ' \u00b7 update';
+      chip.title = 'Download and run the new build (the dialog also offers the release page)';
     } else if (st === 'checking') {
       chip.textContent = 'Checking for updates\u2026';
-      chip.classList.remove('hidden');
+      chip.title = '';
     } else if (st === 'error') {
       chip.textContent = 'Update check failed \u00b7 retry';
-      chip.title = s.error || 'Could not reach GitHub';
-      chip.classList.remove('hidden');
-    } else {
-      chip.classList.add('hidden');
+      chip.title = snap.error || 'Could not reach GitHub';
     }
-    btn.disabled = busy;
+    chip.classList.toggle('hidden', !(avail || active || failed || st === 'checking' || st === 'error'));
+    btn.disabled = busy || active;
     btn.textContent = busy ? 'Checking\u2026' : 'Check for updates';
   };
   chip.onclick = async () => {
+    if (busy || chip.classList.contains('hidden')) return;
     if (chip.classList.contains('available')) {
-      const r = await safe(() => api.openRelease(releaseUrl));
-      if (!r.ok) toast('Could not open the browser: ' + (r.error || 'unknown'), true);
+      // Retry the offer: main's dialog asks again (download + run, or browse).
+      const r = await safe(() => api.updateNow());
+      if (!r || r.ok !== true) toast('Could not start the update: ' + ((r && r.error) || 'unknown'), true);
+      else paint(r);
     } else {
       await runCheck();
     }
@@ -2407,13 +2420,14 @@ async function wireUpdateChip() {
   async function runCheck() {
     if (busy) return;
     busy = true;
-    paint({ status: 'checking' });
+    paint({ status: 'checking', kind: null, info: null, download: dl });
     const s = await safe(() => api.checkUpdate());
     busy = false;
     paint(s);
     if (s.status === 'available' && s.info) toast((s.kind === 'build' ? 'New build ' : 'Version ') + s.info.version + ' is available');
   }
   btn.onclick = runCheck;
+  if (api.onUpdateProgress) api.onUpdateProgress((p) => { dl = p || null; paint(last); });
   const s0 = await safe(() => api.updateState());
   paint(s0);
 }

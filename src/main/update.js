@@ -1,13 +1,17 @@
 'use strict';
-/* Update check against GitHub Releases — check + notify, never self-install.
+/* Update check against GitHub Releases — check, ASK, then (on yes) download
+   the published installer. Nothing is ever installed without an explicit yes.
 
    The app asks the Releases API for the latest published release, decides
    whether it is newer than the running copy, and hands the RESULT to the
-   surfaces that show it (tray balloon/menu, Settings footer). Opening the
-   update means opening the release page in the browser: the download URL is
-   never fetched by the app and the renderer can never steer openExternal —
-   the release URL is rebuilt here from the tag, fixed-repo doctrine (see
-   donate.js for the same rule).
+   surfaces that show it (tray balloon/menu, Settings footer). main.js turns an
+   'available' into a yes/no prompt; a yes comes back HERE to stream the asset
+   GitHub publishes to the Downloads folder, verify its checksum and run it
+   detached. The download URL is never taken from the page and the renderer can
+   never steer openExternal or the spawn — the release URL is rebuilt from the
+   tag and every asset URL passes ASSET_URL_RE, fixed-repo doctrine (see
+   donate.js for the same rule). The public home for downloads is the RELEASES
+   page: the GitHub Pages site is not published, so nothing points at it.
 
    Version rule (product decision): a higher x.y.z always counts as an update.
    When the published release carries the SAME x.y.z (the release ritual ships
@@ -20,20 +24,29 @@
    good answer is cached under userData so a restart shows it instantly
    (sanitized again on read-back — the cache file is data, not authority).
 
-   The pure half (parse/compare/sanitize) has no Electron or network deps and
-   is unit-tested against a fake fetch in tests/unit/update.test.js. */
+   The pure half (parse/compare/sanitize/pick) has no Electron or network deps;
+   downloadUpdate() takes an injected fetch and writes with plain fs, so
+   tests/unit/update.test.js covers the whole thing without the net. */
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
+const { spawn } = require('child_process');
 const { shell } = require('electron');
 const { readCapped } = require('./capped-fetch');
 const log = require('./logger');
 
-const REPO = 'mockcomic/radial-wheel';
+/* The renamed repo is the authority — the old `mockcomic/radial-wheel` URL
+   only still answers because GitHub redirects renamed repos, and a redirect
+   is one more thing that can break an update check. */
+const REPO = 'mockcomic/Nucleus';
 const RELEASES_PAGE = 'https://github.com/' + REPO + '/releases';
 const API_URL = 'https://api.github.com/repos/' + REPO + '/releases/latest';
 const FETCH_TIMEOUT = 12000;
+const DOWNLOAD_TIMEOUT = 10 * 60000;    // a ~100 MB asset over a slow link
 const JSON_MAX_BYTES = 256 * 1024;      // one release JSON never needs to be bigger
+const DOWNLOAD_MAX_BYTES = 512 * 1024 * 1024;   // enforced DURING the transfer
 const TAG_RE = /^[\w.\-+]{1,100}$/;
+const SHA256_RE = /^[a-f0-9]{64}$/;
 /* GitHub serves release assets from these two hosts; anything else in the
    JSON (a fork of the API response, a hostile proxy) is dropped. */
 const ASSET_HOSTS = ['objects.githubusercontent.com', 'github.com', 'codeload.github.com'];
@@ -113,7 +126,13 @@ function sanitizeRelease(raw) {
         const host = new URL(url).host;
         if (!ASSET_HOSTS.includes(host)) continue;
       } catch { continue; }
-      assets.push({ name, url, size: Number.isFinite(+a.size) ? +a.size : null });
+      /* GitHub publishes `digest: "sha256:<hex>"` per asset — the ONLY thing a
+         downloaded file is checked against. Absent (older release, proxy that
+         strips it) stays null and the download reports unverified. */
+      const d = typeof a.digest === 'string' ? a.digest.trim().toLowerCase() : '';
+      const sha256 = /^sha256:[a-f0-9]{64}$/.test(d) ? d.slice(7)
+        : (SHA256_RE.test(d) ? d : null);
+      assets.push({ name, url, size: Number.isFinite(+a.size) ? +a.size : null, sha256 });
       if (assets.length >= 16) break;                  // generous ceiling, bounded parsing
     }
   }
@@ -130,6 +149,23 @@ function sanitizeRelease(raw) {
   };
 }
 
+/* ------------------------------ asset picker ------------------------------ */
+
+/** Which published file to hand this particular install, from the SANITIZED
+    asset list only. An NSIS install takes the setup exe; a portable build
+    (PORTABLE_EXECUTABLE_DIR is set by electron-builder's bootstrapper) takes
+    the portable exe. Preference, never a requirement: with no exact match any
+    .exe will do, and with no .exe at all the first asset — the release page
+    stays the fallback either way. */
+function chooseAsset(release, wantPortable) {
+  const list = (release && Array.isArray(release.assets)) ? release.assets : [];
+  const want = wantPortable ? /-portable\.exe$/i : /-setup\.exe$/i;
+  return list.find((a) => want.test(a.name))
+    || list.find((a) => /\.exe$/i.test(a.name))
+    || list[0]
+    || null;
+}
+
 /* ------------------------------- fetch + state ---------------------------- */
 
 let infoCachePath = null;          // set by configure() from the main process
@@ -138,6 +174,7 @@ let lastCheckMs = 0;               // epoch of the last completed check
 let lastError = null;              // message of the last failed check
 let status = 'idle';               // idle | checking | ready | error
 let checking = null;               // in-flight promise, so concurrent checks share one request
+let download = null;               // last/ongoing installer download (see downloadUpdate)
 
 function configure(dir) {
   infoCachePath = dir ? path.join(dir, 'update-info.json') : null;
@@ -195,6 +232,10 @@ async function check(opts = {}) {
       const rel = sanitizeRelease(JSON.parse(got.buf.toString('utf8')));
       lastCheckMs = nowMs;
       lastError = null;
+      /* Download state belongs to the release it was fetched for: once GitHub
+         reports a different tag (or none), an old progress percentage or a
+         stale checksum failure says nothing about what is on offer now. */
+      if (download && (!rel || download.tag !== rel.tag)) download = null;
       if (!rel) {
         latest = null;
         status = 'ready';
@@ -230,7 +271,9 @@ async function check(opts = {}) {
 /** Snapshot for the tray menu and the Settings chip. Purely local data.
     A failed check with no release ever seen shows 'error'; a failed check
     AFTER a good one keeps showing the last-known answer (prefer stale truth
-    over a transient network blip — the next successful check replaces it). */
+    over a transient network blip — the next successful check replaces it).
+    `download` rides along so every surface can show the same progress (or the
+    same failure) without asking main about it. */
 function snapshot(appVersion, appPublishMs) {
   const dec = latest ? decide(latest, appVersion, appPublishMs, Date.now()) : null;
   let st;
@@ -242,6 +285,7 @@ function snapshot(appVersion, appPublishMs) {
     status: st,
     kind: (dec && dec.kind) || null,
     info: latest ? { tag: latest.tag, version: latest.versionLabel, url: latest.url, name: latest.name, publishedAt: latest.publishedAt, assets: latest.assets } : null,
+    download: download ? { ...download } : null,
     lastCheckMs,
     error: st === 'error' ? lastError : null
   };
@@ -260,12 +304,107 @@ async function openRelease(url) {
   }
 }
 
+/* ------------------------- download + hand-off ---------------------------- */
+
+function setDownload(patch) {
+  download = Object.assign({}, download || {}, patch);
+  return download;
+}
+
+/** Stream one sanitized asset to `destDir`, verify it against the published
+    sha256, and leave the finished file on disk (nothing is executed here).
+    Bytes are capped DURING the transfer (same discipline as readCapped) and a
+    failure always cleans up its .part. Injectable fetch + real fs into a caller
+    chosen folder, so this is unit-testable with a fake response. */
+async function downloadUpdate(opts = {}) {
+  const asset = opts.asset;
+  if (!asset || typeof asset.url !== 'string' || !ASSET_URL_RE.test(asset.url)
+      || typeof asset.name !== 'string' || !TAG_RE.test(asset.name)) {
+    return { ok: false, error: 'no downloadable file in that release' };
+  }
+  const destDir = typeof opts.destDir === 'string' ? opts.destDir : '';
+  if (!destDir) return { ok: false, error: 'no Downloads folder to write to' };
+  const doFetch = opts.fetch || fetch;
+  const onProgress = typeof opts.onProgress === 'function' ? opts.onProgress : null;
+  const maxBytes = Number.isFinite(+opts.maxBytes) && +opts.maxBytes > 0 ? +opts.maxBytes : DOWNLOAD_MAX_BYTES;
+  const base = path.basename(asset.name);                    // TAG_RE-checked: no path, no dots-dot
+  const finalPath = path.join(destDir, base);
+  const partPath = finalPath + '.part';
+  const total = Number.isFinite(+asset.size) && +asset.size > 0 ? +asset.size : null;
+
+  setDownload({ tag: opts.tag || null, name: base, pct: 0, bytes: 0, total, path: finalPath, error: null, done: false });
+  let out = null;
+  let bytes = 0;
+  let lastPct = -1;
+  try {
+    fs.mkdirSync(destDir, { recursive: true });
+    const res = await doFetch(asset.url, {
+      redirect: 'follow',
+      headers: { 'User-Agent': 'Nucleus/update-download' },
+      signal: AbortSignal.timeout ? AbortSignal.timeout(DOWNLOAD_TIMEOUT) : undefined,
+      cache: 'no-store'
+    });
+    if (!res || !res.ok) throw new Error('HTTP ' + (res && res.status));
+    if (!res.body) throw new Error('empty response');
+    const hash = crypto.createHash('sha256');
+    out = fs.createWriteStream(partPath);
+    for await (const part of res.body) {
+      const chunk = Buffer.isBuffer(part) ? part : Buffer.from(part);
+      bytes += chunk.length;
+      if (bytes > maxBytes) throw new Error('download over byte cap');
+      hash.update(chunk);
+      if (out.write(chunk) === false) {                        // honor backpressure
+        await new Promise((r) => out.once('drain', r));
+      }
+      const pct = total ? Math.min(100, Math.floor(bytes / total * 100)) : null;
+      if (pct !== lastPct) {
+        lastPct = pct;
+        setDownload({ pct, bytes });
+        if (onProgress) { try { onProgress({ pct, bytes, total }); } catch { /* cosmetic */ } }
+      }
+    }
+    await new Promise((r) => out.end(r));
+    out = null;
+    const digest = hash.digest('hex');
+    if (asset.sha256 && digest !== asset.sha256) throw new Error('checksum mismatch');
+    try { fs.rmSync(finalPath, { force: true }); } catch { /* a re-download replaces it */ }
+    fs.renameSync(partPath, finalPath);                        // same folder, so atomic
+    setDownload({ pct: 100, bytes, error: null, done: true, verified: !!asset.sha256 });
+    log.info('update download: ' + finalPath + (asset.sha256 ? ' (sha256 verified)' : ' (no published checksum)'));
+    return { ok: true, path: finalPath, size: bytes, sha256: digest, verified: !!asset.sha256 };
+  } catch (err) {
+    const msg = String((err && err.message) || err);
+    if (out) { try { out.destroy(); } catch { /* already gone */ } }
+    try { fs.rmSync(partPath, { force: true }); } catch { /* nothing to clean */ }
+    setDownload({ error: msg, done: true, pct: null });
+    log.warn('update download failed: ' + msg);
+    return { ok: false, error: msg };
+  }
+}
+
+/** Launch a downloaded installer/portable exe DETACHED and return immediately:
+    the caller quits Nucleus so the update can replace the running files. The
+    path is one this module just wrote (never a renderer string), and no shell
+    is involved, so a filename with spaces cannot be re-parsed into arguments.
+    `opts.spawn` is injectable so the unit test never starts a real process. */
+function runUpdate(filePath, opts = {}) {
+  if (typeof filePath !== 'string' || !/\.exe$/i.test(filePath)) return { ok: false, error: 'not an update file' };
+  const spawnImpl = opts.spawn || spawn;
+  try {
+    const child = spawnImpl(filePath, [], { detached: true, stdio: 'ignore' });
+    if (child && typeof child.unref === 'function') child.unref();
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  }
+}
+
 module.exports = {
   REPO, RELEASES_PAGE, API_URL,
-  parseVersion, compareVersions, decide, releaseUrl, sanitizeRelease,
-  configure, check, snapshot, openRelease,
+  parseVersion, compareVersions, decide, releaseUrl, sanitizeRelease, chooseAsset,
+  configure, check, snapshot, openRelease, downloadUpdate, runUpdate,
   /* Test-only state wipe (the module is a singleton like the other main-side
      services; unit tests need each scenario to start from a blank slate). */
-  _reset() { latest = null; lastCheckMs = 0; lastError = null; status = 'idle'; checking = null; infoCachePath = null; },
-  _internals: () => ({ latest, lastCheckMs, status })
+  _reset() { latest = null; lastCheckMs = 0; lastError = null; status = 'idle'; checking = null; infoCachePath = null; download = null; },
+  _internals: () => ({ latest, lastCheckMs, status, download })
 };

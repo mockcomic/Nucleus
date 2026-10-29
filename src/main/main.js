@@ -1,5 +1,5 @@
 'use strict';
-const { app, Menu, nativeTheme, shell } = require('electron');
+const { app, Menu, nativeTheme, shell, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -151,22 +151,153 @@ function quitApp() {
 }
 
 /* ------------------------------ update check ------------------------------
-   GitHub Releases, check + notify only (see update.js): a scheduled poll a few
-   seconds after start, then once a day, plus manual checks from the tray and
-   Settings. Fail-soft everywhere — an app that cannot reach GitHub (or whose
-   repo has no releases yet) behaves exactly as it did before this feature. */
+   GitHub Releases, check + ASK (see update.js): a scheduled poll a few seconds
+   after start, then once a day, plus manual checks from the tray and Settings.
+   A newer release opens a yes/no dialog — "Update now" downloads the published
+   installer to Downloads, verifies its checksum, and runs it (this copy quits
+   so the update can replace it). Fail-soft everywhere — an app that cannot
+   reach GitHub (or whose repo has no releases yet) behaves exactly as it did
+   before this feature. */
 let appPublishMs = NaN;
+let updateFlowBusy = false;      // one prompt/download at a time (tray + Settings can both ask)
 
 /* One label for every surface (tray row, balloon, Settings chip), so they can
    never disagree about what the last check found. */
 function updateLabel(snap) {
   const ver = snap.info && snap.info.version ? ' ' + snap.info.version : '';
+  const dl = snap.download;
+  if (dl && dl.error) return 'Update download failed';
+  if (dl && dl.done) return 'Update downloaded \u00b7 run it';
+  if (dl) return dl.pct == null ? 'Downloading update\u2026' : `Downloading update\u2026 ${dl.pct}%`;
   if (snap.status === 'available') return snap.kind === 'build'
     ? `New build available${ver}` : `Update available${ver}`;
   if (snap.status === 'upToDate') return `Up to date${snap.info ? ` (${snap.info.version})` : ''}`;
   if (snap.status === 'checking') return 'Checking for updates\u2026';
   if (snap.status === 'error') return 'Update check failed';
   return 'No releases published yet';
+}
+
+/* A portable build runs from its own .exe (electron-builder's bootstrapper
+   exports PORTABLE_EXECUTABLE_DIR): the update for it is the portable asset,
+   not the NSIS setup. */
+const isPortableBuild = () => !!process.env.PORTABLE_EXECUTABLE_DIR;
+
+/* Where a downloaded update goes: the user's Downloads folder, with userData
+   as the fallback for a profile that has none (redirected/absent shell folder,
+   a read-only drive). */
+function downloadsDir() {
+  try {
+    const d = app.getPath('downloads');
+    if (typeof d === 'string' && d) return d;
+  } catch { /* no shell folder in this profile */ }
+  return path.join(app.getPath('userData'), 'updates');
+}
+
+/* Push the download state to the Settings page (the chip paints it) — the tray
+   row reads the same snapshot, so both surfaces agree without a second poll. */
+function pushUpdateState() {
+  const snap = update.snapshot(app.getVersion(), appPublishMs);
+  try { if (settingsWin) settingsWin.send('update:download', snap.download); } catch { /* settings may be closed */ }
+  try { if (tray) tray.update(); } catch { /* menu refresh is cosmetic */ }
+  return snap;
+}
+
+function askBox(opts, parent) {
+  try { return parent ? dialog.showMessageBox(parent, opts) : dialog.showMessageBox(opts); }
+  catch { return Promise.resolve({ response: (opts.cancelId == null ? 0 : opts.cancelId) }); }
+}
+
+/* The whole offer, from any trigger (background check, tray row, Settings
+   chip). Returns the snapshot to show afterwards. */
+async function offerUpdate(snap, parent) {
+  if (!snap || snap.status !== 'available' || !snap.info) return snap || null;
+  if (updateFlowBusy) return update.snapshot(app.getVersion(), appPublishMs);
+  const info = snap.info;
+  /* Asking counts as showing: the once-per-tag balloon gate is the same flag,
+     so a release the user has already been asked about never asks twice. */
+  setState('updateSeenTag', info.tag);
+  const asset = update.chooseAsset(info, isPortableBuild());
+  // A dev checkout ("npm start") has no installed copy to replace: browse.
+  const canInstall = !!(asset && app.isPackaged);
+  const approx = asset && Number.isFinite(asset.size) ? ' \u2248 ' + Math.round(asset.size / 1048576) + ' MB' : '';
+  const bn = log.buildNumber();
+  const buttons = canInstall ? ['Update now', 'Open release page', 'Later'] : ['Open release page', 'Later'];
+  updateFlowBusy = true;
+  try {
+    const got = await askBox({
+      type: 'info',
+      title: 'Nucleus update',
+      message: snap.kind === 'build'
+        ? `A newer build of Nucleus (${info.version}) is available.`
+        : `Nucleus ${info.version} is available.`,
+      detail: `You are running ${app.getVersion()}${bn ? ` (build ${bn})` : ''}.`
+        + (canInstall
+          ? `\n\n\u201cUpdate now\u201d downloads ${asset.name}${approx} to your Downloads folder, checks its checksum, and runs it. Nucleus quits while the update installs; your settings stay put.`
+          : '\n\nOpen the release page to download it.'),
+      buttons,
+      defaultId: 0,
+      cancelId: buttons.length - 1,
+      noLink: true
+    }, parent);
+    const picked = buttons[(got && got.response | 0) || 0] || 'Later';
+    if (!canInstall || picked === 'Open release page') {
+      const open = await update.openRelease(info.url);
+      if (!open.ok && tray) tray.balloon('Could not open the browser', open.error || 'No default browser?', 'error');
+      return update.snapshot(app.getVersion(), appPublishMs);
+    }
+    if (picked !== 'Update now') return update.snapshot(app.getVersion(), appPublishMs);
+
+    if (tray) tray.balloon('Downloading update', `Downloading ${asset.name} to your Downloads folder\u2026`);
+    let lastPushMs = 0;
+    const r = await update.downloadUpdate({
+      asset, tag: info.tag, destDir: downloadsDir(),
+      onProgress: (p) => {
+        const now = Date.now();
+        if (p.pct === null || p.pct >= 100 || now - lastPushMs >= 500) { lastPushMs = now; pushUpdateState(); }
+      }
+    });
+    const after = pushUpdateState();
+    if (!r.ok) {
+      if (tray) tray.balloon('Update download failed',
+        `${r.error || 'Could not download that file.'} \u2014 open the release page to try again.`, 'error');
+      return after;
+    }
+    const run = await askBox({
+      type: 'info',
+      title: 'Nucleus update',
+      message: 'The update is downloaded.',
+      detail: r.path
+        + (r.verified ? '\nThe file matches the published checksum.'
+                      : '\nGitHub published no checksum for this file, so it could not be verified.')
+        + (isPortableBuild()
+          ? '\n\nThis is a portable copy: running it starts the new file from Downloads — replace your own copy of Nucleus to keep it in place.'
+            : '\n\nRun it now? Nucleus quits while the update installs.')
+        + '\nYour settings are kept.',
+      buttons: ['Run it now', 'Show in folder', 'Later'],
+      defaultId: 0,
+      cancelId: 2,
+      noLink: true
+    }, parent);
+    const choice = run && Number.isFinite(run.response) ? run.response : 2;
+    if (choice === 1) { try { shell.showItemInFolder(r.path); } catch { /* cosmetic */ } }
+    else if (choice === 0) {
+      const go = update.runUpdate(r.path);
+      if (!go.ok) {
+        if (tray) tray.balloon('Could not start the update', `${go.error} \u2014 run ${r.path} yourself when you like.`, 'error');
+        return update.snapshot(app.getVersion(), appPublishMs);
+      }
+      /* Answer the caller FIRST, then quit on a tick: a Settings page waiting on
+         this promise would otherwise report the window going away as a failed
+         update, in the moment it closes. */
+      if (tray) tray.balloon('Installing the update', `${r.path} is running \u2014 Nucleus is quitting so the update can replace this copy.`);
+      const done = update.snapshot(app.getVersion(), appPublishMs);
+      setTimeout(() => { try { quitApp(); } catch { /* already quitting */ } }, 120);
+      return done;
+    }
+    return update.snapshot(app.getVersion(), appPublishMs);
+  } finally {
+    updateFlowBusy = false;
+  }
 }
 
 /* One check end-to-end; always answers with the current snapshot (the caller
@@ -180,14 +311,13 @@ async function runUpdateCheck() {
 }
 
 /* Manual check (tray item / Settings button): always announces its result —
-   that is the whole point of asking by hand. */
+   that is the whole point of asking by hand. An update opens the prompt; the
+   other outcomes stay a balloon, because there is nothing to decide. */
 async function manualUpdateCheck() {
   const snap = await runUpdateCheck();
+  if (snap.status === 'available') return offerUpdate(snap);
   if (tray) {
-    if (snap.status === 'available' && snap.info) {
-      setState('updateSeenTag', snap.info.tag);     // the schedule must not double-balloon it
-      tray.balloon('Nucleus update available', `${updateLabel(snap)} \u2014 pick "Update available" in the tray or Settings to open the release page.`);
-    } else if (snap.status === 'upToDate') {
+    if (snap.status === 'upToDate') {
       tray.balloon('Nucleus is up to date', snap.info ? `Version ${snap.info.version} is the latest release.` : 'You have the latest release.');
     } else if (snap.status === 'error') {
       tray.balloon('Update check failed', (snap.error || 'Could not reach GitHub.') + ' Check your connection and try again.', 'error');
@@ -202,12 +332,10 @@ async function scheduledUpdateCheck() {
   try {
     if (!store.get().behavior.updateChecks) return;   // background checks are off; manual still works
     const snap = await runUpdateCheck();
-    /* Balloon once per tag: opening the release page (or a manual check)
-       records updateSeenTag in state.json, so a dismissed update never nags
-       again until a NEWER one appears. */
-    if (snap.status === 'available' && snap.info && tray && getState('updateSeenTag', null) !== snap.info.tag) {
-      setState('updateSeenTag', snap.info.tag);
-      tray.balloon('Nucleus update available', `${updateLabel(snap)} \u2014 pick "Update available" in the tray or Settings to open the release page.`);
+    /* Ask once per tag: the prompt records updateSeenTag in state.json, so a
+       release the user passed on never nags again until a NEWER one appears. */
+    if (snap.status === 'available' && snap.info && getState('updateSeenTag', null) !== snap.info.tag) {
+      await offerUpdate(snap);
     }
   } catch (err) { log.warn('scheduled update check failed:', err && err.message); }
 }
@@ -284,9 +412,10 @@ function bootstrap() {
         return { label: updateLabel(snap), available: snap.status === 'available', error: snap.status === 'error' };
       },
       onOpenUpdate: async () => {
-        const snap = update.snapshot(app.getVersion(), appPublishMs);
-        const got = await update.openRelease(snap.info && snap.info.url);
-        if (got.ok && snap.info) setState('updateSeenTag', snap.info.tag);   // viewed = seen: no repeat balloon
+        /* The tray row re-asks rather than jumping straight to the browser:
+           offerUpdate owns the one prompt (and falls back to the release page
+           when an in-app install is not on the table). */
+        await offerUpdate(update.snapshot(app.getVersion(), appPublishMs));
       },
       onCheckUpdate: () => { manualUpdateCheck(); },
       onQuit: quitApp
@@ -326,11 +455,15 @@ function bootstrap() {
   registerIpc({
     store, hotkeyMgr, overlay, settings: settingsWin, welcome, tray,
     getState, setState, registerHotkey, toggleWheel, quitApp, isQuitting,
-    /* Update trio: local snapshot, manual check (announces via balloon like
+    /* Update surface: local snapshot, manual check (which opens the prompt,
        the tray item), and the fixed-target release-page opener. openRelease
          (the URL is matched against main's sanitized copy inside update.js). */
     updateSnapshot: () => update.snapshot(app.getVersion(), appPublishMs),
     checkUpdate: () => manualUpdateCheck(),
+    /* The Settings chip's re-ask: the same prompt main already owns, parented
+       to the Settings window so the dialog lands on it. */
+    updateNow: () => offerUpdate(update.snapshot(app.getVersion(), appPublishMs),
+      settingsWin && settingsWin.win && !settingsWin.win.isDestroyed() ? settingsWin.win : null),
     openRelease: async (url) => {
       const got = await update.openRelease(url);
       if (got.ok) {

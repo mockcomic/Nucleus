@@ -1,0 +1,595 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Nucleus — the radial launcher for Windows</title>
+		<meta
+			name="description"
+			content="Nucleus is a polished, always-running radial launcher for Windows. One hotkey pops an animated wheel at your cursor — launch apps, open URLs, run commands, replay macros, fire Windows actions. Free, open source, MIT."
+		/>
+		<meta name="theme-color" content="#0b0c0f" />
+		<meta
+			property="og:title"
+			content="Nucleus — one hotkey. Every action, at your cursor."
+		/>
+		<meta
+			property="og:description"
+			content="A polished, always-running radial launcher for Windows. Free and open source."
+		/>
+		<meta property="og:image" content="assets/media/wide.jpg" />
+		<meta property="og:type" content="website" />
+		<link
+			rel="icon"
+			type="image/png"
+			sizes="32x32"
+			href="assets/img/tray-32.png"
+		/>
+		<link rel="apple-touch-icon" href="assets/img/tray-32.png" />
+		<link rel="stylesheet" href="assets/css/style.css" />
+	</head>
+	<body>
+		<a class="skip" href="#main">Skip to content</a>
+
+		<header class="site-head">
+			<div class="wrap head-row">
+				<a class="brand" href="#top" aria-label="Nucleus — home">
+					<img src="assets/img/tray-32.png" alt="" width="28" height="28" />
+					<span>Nucleus</span>
+				</a>
+				<nav aria-label="Main">
+					<a href="#features">Features</a>
+					<a href="#actions">Actions</a>
+					<a href="#feel">Feel</a>
+					<a href="#skins">Skins</a>
+					<a href="#download">Download</a>
+					<a href="https://github.com/mockcomic/Nucleus" rel="noopener"
+						>GitHub</a
+					>
+				</nav>
+				<a
+					class="stars"
+					id="stars"
+					href="https://github.com/mockcomic/Nucleus"
+					rel="noopener"
+					aria-label="Star Nucleus on GitHub"
+				>
+					<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+						<path
+							fill="currentColor"
+							d="M8 .2 9.9 5.3 15.2 5.6 11.1 9.1 12.4 14.3 8 11.5 3.6 14.3 4.9 9.1.8 5.6 6.1 5.3Z"
+						/>
+					</svg>
+					<span id="stars-n">Star</span>
+				</a>
+			</div>
+		</header>
+
+		<main id="main">
+			<!-- ============ HERO ============ -->
+			<section class="hero" id="top">
+				<svg class="wheel-motif" viewBox="0 0 400 400" aria-hidden="true">
+					<g class="spin">
+						<g stroke="var(--accent)" stroke-width="34" fill="none">
+							<path d="M200 60 A140 140 0 0 1 299 101" opacity=".55" />
+							<path d="M299 101 A140 140 0 0 1 340 200" opacity=".18" />
+							<path d="M340 200 A140 140 0 0 1 299 299" opacity=".40" />
+							<path d="M299 299 A140 140 0 0 1 200 340" opacity=".12" />
+							<path d="M200 340 A140 140 0 0 1 101 299" opacity=".50" />
+							<path d="M101 299 A140 140 0 0 1 60 200" opacity=".16" />
+							<path d="M60 200 A140 140 0 0 1 101 101" opacity=".34" />
+							<path d="M101 101 A140 140 0 0 1 200 60" opacity=".10" />
+						</g>
+						<circle
+							cx="200"
+							cy="200"
+							r="46"
+							fill="var(--panel)"
+							stroke="var(--line)"
+							stroke-width="1.5"
+						/>
+					</g>
+				</svg>
+
+				<div class="wrap hero-grid">
+					<div class="hero-copy">
+						<p class="kicker">Free · Open source · Windows 10/11</p>
+						<h1>One hotkey.<br />Every action, at&nbsp;your&nbsp;cursor.</h1>
+						<p class="lede">
+							Nucleus is a polished, always-running radial launcher. Press a
+							global hotkey and a crisp, animated wheel pops up
+							<strong>at your mouse cursor</strong> — click a segment to launch
+							apps, open URLs, run commands, replay keystroke macros, or trigger
+							built-in Windows actions.
+						</p>
+						<div class="cta-row">
+							<a
+								class="btn primary"
+								id="dl-setup"
+								href="https://github.com/mockcomic/Nucleus/releases/download/1.0.0/Nucleus-1.0.0-b20-setup.exe"
+							>
+								<svg
+									viewBox="0 0 16 16"
+									width="16"
+									height="16"
+									aria-hidden="true"
+								>
+									<path
+										fill="currentColor"
+										d="M8 1v8.2L4.9 6.1 3.5 7.5 8 12l4.5-4.5-1.4-1.4L8 9.2V1zM2 13h12v2H2z"
+									/>
+								</svg>
+								Download for Windows
+								<span class="btn-sub" id="dl-setup-sub">Setup · v1.0.0</span>
+							</a>
+							<a
+								class="btn ghost"
+								href="https://github.com/mockcomic/Nucleus"
+								rel="noopener"
+							>
+								<svg
+									viewBox="0 0 16 16"
+									width="16"
+									height="16"
+									aria-hidden="true"
+								>
+									<path
+										fill="currentColor"
+										d="M8 0C3.6 0 0 3.6 0 8c0 3.5 2.3 6.5 5.5 7.6.4.1.6-.2.6-.4v-1.4c-2.2.5-2.7-1.1-2.7-1.1-.4-1-.9-1.2-.9-1.2-.7-.5.1-.5.1-.5.8.1 1.3.9 1.3.9.9.7 1.3 1.9.9 2.4.7.1-.5.3-.9.5-1.1-1.8-.2-3.6-.9-3.6-4 0-.9.3-1.6.9-2.1-.1-.2-.4-1 .1-2.1 0 0 .7-.2 2.2.9a7.4 7.4 0 0 1 4 0c1.5-1.1 2.2-.9 2.2-.9.5 1.1.2 1.9.1 2.1.6.5.9 1.2.9 2.1 0 3.1-1.8 3.7-3.6 4 .3.2.5.7.5 1.4v2.2c0 .2.2.5.6.4A8 8 0 0 0 16 8c0-4.4-3.6-8-8-8z"
+									/>
+								</svg>
+								View on GitHub
+							</a>
+						</div>
+						<p class="fine">
+							No account · No telemetry · No ads · MIT licensed.
+							<a
+								href="https://github.com/mockcomic/Nucleus/releases/latest"
+								rel="noopener"
+								>All releases</a
+							>
+						</p>
+					</div>
+
+					<figure class="hero-media">
+						<video
+							src="assets/media/wide.mp4"
+							poster="assets/media/wide.jpg"
+							autoplay
+							muted
+							loop
+							playsinline
+							preload="metadata"
+						></video>
+						<figcaption>
+							The wheel in Settings — rings and segments are added, removed and
+							recolored on the live preview.
+						</figcaption>
+					</figure>
+				</div>
+			</section>
+
+			<!-- ============ FEATURES ============ -->
+			<section id="features">
+				<div class="wrap">
+					<h2>Built to be <em>felt</em>, not just used</h2>
+					<p class="sec-lede">
+						Speed and delight are both the point. The wheel must be faster than
+						Alt+Tab — and it must feel like a rewarding object at your cursor,
+						not a menu.
+					</p>
+					<div class="grid">
+						<article class="card">
+							<h3>
+								<svg viewBox="0 0 24 24" aria-hidden="true">
+									<circle
+										cx="12"
+										cy="12"
+										r="9"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="2"
+									/>
+									<circle
+										cx="12"
+										cy="12"
+										r="4"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="2"
+									/></svg
+								>Up to 4 rings, live preview
+							</h3>
+							<p>
+								Grow the wheel outward ring by ring. The Settings preview uses
+								the <em>exact same renderer</em> as the real wheel — every edit
+								shows instantly, with autosave and Undo.
+							</p>
+						</article>
+						<article class="card">
+							<h3>
+								<svg viewBox="0 0 24 24" aria-hidden="true">
+									<path
+										d="M12 3v18M3 12h18"
+										stroke="currentColor"
+										stroke-width="2"
+									/>
+									<circle
+										cx="12"
+										cy="12"
+										r="9"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="2"
+									/></svg
+								>9 action types
+							</h3>
+							<p>
+								Apps, URLs, files, shell commands, macros, system actions, live
+								setting toggles, branching folders, and a self-filling
+								<em>recent</em> fan — one consistent model.
+							</p>
+						</article>
+						<article class="card">
+							<h3>
+								<svg viewBox="0 0 24 24" aria-hidden="true">
+									<rect
+										x="3"
+										y="6"
+										width="18"
+										height="12"
+										rx="2"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="2"
+									/>
+									<path
+										d="M7 10h.01M11 10h.01M15 10h.01M7 14h10"
+										stroke="currentColor"
+										stroke-width="2"
+										stroke-linecap="round"
+									/></svg
+								>Real macro engine
+							</h3>
+							<p>
+								Chords, Unicode typing, waits, mouse clicks and scroll, holds
+								and repeats — straight through <code>SendInput</code>. Fully
+								bounded <em>before</em> a single event is injected.
+							</p>
+						</article>
+						<article class="card">
+							<h3>
+								<svg viewBox="0 0 24 24" aria-hidden="true">
+									<path
+										d="M4 20 20 4M20 4h-7M20 4v7"
+										stroke="currentColor"
+										stroke-width="2"
+										fill="none"
+										stroke-linecap="round"
+									/></svg
+								>Drag to select
+							</h3>
+							<p>
+								Press, sweep across the wheel — folder fans branch as you pass —
+								and release on a segment to fire it. Muscle memory in one
+								gesture.
+							</p>
+						</article>
+						<article class="card">
+							<h3>
+								<svg viewBox="0 0 24 24" aria-hidden="true">
+									<path
+										d="M4 8h16M4 12h10M4 16h7"
+										stroke="currentColor"
+										stroke-width="2"
+										stroke-linecap="round"
+									/></svg
+								>Type to filter
+							</h3>
+							<p>
+								Summon the wheel and just start typing. Non-matching segments
+								fade back, the best match is selected, Enter fires it — folder
+								contents included.
+							</p>
+						</article>
+						<article class="card">
+							<h3>
+								<svg viewBox="0 0 24 24" aria-hidden="true">
+									<rect
+										x="3"
+										y="4"
+										width="18"
+										height="14"
+										rx="2"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="2"
+									/>
+									<path
+										d="M8 21h8"
+										stroke="currentColor"
+										stroke-width="2"
+										stroke-linecap="round"
+									/></svg
+								>App profiles &amp; gaming mode
+							</h3>
+							<p>
+								A different wheel per app — up to 8 profiles take over when
+								their program has focus. Gaming mode politely hides the wheel
+								while a fullscreen game runs.
+							</p>
+						</article>
+						<article class="card">
+							<h3>
+								<svg viewBox="0 0 24 24" aria-hidden="true">
+									<path
+										d="M4 10v4h4l5 5V5l-5 5H4z"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="2"
+										stroke-linejoin="round"
+									/>
+									<path
+										d="M16 9a4 4 0 0 1 0 6"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="2"
+									/></svg
+								>Audio built in
+							</h3>
+							<p>
+								Switch output/input devices, master volume, and a per-app mixer
+								— inside Settings <em>and</em> as a flyout card beside the
+								wheel.
+							</p>
+						</article>
+						<article class="card">
+							<h3>
+								<svg viewBox="0 0 24 24" aria-hidden="true">
+									<path
+										d="M12 3l7 3v5c0 5-3 8-7 10-4-2-7-5-7-10V6z"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="2"
+										stroke-linejoin="round"
+									/></svg
+								>Your machine, your data
+							</h3>
+							<p>
+								Settings live in <code>%APPDATA%\Nucleus</code>. No account, no
+								telemetry, no ads. The uninstaller keeps your config. MIT
+								licensed — build it yourself and compare.
+							</p>
+						</article>
+					</div>
+				</div>
+			</section>
+
+			<!-- ============ ACTION TABLE ============ -->
+			<section id="actions" class="alt">
+				<div class="wrap">
+					<h2>One hub, every action type</h2>
+					<div class="table-scroll">
+						<table>
+							<thead>
+								<tr>
+									<th scope="col">Type</th>
+									<th scope="col">Example</th>
+									<th scope="col">Note</th>
+								</tr>
+							</thead>
+							<tbody>
+								<tr>
+									<td><code>app</code></td>
+									<td><code>notepad.exe</code></td>
+									<td>
+										Pick from the installed-programs dropdown — the segment
+										wears the program's real icon
+									</td>
+								</tr>
+								<tr>
+									<td><code>url</code></td>
+									<td><code>https://gmail.com</code></td>
+									<td>Opens in your default browser</td>
+								</tr>
+								<tr>
+									<td><code>file</code></td>
+									<td><code>C:\Docs\notes.md</code></td>
+									<td>Opens with its registered handler</td>
+								</tr>
+								<tr>
+									<td><code>command</code></td>
+									<td><code>taskkill /f /im foo.exe</code></td>
+									<td>Detached shell command</td>
+								</tr>
+								<tr>
+									<td><code>macro</code></td>
+									<td><code>ctrl+c, wait=0.2, ctrl+v</code></td>
+									<td>
+										Real SendInput keys <em>and</em> mouse: <code>type:</code>,
+										<code>hold=</code>, <code>repeat=</code>,
+										<code>scroll=</code>
+									</td>
+								</tr>
+								<tr>
+									<td><code>sys</code></td>
+									<td>
+										<code>lock</code> · <code>mute</code> ·
+										<code>screenshot</code>
+									</td>
+									<td>
+										Built-in Windows actions, incl. Wi-Fi, Bluetooth and
+										audio-device switching
+									</td>
+								</tr>
+								<tr>
+									<td><code>setting</code></td>
+									<td><code>toggle_game_mode</code></td>
+									<td>Flips one Nucleus setting on the spot</td>
+								</tr>
+								<tr>
+									<td><code>folder</code></td>
+									<td>—</td>
+									<td>Sub-menu that branches outward on hover</td>
+								</tr>
+								<tr>
+									<td><code>recent</code></td>
+									<td>—</td>
+									<td>Self-filling fan of your most-used segments</td>
+								</tr>
+							</tbody>
+						</table>
+					</div>
+				</div>
+			</section>
+
+			<!-- ============ SKINS ============ -->
+			<section id="skins" class="alt">
+				<div class="wrap">
+					<h2>Fourteen skins, one wheel.</h2>
+					<p class="sec-lede">
+						Hand-tuned dark and light themes, or mix your own colors — every
+						swatch is adjustable in Settings and saved to one
+						<code>config.json</code>.
+					</p>
+					<figure class="skins-figure">
+						<img
+							src="assets/media/wheel-themes-mosaic.png"
+							alt="Eight built-in Nucleus themes shown as circular wheel captures: Space Gray, Midnight, Ember, Grape, Solar, Meadow, Aqua, Porcelain"
+							loading="lazy"
+						/>
+						<figcaption>
+							Eight of the fourteen built-ins — the same config, captured from
+							the real app. Porcelain and Aqua are full light mode.
+						</figcaption>
+					</figure>
+				</div>
+			</section>
+
+			<!-- ============ DOWNLOAD ============ -->
+			<section id="download" class="alt">
+				<div class="wrap dl-grid">
+					<div>
+						<h2>Get Nucleus</h2>
+						<p class="sec-lede">
+							Windows 10 / 11, 64-bit. The installer puts Nucleus in your tray —
+							no admin rights, clean uninstall, your config survives.
+						</p>
+						<div class="cta-row">
+							<a
+								class="btn primary"
+								id="dl-setup-2"
+								href="https://github.com/mockcomic/Nucleus/releases/download/1.0.0/Nucleus-1.0.0-b20-setup.exe"
+							>
+								<svg
+									viewBox="0 0 16 16"
+									width="16"
+									height="16"
+									aria-hidden="true"
+								>
+									<path
+										fill="currentColor"
+										d="M8 1v8.2L4.9 6.1 3.5 7.5 8 12l4.5-4.5-1.4-1.4L8 9.2V1zM2 13h12v2H2z"
+									/>
+								</svg>
+								Setup (recommended)
+								<span class="btn-sub" id="dl-setup-2-sub"
+									>v1.0.0 · ~104&nbsp;MB</span
+								>
+							</a>
+							<a
+								class="btn ghost"
+								id="dl-portable"
+								href="https://github.com/mockcomic/Nucleus/releases/download/1.0.0/Nucleus-1.0.0-b20-portable.exe"
+							>
+								Portable
+								<span class="btn-sub" id="dl-portable-sub"
+									>v1.0.0 · ~104&nbsp;MB</span
+								>
+							</a>
+						</div>
+						<p class="fine">
+							<a
+								href="https://github.com/mockcomic/Nucleus/releases"
+								rel="noopener"
+								>All releases &amp; changelog →</a
+							>
+						</p>
+					</div>
+					<aside class="note">
+						<h3>Heads-up</h3>
+						<p>
+							Builds are <strong>not code-signed (yet)</strong>, so Windows
+							SmartScreen may show <em>“Windows protected your PC”</em> on first
+							run — click <strong>More info → Run anyway</strong>.
+						</p>
+						<p>
+							Settings live in <code>%APPDATA%\Nucleus\config.json</code>.
+							Uninstalling keeps everything. Nucleus is the new name of
+							<em>Radial Wheel</em> — old settings migrate automatically on
+							first launch.
+						</p>
+					</aside>
+				</div>
+			</section>
+
+			<!-- ============ GITHUB CTA ============ -->
+			<section id="github">
+				<div class="wrap gh-band">
+					<div>
+						<h2>Open source, on GitHub</h2>
+						<p>
+							Electron + vanilla web tech, with keystroke synthesis and system
+							actions straight to the Win32 API through <code>user32.dll</code>.
+							Read it, break it, fix it — MIT licensed, use it, modify it, share
+							it, even sell copies.
+						</p>
+					</div>
+					<div class="cta-row">
+						<a
+							class="btn ghost"
+							href="https://github.com/mockcomic/Nucleus"
+							rel="noopener"
+							>Browse the source</a
+						>
+						<a
+							class="btn ghost"
+							href="https://github.com/mockcomic/Nucleus/issues"
+							rel="noopener"
+							>Report an issue</a
+						>
+						<a
+							class="btn ghost"
+							href="https://www.paypal.com/paypalme/kurtishight"
+							rel="noopener"
+							>Support Nucleus&nbsp;♥</a
+						>
+					</div>
+				</div>
+			</section>
+		</main>
+
+		<footer class="site-foot">
+			<div class="wrap foot-row">
+				<p>© mockcomic · MIT licensed · Nucleus (formerly Radial Wheel)</p>
+				<p>
+					<a href="https://github.com/mockcomic/Nucleus" rel="noopener"
+						>GitHub</a
+					>
+					·
+					<a
+						href="https://github.com/mockcomic/Nucleus/releases/latest"
+						rel="noopener"
+						>Releases</a
+					>
+					·
+					<a href="https://github.com/mockcomic/Nucleus#readme" rel="noopener"
+						>README</a
+					>
+				</p>
+			</div>
+		</footer>
+
+		<script src="assets/js/main.js"></script>
+	</body>
+</html>

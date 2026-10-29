@@ -118,11 +118,14 @@ function registerIpc(deps) {
     // like sys:catalog: they hand back data the on-screen UI already shows.
     'audio:set-default': ['settings', 'wheel'],
     'audio:set-volume': ['settings', 'wheel'], 'audio:set-session': ['settings', 'wheel'],
-    // The update trio is Settings-only: the chip and the Check-now button live
-    // in this window (the tray reaches main directly, not through IPC).
+    // The update channels are Settings-only: the chip and the Check-now button
+    // live in this window (the tray reaches main directly, not through IPC).
     // open-release still re-validates its URL against main's sanitized
     // snapshot — a compromised page can at worst force the fixed releases page.
-    'update:state': ['settings'], 'update:check': ['settings'], 'update:open-release': ['settings']
+    // update:install only re-opens main's own prompt; the download target and
+    // the spawn path are chosen in update.js, never by the page.
+    'update:state': ['settings'], 'update:check': ['settings'], 'update:open-release': ['settings'],
+    'update:install': ['settings']
   };
   const SEND_CHANNELS = new Set(['config:flush', 'wheel:segment-click', 'wheel:dismiss', 'wheel:grow', 'wheel:filter', 'welcome:done', 'settings:close', 'app:quit']);
   const refused = (ch, ev) => {
@@ -617,9 +620,10 @@ function registerIpc(deps) {
 
   /* ---- updates (GitHub Releases; main/update.js owns all the logic) ----
      The renderer only ever sees sanitized strings and main's own rebuilt
-     release URL; the fetch, the cache file, and the openExternal target all
-     live in main. Deps arrive through registerIpc so the channels stay
-     callable without the update wiring (stub-safe for tests). */
+     release URL; the fetch, the cache file, the installer download and the
+     spawn of the downloaded file all live in main. Deps arrive through
+     registerIpc so the channels stay callable without the update wiring
+     (stub-safe for tests). */
   const uSnap = () => (deps.updateSnapshot ? deps.updateSnapshot()
     : { ok: true, status: 'none', kind: null, info: null, lastCheckMs: 0, error: null });
   guardHandle('update:state', () => uSnap());
@@ -630,6 +634,13 @@ function registerIpc(deps) {
   guardHandle('update:open-release', async (ev, url) => {
     try { return deps.openRelease ? await deps.openRelease(url) : { ok: false, error: 'updates unavailable' }; }
     catch (err) { return { ok: false, error: String((err && err.message) || err) }; }
+  });
+  /* "Update available" in the page asks again: main shows the same dialog the
+     tray/balloon path shows (download + run, or the release page). The page
+     sends nothing but the channel name — no URL, no path, no version. */
+  guardHandle('update:install', async () => {
+    try { return deps.updateNow ? await deps.updateNow() : uSnap(); }
+    catch (err) { return { ok: false, status: 'error', error: String((err && err.message) || err), info: null }; }
   });
 
   /* ---- audio (Core Audio control; every answer is {ok,…}|{ok:false,error}) --
