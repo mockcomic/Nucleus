@@ -1,7 +1,7 @@
 {
   "name": "nucleus-launcher",
   "productName": "Nucleus",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "A polished, always-running radial launcher for Windows",
   "main": "src/main/main.js",
   "author": "Nucleus",
