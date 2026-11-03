@@ -25,7 +25,7 @@
   "build": {
     "appId": "local.nucleus",
     "productName": "Nucleus",
-    "buildNumber": "21",
+    "buildNumber": "25",
     "directories": {
       "output": "dist"
     },
@@ -52,5 +52,9 @@
     "portable": {
       "artifactName": "Nucleus-${version}-b${buildNumber}-portable.exe"
     }
+  },
+  "allowScripts": {
+    "electron-winstaller@5.4.0": true,
+    "koffi@2.16.3": true
   }
 }

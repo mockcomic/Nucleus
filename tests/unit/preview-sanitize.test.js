@@ -61,6 +61,15 @@ test('label and icon slots cannot smuggle bulk or paths', () => {
     'custom:' + 'a'.repeat(16) + '.png', 'legitimate custom keys survive');
 });
 
+test('label position is a closed enum — junk degrades to the default placement', () => {
+  assert.equal(sanitizeItem({ labelPos: 'inward' }).labelPos, 'inward');
+  assert.equal(sanitizeItem({ labelPos: 'center' }).labelPos, 'center');
+  for (const junk of ['rimward', 42, null, '', 'inward\noutward']) {
+    assert.equal(sanitizeItem({ labelPos: junk }).labelPos, '',
+      `${JSON.stringify(junk)} degrades to ''`);
+  }
+});
+
 test('junk input still yields a bounds-capped default item (never a crash)', () => {
   for (const junk of [null, undefined, 42, 'string', []]) {
     const it = sanitizeItem(junk);

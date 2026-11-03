@@ -66,9 +66,13 @@
         <div class="card-title">Colors</div>
         <div id="color-grid" class="color-grid"></div>
       </div>
-      <div class="card row-card">
-        <label class="chk"><input type="checkbox" id="ap-showlabels"> Show labels</label>
-        <label class="lbl-grow">Center text <input type="text" id="ap-centerlabel" maxlength="24" placeholder="e.g. RADIAL"></label>
+      <div class="card">
+        <div class="row-card">
+          <label class="chk"><input type="checkbox" id="ap-showlabels"> Show labels</label>
+          <label class="chk"><input type="checkbox" id="ap-showrim"> Show outer edge line</label>
+          <label class="lbl-grow">Center text <input type="text" id="ap-centerlabel" maxlength="24" placeholder="e.g. RADIAL"></label>
+        </div>
+        <div class="hint muted">The outer edge line is the hairline circle on the wheel’s rim; it runs right across the gaps between the outer segments, where it can read as a stray ring. Turning it off changes nothing else — the plates, their bevels and the soft top light stay.</div>
       </div>
     </section>
 
@@ -155,7 +159,7 @@
         <div class="card-title">Output device</div>
         <div class="row-line">
           <select id="au-out-select" class="au-dev" aria-label="Default audio output device"></select>
-          <button class="btn small" id="au-out-refresh" title="Reload the output device list" aria-label="Reload the output device list">&#xE72C;</button>
+          <button class="btn small glyph" id="au-out-refresh" title="Reload the output device list" aria-label="Reload the output device list">&#xE72C;</button>
           <button class="btn small" id="au-out-manage" aria-expanded="false" title="Choose which devices appear in this list" aria-label="Manage hidden output devices">Manage&#8230;</button>
         </div>
         <div id="au-out-hidden" class="au-hidden hidden" role="group" aria-label="Hidden output devices"></div>
@@ -171,7 +175,7 @@
         <div class="card-title">Input device</div>
         <div class="row-line">
           <select id="au-in-select" class="au-dev" aria-label="Default audio input device"></select>
-          <button class="btn small" id="au-in-refresh" title="Reload the input device list" aria-label="Reload the input device list">&#xE72C;</button>
+          <button class="btn small glyph" id="au-in-refresh" title="Reload the input device list" aria-label="Reload the input device list">&#xE72C;</button>
           <button class="btn small" id="au-in-manage" aria-expanded="false" title="Choose which devices appear in this list" aria-label="Manage hidden input devices">Manage&#8230;</button>
         </div>
         <div id="au-in-hidden" class="au-hidden hidden" role="group" aria-label="Hidden input devices"></div>
@@ -189,7 +193,7 @@
         <div id="au-sessions-note" class="hint muted" aria-live="polite"></div>
         <div id="au-sessions" class="au-sessions"></div>
         <div class="row-line">
-          <button class="btn small" id="au-refresh">Refresh now</button>
+          <button class="btn small" id="au-refresh"><span class="g">&#xE72C;</span> Refresh now</button>
         </div>
       </div>
       <div class="card">
@@ -222,7 +226,7 @@
         <div class="card-title">Usage</div>
         <div class="hint muted">Which segments you actually fire — the same counts that fill a <b>recent</b> segment's sub-menu. Kept beside the config, never inside it, so exports and shared packages carry zero statistics.</div>
         <div class="row-line wrap">
-          <button class="btn" id="btn-usage-refresh">Refresh</button>
+          <button class="btn" id="btn-usage-refresh"><span class="g">&#xE72C;</span> Refresh</button>
           <button class="btn" id="btn-clear-usage">Clear recent-items data</button>
         </div>
         <div class="hint muted" id="usage-summary">Counts are read when you open this tab.</div>
@@ -262,7 +266,7 @@
     <div class="preview-title">Live preview</div>
     <div id="wheel-preview"></div>
     <div class="row-line center">
-      <button class="btn primary" id="btn-test"><span class="g">&#xE9A1;</span> Test the real wheel</button>
+      <button class="btn primary" id="btn-test"><span class="g">&#xE768;</span> Test the real wheel</button>
     </div>
     <div class="hint muted">The preview uses the same renderer as the real overlay. Test pops the actual menu at your mouse.</div>
   </aside>

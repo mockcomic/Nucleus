@@ -294,6 +294,18 @@ test('wheelSound is opt-in: default false, only a real true turns audio on', () 
 });
 
 
+/* ------------------------------ appearance.showRim -------------------------- */
+const ap = (raw) => validate(raw).appearance;
+
+test('showRim is opt-out: the machined rim stays on unless explicitly off', () => {
+  assert.equal(ap({}).showRim, true, 'absent = rim, as every pre-toggle config had');
+  assert.equal(ap({ appearance: { showRim: false } }).showRim, false);
+  for (const junk of ['yes', 1, {}, [], 'true']) {
+    assert.equal(ap({ appearance: { showRim: junk } }).showRim, true, `junk ${JSON.stringify(junk)} keeps the rim`);
+  }
+});
+
+
 /* ------------------------- behavior.audioHidden ---------------------------- */
 const hidden = (raw) => bhv({ behavior: { audioHidden: raw } }).audioHidden;
 const DEV = '{0.0.0.00000000}.{0513e965-c2aa-40eb-8cbf-95f51c737d4e}';

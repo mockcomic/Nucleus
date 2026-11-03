@@ -159,9 +159,13 @@ function paintItemContent(g, item, cx, cy, r0, r1, center, ap, opts) {
   const showIcon = !!item.icon || !!imgHref;
   const showLabel = ap.showLabels && !!item.label && !item.hideLabel;
   const iconSize = Math.max(13, Math.min(26, band * 0.30));
+  // Per-segment label placement (config's labelPos, '' = the classic outward
+  // layout). A label that claims the hub side of the plate pushes the icon to
+  // the rim side instead — the pair trades places, it never stacks or collides.
+  const labelPos = item.labelPos === 'center' || item.labelPos === 'inward' ? item.labelPos : '';
 
   if (showIcon) {
-    const ir = showLabel ? rm - band * 0.10 : rm;
+    const ir = showLabel ? (labelPos ? rm + band * (labelPos === 'inward' ? 0.10 : 0.20) : rm - band * 0.10) : rm;
     const [ix, iy] = degToXY(cx, cy, ir, center);
     if (imgHref) {
       // A color logo reads better a touch larger than a mono glyph.
@@ -180,7 +184,13 @@ function paintItemContent(g, item, cx, cy, r0, r1, center, ap, opts) {
     }
   }
   if (showLabel) {
-    const lr = showIcon ? rm + band * 0.20 : rm;
+    let lr;
+    if (labelPos === 'inward') lr = rm - band * 0.20;
+    else if (labelPos === 'center') lr = rm;
+    else lr = showIcon ? rm + band * 0.20 : rm;
+    // The glyphs sit centred on lr — clamp inside the band so a moved label
+    // can never bleed onto the neighbouring plate on a thin ring.
+    lr = Math.max(r0 + ap.fontSize * 0.85, Math.min(r1 - ap.fontSize * 0.45, lr));
     const [lx, ly] = degToXY(cx, cy, lr, center);
     const t = svgEl('text', {
       x: lx, y: ly + 1, 'text-anchor': 'middle', 'dominant-baseline': 'central',
@@ -301,9 +311,14 @@ export function buildWheel(container, cfg, opts = {}) {
   root.appendChild(shadow);
 
   /* Lit-from-above pass over the plates + a machined rim on the outer edge.
-     Purely decorative discs — pointer-events stay with the geometry hit-test. */
+     Purely decorative discs — pointer-events stay with the geometry hit-test.
+     The rim is a full circle, so it bridges the gaps between the outer plates;
+     appearance.showRim (Settings → Appearance) drops it when that reads as a
+     stray ring. The top-light wash stays either way. */
   root.appendChild(svgEl('circle', { cx, cy, r: ap.outerRadius, fill: `url(#${topId})`, class: 'top-light' }));
-  root.appendChild(svgEl('circle', { cx, cy, r: ap.outerRadius, fill: 'none', stroke: persona.rim, 'stroke-width': 1, class: 'rim' }));
+  if (ap.showRim !== false) {
+    root.appendChild(svgEl('circle', { cx, cy, r: ap.outerRadius, fill: 'none', stroke: persona.rim, 'stroke-width': 1, class: 'rim' }));
+  }
 
   /* hub */
   const hub = svgEl('circle', {

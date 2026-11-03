@@ -19,7 +19,7 @@ const deepGet = (o, path) => { for (const k of path) { o = o == null ? o : o[k];
 
 /* A realistic validated-shaped config: every entry target present. */
 const baseCfg = () => ({
-  appearance: { showLabels: true },
+  appearance: { showLabels: true, showRim: true },
   behavior: {
     wheelSound: false, markingSelect: true, typeToFilter: true,
     reTriggerToggles: true, dismissOnEscape: true, dismissOnRightClick: true,
