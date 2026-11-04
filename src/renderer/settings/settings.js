@@ -1,6 +1,7 @@
 import { buildWheel, createFlyoutNavigator } from '../shared/wheel-core.js';
 import { THEMES, themeById, themeBySignature, signature, computeChrome, chromeVarMap, paletteMode } from '../../main/themes.mjs';
 import { ICON_CATALOG } from '../shared/icon-catalog.js';
+import { collapseEditorKey } from '../shared/seg-keys.js';
 
 const api = window.wheelAPI;
 const $ = (s, r = document) => r.querySelector(s);
@@ -563,7 +564,12 @@ function segRow(ctx) {
   }, 'act-del');
 
   const toggleEditor = () => {
-    openEditorKey = openEditorKey === key ? null : key;
+    /* openEditorKey is one slot for the whole tree. Closing a NESTED row has to
+       hand it back to the folder that contains it — a null key also drops that
+       folder's `openDesc`, so collapsing a sub-menu row's editor hid the entire
+       sub-menu manager the row had been clicked through. A ring-level row has
+       no ancestor to fall back to, so it still collapses to nothing. */
+    openEditorKey = openEditorKey === key ? collapseEditorKey(key) : key;
     renderSegments();
     const rowEl = document.querySelector(`[data-seg-key="${key}"]`);
     const ed = rowEl && rowEl.querySelector('.seg-edit');
