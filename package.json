@@ -8,6 +8,8 @@
   "license": "MIT",
   "scripts": {
     "start": "electron .",
+    "dev": "node scripts/start-agent.js",
+    "dev:watch": "electronmon . --user-data-dir=.dev-userdata",
     "start:agent": "node scripts/start-agent.js",
     "start:hidden": "wscript scripts/launch-hidden.vbs",
     "make-icons": "node scripts/make-icons.mjs",
@@ -20,7 +22,15 @@
   },
   "devDependencies": {
     "electron": "^44.7.2",
-    "electron-builder": "^26.0.12"
+    "electron-builder": "^26.0.12",
+    "electronmon": "^2.0.4"
+  },
+  "electronmon": {
+    "patterns": [
+      "!.dev-userdata/**",
+      "!dist/**",
+      "!tests/**"
+    ]
   },
   "build": {
     "appId": "local.nucleus",
