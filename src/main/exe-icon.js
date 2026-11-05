@@ -7,10 +7,16 @@
    already know how to carry them. This module only produces PNG bytes from a
    program file and hands them over.
 
-   The extraction itself is the Windows shell — Electron's app.getFileIcon:
-   it honours a shortcut's own icon location, the registry DisplayIcon, and
-   embedded icon groups, at the largest size the file carries. Being a shell
-   call it only exists on win32, and every other answer is a clean
+   The extraction itself is the Windows shell — Electron's app.getFileIcon,
+   which reads embedded icon groups and the registry DisplayIcon of the FILE
+   you hand it. It does NOT resolve a .lnk, and it does NOT crack open an
+   .ico container either: measured on win32 (Electron 44, both 'normal' and
+   'larger'), each yields the small generic page icon OF THAT FILE TYPE and
+   the call still reports success. So shortcuts are unpacked here first —
+   shell.readShortcutLink gives the link's own icon location and target —
+   and an .ico is decoded directly with nativeImage, which does speak ICO.
+   Extraction then runs on whatever real image file those point at. Being
+   shell calls these only exist on win32, and every other answer is a clean
    {ok:false, error}: the segment keeps its glyph, never a blank plate.
 
    The path arrives FROM THE RENDERER (the program the user just picked), so
@@ -45,6 +51,38 @@ function programIconPath(raw) {
   return p;
 }
 
+/** Where a shortcut wants to be extracted from: its own icon location first
+ *  (a PWA's .ico), else the target. Shape-only + the same path discipline as
+ *  programIconPath — the link file's contents are user-writable, so an
+ *  unvalidated string from it gets the same refuse rules as one from the
+ *  renderer. Empty/garbage in both slots yields null (caller keeps the .lnk
+ *  and accepts whatever the shell shows for a broken link). */
+function linkIconSource(info) {
+  if (!info || typeof info !== 'object') return null;
+  for (const cand of [info.icon, info.target]) {
+    const p = programIconPath(cand || '');
+    if (p) { try { if (fs.statSync(p).isFile()) return p; } catch { /* gone */ } }
+  }
+  return null;
+}
+
+/** Get the icon image for one real file, as PNG bytes or null.
+ *  An .ico IS an icon, so decode it (nativeImage speaks ICO; the shell
+ *  would only show its file-type page). Everything else goes through the
+ *  shell, which reads embedded icon groups and DisplayIcon for us. */
+async function grabIcon(filePath) {
+  const { app, nativeImage } = require('electron');
+  if (/\.ico$/i.test(filePath)) {
+    try {
+      const ni = nativeImage.createFromPath(filePath);
+      if (ni && !ni.isEmpty()) return ni.toPNG();
+    } catch { /* fall back to the shell below */ }
+  }
+  const img = await app.getFileIcon(filePath, { size: 'larger' });
+  if (!img || img.isEmpty()) return null;
+  return img.toPNG();
+}
+
 /** Extract the program's own icon into the custom-icon store.
  *  Resolves {ok:true, key, kind, dataUrl} — the same shape as a picked or
  *  URL-installed custom image — or {ok:false, error} for the caller's hint
@@ -60,14 +98,17 @@ async function fromPath(raw) {
   try {
     // Lazy require: unit tests load this module under plain node, where
     // "electron" resolves to a path string, not an API object.
-    const { app } = require('electron');
-    const img = await app.getFileIcon(p, { size: 'larger' });
-    if (!img || img.isEmpty()) return { ok: false, error: 'Windows has no icon for that file' };
-    png = img.toPNG();
+    const { shell } = require('electron');
+    let source = p;
+    if (/\.lnk$/i.test(p)) {
+      try { source = linkIconSource(shell.readShortcutLink(p)) || p; } catch { source = p; }
+    }
+    png = await grabIcon(source);
+    if (!png) return { ok: false, error: 'Windows has no icon for that file' };
   } catch (err) {
     return { ok: false, error: 'Could not read the program icon — ' + String((err && err.message) || err) };
   }
   return customIcons.install(Buffer.from(png));
 }
 
-module.exports = { fromPath, programIconPath };
+module.exports = { fromPath, programIconPath, linkIconSource };
