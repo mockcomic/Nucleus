@@ -26,7 +26,13 @@
 
    The pure half (parse/compare/sanitize/pick) has no Electron or network deps;
    downloadUpdate() takes an injected fetch and writes with plain fs, so
-   tests/unit/update.test.js covers the whole thing without the net. */
+   tests/unit/update.test.js covers the whole thing without the net.
+
+   SECURITY CAVEAT: SHA-256 verifies integrity, not authenticity — the digest
+   arrives in the same unsigned manifest as the URL, so a host that can lie
+   about the release can lie about both. runUpdate therefore spawns ONLY a
+   path this module just verified, but update security is not complete until
+   a SIGNED release manifest (task 2) authenticates what is on offer. */
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -47,10 +53,18 @@ const JSON_MAX_BYTES = 256 * 1024;      // one release JSON never needs to be bi
 const DOWNLOAD_MAX_BYTES = 512 * 1024 * 1024;   // enforced DURING the transfer
 const TAG_RE = /^[\w.\-+]{1,100}$/;
 const SHA256_RE = /^[a-f0-9]{64}$/;
-/* GitHub serves release assets from these two hosts; anything else in the
-   JSON (a fork of the API response, a hostile proxy) is dropped. */
-const ASSET_HOSTS = ['objects.githubusercontent.com', 'github.com', 'codeload.github.com'];
-const ASSET_URL_RE = /^https:\/\/(?:objects\.githubusercontent\.com|github\.com\/[^/]+\/[^/]+\/releases\/download\/[^?#]*|codeload\.githubusercontent\.com)\/[^\s]+$/;
+/* Release assets must live on OUR repo's download path or GitHub's asset
+   CDN, over https only — a fork of the API response pointing its own repo's
+   assets at some other release is dropped. The tag and file name inside the
+   URL carry the same character budget as TAG_RE, so a redirect target can
+   never smuggle path syntax. Redirects may only land back on these hosts
+   (FINAL_URL_HOSTS): a 302 to a stranger host or plain http is a trust
+   downgrade even before the checksum. */
+const ASSET_URL_RE = new RegExp(
+  '^(?:https://github\\.com/' + REPO + '/releases/download/[\\w.\\-+%]{1,120}/[\\w.\\-+%]{1,120}' +
+  '|https://objects\\.githubusercontent\\.com/[^\\s]+)$'
+);
+const FINAL_URL_HOSTS = ['github.com', 'objects.githubusercontent.com'];
 
 /* ------------------------------ pure helpers ------------------------------ */
 
@@ -121,11 +135,11 @@ function sanitizeRelease(raw) {
       const name = a && typeof a.name === 'string' ? a.name.trim() : '';
       const url = a && typeof a.browser_download_url === 'string' ? a.browser_download_url.trim() : '';
       if (!TAG_RE.test(name)) continue;
+      // A name with no word character outside leading dots ('.', '..', '...')
+      // survives TAG_RE but basename()'s to itself — path.join would aim the
+      // rename at the parent directory. Not a file name; drop it.
+      if (!/[\w]/.test(name.replace(/^\.+/, ''))) continue;
       if (!ASSET_URL_RE.test(url)) continue;
-      try {
-        const host = new URL(url).host;
-        if (!ASSET_HOSTS.includes(host)) continue;
-      } catch { continue; }
       /* GitHub publishes `digest: "sha256:<hex>"` per asset — the ONLY thing a
          downloaded file is checked against. Absent (older release, proxy that
          strips it) stays null and the download reports unverified. */
@@ -175,6 +189,11 @@ let lastError = null;              // message of the last failed check
 let status = 'idle';               // idle | checking | ready | error
 let checking = null;               // in-flight promise, so concurrent checks share one request
 let download = null;               // last/ongoing installer download (see downloadUpdate)
+/* Absolute paths downloadUpdate sha256-verified this session. runUpdate will
+   spawn NOTHING outside this set: a failed, unverified or never-downloaded
+   file cannot reach child_process even if a caller asks it to (manual
+   installation from the folder is always still the user's option). */
+const verifiedDownloads = new Set();
 
 function configure(dir) {
   infoCachePath = dir ? path.join(dir, 'update-info.json') : null;
@@ -346,7 +365,16 @@ async function downloadUpdate(opts = {}) {
     });
     if (!res || !res.ok) throw new Error('HTTP ' + (res && res.status));
     if (!res.body) throw new Error('empty response');
+    /* Followed redirects must still end on the update hosts over https: a 302
+       to a stranger or a plain-http drop downgrades the trust chain before the
+       checksum ever runs. A fetch stand-in without res.url never moved. */
+    const finalUrl = (typeof res.url === 'string' && res.url) ? res.url : asset.url;
+    let u; try { u = new URL(finalUrl); } catch { throw new Error('unreadable redirect target'); }
+    if (u.protocol !== 'https:' || !FINAL_URL_HOSTS.includes(u.hostname)) {
+      throw new Error('download left the update hosts');
+    }
     const hash = crypto.createHash('sha256');
+    try { fs.rmSync(partPath, { force: true }); } catch { /* stale .part from a killed run */ }
     out = fs.createWriteStream(partPath);
     for await (const part of res.body) {
       const chunk = Buffer.isBuffer(part) ? part : Buffer.from(part);
@@ -369,6 +397,7 @@ async function downloadUpdate(opts = {}) {
     if (asset.sha256 && digest !== asset.sha256) throw new Error('checksum mismatch');
     try { fs.rmSync(finalPath, { force: true }); } catch { /* a re-download replaces it */ }
     fs.renameSync(partPath, finalPath);                        // same folder, so atomic
+    if (asset.sha256) verifiedDownloads.add(finalPath);        // the ONLY paths runUpdate will spawn
     setDownload({ pct: 100, bytes, error: null, done: true, verified: !!asset.sha256 });
     log.info('update download: ' + finalPath + (asset.sha256 ? ' (sha256 verified)' : ' (no published checksum)'));
     return { ok: true, path: finalPath, size: bytes, sha256: digest, verified: !!asset.sha256 };
@@ -389,6 +418,7 @@ async function downloadUpdate(opts = {}) {
     `opts.spawn` is injectable so the unit test never starts a real process. */
 function runUpdate(filePath, opts = {}) {
   if (typeof filePath !== 'string' || !/\.exe$/i.test(filePath)) return { ok: false, error: 'not an update file' };
+  if (!verifiedDownloads.has(filePath)) return { ok: false, error: 'that file was never verified' };
   const spawnImpl = opts.spawn || spawn;
   try {
     const child = spawnImpl(filePath, [], { detached: true, stdio: 'ignore' });
@@ -405,6 +435,6 @@ module.exports = {
   configure, check, snapshot, openRelease, downloadUpdate, runUpdate,
   /* Test-only state wipe (the module is a singleton like the other main-side
      services; unit tests need each scenario to start from a blank slate). */
-  _reset() { latest = null; lastCheckMs = 0; lastError = null; status = 'idle'; checking = null; infoCachePath = null; download = null; },
+  _reset() { latest = null; lastCheckMs = 0; lastError = null; status = 'idle'; checking = null; infoCachePath = null; download = null; verifiedDownloads.clear(); },
   _internals: () => ({ latest, lastCheckMs, status, download })
 };

@@ -306,9 +306,10 @@ const pax = require('node:path');
 const cry = require('node:crypto');
 
 /* A download-shaped fake: `ok` plus a chunked async-iterable body, which is
-   all downloadUpdate reads (no headers, no net). */
-function fakeDownload(chunks, ok = true, status = 200) {
-  return { ok, status, body: (async function* () { for (const c of chunks) yield Buffer.from(c); })() };
+   all downloadUpdate reads (no headers, no net). `url` stands in for the
+   post-redirect final URL (absent = the fetch never moved). */
+function fakeDownload(chunks, ok = true, status = 200, url = undefined) {
+  return { ok, status, url, body: (async function* () { for (const c of chunks) yield Buffer.from(c); })() };
 }
 const dlAsset = (body, over = {}) => ({
   name: 'Nucleus-1.2.0-b1-setup.exe',
@@ -391,21 +392,28 @@ test('downloadUpdate reports an HTTP failure as a failed download, not a throw',
   assert.match(upd.snapshot('1.0.0', NaN).download.error, /403/);
 });
 
-test('runUpdate launches the downloaded exe detached (and rejects anything else)', () => {
+test('runUpdate launches the downloaded exe detached (and rejects anything else)', async () => {
+  upd._reset();
   const calls = [];
   const fake = (cmd, args, options) => { calls.push({ cmd, args, options }); return { unref() {} }; };
-  assert.equal(upd.runUpdate('C:\\Users\\me\\Downloads\\Nucleus 1.2.0-b1-setup.exe', { spawn: fake }).ok, true);
+  // The gate is by construction: only a path this module verified may spawn,
+  // so the "accepted" leg downloads a verified file into a tmp dir first.
+  const dir = tmpDir();
+  const body = Buffer.from('gate-check');
+  const dl = await upd.downloadUpdate({ asset: dlAsset(body), destDir: dir, fetch: async () => fakeDownload([body]) });
+  assert.equal(dl.ok, true);
+  assert.equal(upd.runUpdate(dl.path, { spawn: fake }).ok, true);
   assert.deepEqual(calls[0], {
-    cmd: 'C:\\Users\\me\\Downloads\\Nucleus 1.2.0-b1-setup.exe',
+    cmd: dl.path,
     args: [],
     options: { detached: true, stdio: 'ignore' }
   });                                          // no shell: a spaced path is one path
   assert.equal(calls[0].options.detached, true);
-  for (const bad of ['https://github.com/x/y', 'C:\\Windows\\explorer.cpl', 'C:\\a\\b.bat', null, '', 42]) {
+  for (const bad of ['https://github.com/x/y', 'C:\\Windows\\explorer.cpl', 'C:\\a\\b.bat', null, '', 42, 'C:\\x\\y.exe']) {
     assert.equal(upd.runUpdate(bad, { spawn: fake }).ok, false, `must refuse ${String(bad)}`);
   }
   assert.equal(calls.length, 1);                               // nothing spawned for a refusal
-  assert.equal(upd.runUpdate('C:\\x\\y.exe', { spawn: () => { throw new Error('nope'); } }).ok, false);
+  assert.equal(upd.runUpdate(dl.path, { spawn: () => { throw new Error('nope'); } }).ok, false);
 });
 
 test('a newer release clears stale download state — an old failure cannot hide the new offer', async () => {
@@ -430,4 +438,120 @@ test('a newer release clears stale download state — an old failure cannot hide
 test('snapshot exposes no download at all before one has been attempted', () => {
   upd._reset();
   assert.equal(upd.snapshot('1.0.0', NaN).download, null);
+});
+
+/* ------------------------------ hardening -------------------------------- */
+
+test('sanitizeRelease pins asset URLs to our repo or the GitHub asset CDN, https only', () => {
+  const rel = sanitizeRelease(ghRelease({
+    assets: [
+      { name: 'ours.exe', size: 1, browser_download_url: 'https://github.com/mockcomic/Nucleus/releases/download/v1.2.0/ours.exe' },
+      { name: 'cdn.exe', size: 1, browser_download_url: 'https://objects.githubusercontent.com/objects/1/cdn.exe' },
+      { name: 'fork.exe', size: 1, browser_download_url: 'https://github.com/evil-owner/Nucleus/releases/download/v1.2.0/fork.exe' },
+      { name: 'other.exe', size: 1, browser_download_url: 'https://github.com/mockcomic/other-repo/releases/download/v1.2.0/other.exe' },
+      { name: 'down.exe', size: 1, browser_download_url: 'http://github.com/mockcomic/Nucleus/releases/download/v1.2.0/down.exe' },
+      { name: 'codeload.exe', size: 1, browser_download_url: 'https://codeload.github.com/mockcomic/Nucleus/tar.gz/v1.2.0' },
+      { name: 'query.exe', size: 1, browser_download_url: 'https://objects.githubusercontent.com/x/query.exe?token=abc' },
+      { name: 'dotdot', size: 1, browser_download_url: 'https://github.com/mockcomic/Nucleus/releases/download/v1.2.0/dotdot' }
+    ]
+  }));
+  assert.deepEqual(rel.assets.map((a) => a.name), ['ours.exe', 'cdn.exe', 'query.exe', 'dotdot']);
+});
+
+test('sanitizeRelease drops dot-only asset names (a basename of ".." is not a file)', () => {
+  const rel = sanitizeRelease(ghRelease({
+    assets: [
+      { name: '..', size: 1, browser_download_url: 'https://github.com/mockcomic/Nucleus/releases/download/v1.2.0/x' },
+      { name: '.', size: 1, browser_download_url: 'https://github.com/mockcomic/Nucleus/releases/download/v1.2.0/x' },
+      { name: '.hidden', size: 1, browser_download_url: 'https://github.com/mockcomic/Nucleus/releases/download/v1.2.0/x' }
+    ]
+  }));
+  assert.deepEqual(rel.assets.map((a) => a.name), ['.hidden']);
+});
+
+test('downloadUpdate follows redirects only back to the update hosts over https', async () => {
+  const body = Buffer.from('installer-bytes');
+  const good = cry.createHash('sha256').update(body).digest('hex');
+  for (const [where, want] of [
+    ['https://evil.example/f.exe', /left the update hosts/],
+    ['http://objects.githubusercontent.com/f.exe', /left the update hosts/]
+  ]) {
+    upd._reset();
+    const dir = tmpDir();
+    const r = await upd.downloadUpdate({
+      asset: dlAsset(body, { sha256: good }), destDir: dir,
+      fetch: async () => fakeDownload([body], true, 200, where)
+    });
+    assert.equal(r.ok, false, where);
+    assert.match(r.error, want);
+    assert.equal(fsx.readdirSync(dir).length, 0, 'a rejected redirect leaves nothing behind');
+  }
+  // A redirect that stays on github.com is fine.
+  upd._reset();
+  const dir = tmpDir();
+  const r = await upd.downloadUpdate({
+    asset: dlAsset(body), destDir: dir,
+    fetch: async () => fakeDownload([body], true, 200, 'https://github.com/mockcomic/Nucleus/releases/download/v1.2.0/f.exe')
+  });
+  assert.equal(r.ok, true);
+});
+
+test('a download with no published checksum succeeds but is never auto-runnable', async () => {
+  upd._reset();
+  const dir = tmpDir();
+  const body = Buffer.from('unverified-installer');
+  const r = await upd.downloadUpdate({
+    asset: dlAsset(body, { sha256: null }), destDir: dir,
+    fetch: async () => fakeDownload([body])
+  });
+  assert.equal(r.ok, true);
+  assert.equal(r.verified, false);
+  assert.equal(fsx.existsSync(r.path), true);
+  assert.equal(upd.snapshot('1.0.0', NaN).download.verified, false);
+  const calls = [];
+  const go = upd.runUpdate(r.path, { spawn: (c, a, o) => { calls.push(c); return { unref() {} }; } });
+  assert.equal(go.ok, false, 'an unverified file must not be spawned');
+  assert.match(go.error, /never verified/);
+  assert.equal(calls.length, 0);
+});
+
+test('runUpdate only spawns a path this module just sha256-verified', async () => {
+  upd._reset();
+  const calls = [];
+  const fake = (c) => { calls.push(c); return { unref() {} }; };
+  assert.equal(upd.runUpdate('C:\\Users\\me\\Downloads\\Nucleus-setup.exe', { spawn: fake }).ok, false);
+  assert.equal(calls.length, 0, 'a never-downloaded path spawns nothing');
+  const dir = tmpDir();
+  const body = Buffer.from('verified-installer');
+  const r = await upd.downloadUpdate({ asset: dlAsset(body), destDir: dir, fetch: async () => fakeDownload([body]) });
+  assert.equal(r.ok, true);
+  assert.equal(r.verified, true);
+  assert.equal(upd.runUpdate(r.path, { spawn: fake }).ok, true);
+  assert.deepEqual(calls, [r.path]);
+});
+
+test('downloadUpdate clears a stale .part left by a killed run', async () => {
+  upd._reset();
+  const dir = tmpDir();
+  const body = Buffer.from('fresh-installer');
+  const asset = dlAsset(body);
+  const name = asset.url.slice(asset.url.lastIndexOf('/') + 1);
+  fsx.writeFileSync(pax.join(dir, name + '.part'), 'half a gig of junk');
+  const r = await upd.downloadUpdate({ asset, destDir: dir, fetch: async () => fakeDownload([body]) });
+  assert.equal(r.ok, true);
+  assert.equal(fsx.existsSync(r.path + '.part'), false);
+  assert.deepEqual(fsx.readFileSync(r.path), body);
+});
+
+test('a checksum mismatch is still refused even after a redirect stays on-host', async () => {
+  upd._reset();
+  const dir = tmpDir();
+  const r = await upd.downloadUpdate({
+    asset: dlAsset(Buffer.from('real'), { sha256: 'f'.repeat(64) }), destDir: dir,
+    fetch: async () => fakeDownload([Buffer.from('tampered')], true, 200, 'https://github.com/mockcomic/Nucleus/releases/download/v1.2.0/x.exe')
+  });
+  assert.equal(r.ok, false);
+  assert.match(r.error, /checksum/);
+  assert.equal(fsx.readdirSync(dir).length, 0);
+  assert.notEqual(upd._internals().download.verified, true);
 });

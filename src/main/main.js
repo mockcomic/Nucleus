@@ -262,25 +262,29 @@ async function offerUpdate(snap, parent) {
         `${r.error || 'Could not download that file.'} \u2014 open the release page to try again.`, 'error');
       return after;
     }
+    /* A file with no published checksum stays manual-install-only: Nucleus
+       downloaded it, but runUpdate refuses to spawn it, so the dialog offers
+       "Show in folder" instead of "Run it now". */
+    const canRun = !!r.verified;
     const run = await askBox({
       type: 'info',
       title: 'Nucleus update',
       message: 'The update is downloaded.',
       detail: r.path
         + (r.verified ? '\nThe file matches the published checksum.'
-                      : '\nGitHub published no checksum for this file, so it could not be verified.')
+                      : '\nGitHub published no checksum for this file, so Nucleus will not run it automatically. Open the release page, or run it yourself from your Downloads folder.')
         + (isPortableBuild()
           ? '\n\nThis is a portable copy: running it starts the new file from Downloads — replace your own copy of Nucleus to keep it in place.'
             : '\n\nRun it now? Nucleus quits while the update installs.')
         + '\nYour settings are kept.',
-      buttons: ['Run it now', 'Show in folder', 'Later'],
+      buttons: canRun ? ['Run it now', 'Show in folder', 'Later'] : ['Show in folder', 'Later'],
       defaultId: 0,
-      cancelId: 2,
+      cancelId: canRun ? 2 : 1,
       noLink: true
     }, parent);
-    const choice = run && Number.isFinite(run.response) ? run.response : 2;
-    if (choice === 1) { try { shell.showItemInFolder(r.path); } catch { /* cosmetic */ } }
-    else if (choice === 0) {
+    const choice = run && Number.isFinite(run.response) ? run.response : (canRun ? 2 : 1);
+    if (choice === (canRun ? 1 : 0)) { try { shell.showItemInFolder(r.path); } catch { /* cosmetic */ } }
+    else if (canRun && choice === 0) {
       const go = update.runUpdate(r.path);
       if (!go.ok) {
         if (tray) tray.balloon('Could not start the update', `${go.error} \u2014 run ${r.path} yourself when you like.`, 'error');
