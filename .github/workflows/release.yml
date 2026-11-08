@@ -14,16 +14,23 @@ concurrency:
   group: release-main
   cancel-in-progress: false
 
+# Least privilege by default; the one job that publishes opts up (below).
+permissions:
+  contents: read
+
 jobs:
   windows:
     if: github.ref == 'refs/heads/main'
     runs-on: windows-latest
+    timeout-minutes: 30
     permissions:
       contents: write # required for the Release + its assets
     steps:
-      - uses: actions/checkout@v4
+      # Third-party actions pinned to immutable commit SHAs (reviewed at the
+      # version in the comment; dependabot-style updates re-review then bump).
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@cdca7365b2dadb8aad0a33bc7601856ffabcc48e # v4.3.0
         with:
           node-version: 22
           cache: npm
@@ -34,6 +41,8 @@ jobs:
       # node:test suites only (tests/unit/* stub SendInput — no injected
       # mouse/keyboard on the runner, per AGENTS.md).
       - name: Test
+        # Runs on windows-latest, where the win32 suites pass (the known
+        # 8 sys-explorer failures are Linux-dev-only and out of CI's way).
         run: npm test
 
       # `--` forwards the flag to the tail of the dist chain, i.e. to
@@ -51,11 +60,32 @@ jobs:
         shell: bash
         run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
 
+      # The in-app updater authenticates releases through the signed manifest
+      # (docs/update-signing.md): an unsigned release is browse-only, so a
+      # missing key must FAIL the pipeline loudly, not ship a silently
+      # un-updatable version. The secret is written to a file with the key
+      # never echoed into a log; sign-release.mjs self-verifies against the
+      # committed public key before anything is published.
+      - name: Sign update manifest
+        shell: bash
+        env:
+          KEY: ${{ secrets.NUCLEUS_UPDATE_SIGNING_KEY }}
+        run: |
+          if [ -z "$KEY" ]; then
+            echo "::error::secret NUCLEUS_UPDATE_SIGNING_KEY is not set — releases would publish unsigned (browse-only in-app). See docs/update-signing.md."
+            exit 1
+          fi
+          printf '%s\n' "$KEY" > "$RUNNER_TEMP/update-signing.key"
+          node scripts/sign-release.mjs "v${{ steps.ver.outputs.version }}" \
+            dist/Nucleus-*-setup.exe dist/Nucleus-*-portable.exe \
+            --signing-key "$RUNNER_TEMP/update-signing.key"
+          rm -f "$RUNNER_TEMP/update-signing.key"
+
       # One Release per version bump: tag_name is v<package.json version>, so
       # repeated pushes to main refresh it (update + overwrite_files, no asset
       # pile-up) and bumping `version` in package.json cuts a brand-new one.
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: v${{ steps.ver.outputs.version }}
           name: Nucleus ${{ steps.ver.outputs.version }} (${{ github.sha }})
@@ -65,3 +95,5 @@ jobs:
           files: |
             dist/Nucleus-*-portable.exe
             dist/Nucleus-*-setup.exe
+            dist/update-manifest.json
+            dist/update-manifest.json.sig
