@@ -231,7 +231,10 @@ Electron). Install the Setup exe, launch it once, and it lives in the tray from 
 Before publishing a release, sign it: `node scripts/sign-release.mjs <tag>
 dist/*.exe --upload` attaches the signed update manifest the in-app updater
 authenticates against — see [docs/update-signing.md](docs/update-signing.md)
-for the key setup and what the app does with an unsigned release.
+for the key setup and what the app does with an unsigned release. The release
+workflow does all of this for you once `NUCLEUS_UPDATE_SIGNING_KEY` is
+configured; the full trust model (updates, SSRF guard, import approval, IPC)
+is written up in [docs/security-model.md](docs/security-model.md).
 
 To launch from source with no console (e.g. a Startup entry during development):
 `wscript scripts\launch-hidden.vbs`.
