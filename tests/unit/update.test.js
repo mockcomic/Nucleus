@@ -29,11 +29,12 @@ test('the updater points at the renamed repo and its Releases page', () => {
 });
 
 /* A fetch Response stand-in readCapped understands: ok + an async-iterable
-   body of Buffers. status/ok are explicit so failure scenarios are honest. */
+   body of Buffers. status/ok are explicit so failure scenarios are honest.
+   A Buffer body is yielded as-is (byte-exact); anything else is stringified. */
 function fakeResponse(body, ok = true, status = 200) {
   return {
     ok, status,
-    body: (async function* () { yield Buffer.from(typeof body === 'string' ? body : JSON.stringify(body), 'utf8'); })()
+    body: (async function* () { yield Buffer.isBuffer(body) ? body : Buffer.from(typeof body === 'string' ? body : JSON.stringify(body), 'utf8'); })()
   };
 }
 const ghRelease = (over = {}) => Object.assign({
@@ -326,7 +327,7 @@ test('downloadUpdate writes the asset, verifies the published sha256, and leaves
   const body = Buffer.from('installer-bytes-'.repeat(64));
   const seen = [];
   const r = await upd.downloadUpdate({
-    asset: dlAsset(body), tag: 'v1.2.0', destDir: dir,
+    asset: dlAsset(body), tag: 'v1.2.0', authenticated: true, destDir: dir,
     fetch: async () => fakeDownload([body.slice(0, 100), body.slice(100)]),
     onProgress: (p) => seen.push(p.pct)
   });
@@ -349,7 +350,7 @@ test('downloadUpdate rejects a file that does not match the published checksum (
   const dir = tmpDir();
   const r = await upd.downloadUpdate({
     asset: dlAsset(Buffer.from('real'), { sha256: 'f'.repeat(64) }),
-    destDir: dir, fetch: async () => fakeDownload([Buffer.from('real')])
+    authenticated: true, destDir: dir, fetch: async () => fakeDownload([Buffer.from('real')])
   });
   assert.equal(r.ok, false);
   assert.match(r.error, /checksum/);
@@ -362,7 +363,7 @@ test('downloadUpdate enforces its byte cap DURING the transfer', async () => {
   const dir = tmpDir();
   const big = Buffer.from('x'.repeat(4000));
   const r = await upd.downloadUpdate({
-    asset: dlAsset(big, { sha256: null }), destDir: dir, maxBytes: 1000,
+    asset: dlAsset(big), authenticated: true, destDir: dir, maxBytes: 1000,
     fetch: async () => fakeDownload([big])
   });
   assert.equal(r.ok, false);
@@ -373,10 +374,10 @@ test('downloadUpdate enforces its byte cap DURING the transfer', async () => {
 test('downloadUpdate refuses anything but a sanitized asset URL and a real folder', async () => {
   upd._reset();
   const dir = tmpDir();
-  assert.equal((await upd.downloadUpdate({ asset: { name: 'a.exe', url: 'https://evil.example/a.exe' }, destDir: dir })).ok, false);
-  assert.equal((await upd.downloadUpdate({ asset: { name: '../a.exe', url: 'https://github.com/mockcomic/Nucleus/releases/download/v1.2.0/a.exe' }, destDir: dir })).ok, false);
-  assert.equal((await upd.downloadUpdate({ asset: dlAsset(Buffer.from('x')), destDir: '' })).ok, false);
-  assert.equal((await upd.downloadUpdate({ asset: null, destDir: dir })).ok, false);
+  assert.equal((await upd.downloadUpdate({ asset: { name: 'a.exe', url: 'https://evil.example/a.exe' }, authenticated: true, destDir: dir })).ok, false);
+  assert.equal((await upd.downloadUpdate({ asset: { name: '../a.exe', url: 'https://github.com/mockcomic/Nucleus/releases/download/v1.2.0/a.exe' }, authenticated: true, destDir: dir })).ok, false);
+  assert.equal((await upd.downloadUpdate({ asset: dlAsset(Buffer.from('x')), authenticated: true, destDir: '' })).ok, false);
+  assert.equal((await upd.downloadUpdate({ asset: null, authenticated: true, destDir: dir })).ok, false);
   assert.equal(fsx.readdirSync(dir).length, 0);
 });
 
@@ -384,7 +385,7 @@ test('downloadUpdate reports an HTTP failure as a failed download, not a throw',
   upd._reset();
   const dir = tmpDir();
   const r = await upd.downloadUpdate({
-    asset: dlAsset(Buffer.from('x')), destDir: dir,
+    asset: dlAsset(Buffer.from('x')), authenticated: true, destDir: dir,
     fetch: async () => fakeDownload([], false, 403)
   });
   assert.equal(r.ok, false);
@@ -400,7 +401,7 @@ test('runUpdate launches the downloaded exe detached (and rejects anything else)
   // so the "accepted" leg downloads a verified file into a tmp dir first.
   const dir = tmpDir();
   const body = Buffer.from('gate-check');
-  const dl = await upd.downloadUpdate({ asset: dlAsset(body), destDir: dir, fetch: async () => fakeDownload([body]) });
+  const dl = await upd.downloadUpdate({ asset: dlAsset(body), authenticated: true, destDir: dir, fetch: async () => fakeDownload([body]) });
   assert.equal(dl.ok, true);
   assert.equal(upd.runUpdate(dl.path, { spawn: fake }).ok, true);
   assert.deepEqual(calls[0], {
@@ -421,7 +422,7 @@ test('a newer release clears stale download state — an old failure cannot hide
   const dir = tmpDir();
   const bad = await upd.downloadUpdate({
     asset: dlAsset(Buffer.from('real'), { sha256: 'f'.repeat(64) }), tag: 'v1.2.0',
-    destDir: dir, fetch: async () => fakeDownload([Buffer.from('real')])
+    authenticated: true, destDir: dir, fetch: async () => fakeDownload([Buffer.from('real')])
   });
   assert.equal(bad.ok, false);
   assert.ok(upd.snapshot('1.0.0', NaN).download.error, 'the failure is visible while the release is the same');
@@ -479,7 +480,7 @@ test('downloadUpdate follows redirects only back to the update hosts over https'
     upd._reset();
     const dir = tmpDir();
     const r = await upd.downloadUpdate({
-      asset: dlAsset(body, { sha256: good }), destDir: dir,
+      asset: dlAsset(body, { sha256: good }), authenticated: true, destDir: dir,
       fetch: async () => fakeDownload([body], true, 200, where)
     });
     assert.equal(r.ok, false, where);
@@ -490,29 +491,24 @@ test('downloadUpdate follows redirects only back to the update hosts over https'
   upd._reset();
   const dir = tmpDir();
   const r = await upd.downloadUpdate({
-    asset: dlAsset(body), destDir: dir,
+    asset: dlAsset(body), authenticated: true, destDir: dir,
     fetch: async () => fakeDownload([body], true, 200, 'https://github.com/mockcomic/Nucleus/releases/download/v1.2.0/f.exe')
   });
   assert.equal(r.ok, true);
 });
 
-test('a download with no published checksum succeeds but is never auto-runnable', async () => {
+test('downloadUpdate refuses an asset with no digest to match (no unsigned fallback)', async () => {
   upd._reset();
   const dir = tmpDir();
   const body = Buffer.from('unverified-installer');
   const r = await upd.downloadUpdate({
-    asset: dlAsset(body, { sha256: null }), destDir: dir,
+    asset: dlAsset(body, { sha256: null }), destDir: dir, authenticated: true,
     fetch: async () => fakeDownload([body])
   });
-  assert.equal(r.ok, true);
-  assert.equal(r.verified, false);
-  assert.equal(fsx.existsSync(r.path), true);
-  assert.equal(upd.snapshot('1.0.0', NaN).download.verified, false);
-  const calls = [];
-  const go = upd.runUpdate(r.path, { spawn: (c, a, o) => { calls.push(c); return { unref() {} }; } });
-  assert.equal(go.ok, false, 'an unverified file must not be spawned');
-  assert.match(go.error, /never verified/);
-  assert.equal(calls.length, 0);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /checksum/);
+  assert.equal(fsx.readdirSync(dir).length, 0);
+  assert.equal(upd.snapshot('1.0.0', NaN).download, null);   // refused before any state
 });
 
 test('runUpdate only spawns a path this module just sha256-verified', async () => {
@@ -523,7 +519,7 @@ test('runUpdate only spawns a path this module just sha256-verified', async () =
   assert.equal(calls.length, 0, 'a never-downloaded path spawns nothing');
   const dir = tmpDir();
   const body = Buffer.from('verified-installer');
-  const r = await upd.downloadUpdate({ asset: dlAsset(body), destDir: dir, fetch: async () => fakeDownload([body]) });
+  const r = await upd.downloadUpdate({ asset: dlAsset(body), authenticated: true, destDir: dir, fetch: async () => fakeDownload([body]) });
   assert.equal(r.ok, true);
   assert.equal(r.verified, true);
   assert.equal(upd.runUpdate(r.path, { spawn: fake }).ok, true);
@@ -537,7 +533,7 @@ test('downloadUpdate clears a stale .part left by a killed run', async () => {
   const asset = dlAsset(body);
   const name = asset.url.slice(asset.url.lastIndexOf('/') + 1);
   fsx.writeFileSync(pax.join(dir, name + '.part'), 'half a gig of junk');
-  const r = await upd.downloadUpdate({ asset, destDir: dir, fetch: async () => fakeDownload([body]) });
+  const r = await upd.downloadUpdate({ asset, authenticated: true, destDir: dir, fetch: async () => fakeDownload([body]) });
   assert.equal(r.ok, true);
   assert.equal(fsx.existsSync(r.path + '.part'), false);
   assert.deepEqual(fsx.readFileSync(r.path), body);
@@ -547,11 +543,262 @@ test('a checksum mismatch is still refused even after a redirect stays on-host',
   upd._reset();
   const dir = tmpDir();
   const r = await upd.downloadUpdate({
-    asset: dlAsset(Buffer.from('real'), { sha256: 'f'.repeat(64) }), destDir: dir,
+    asset: dlAsset(Buffer.from('real'), { sha256: 'f'.repeat(64) }), destDir: dir, authenticated: true,
     fetch: async () => fakeDownload([Buffer.from('tampered')], true, 200, 'https://github.com/mockcomic/Nucleus/releases/download/v1.2.0/x.exe')
   });
   assert.equal(r.ok, false);
   assert.match(r.error, /checksum/);
   assert.equal(fsx.readdirSync(dir).length, 0);
   assert.notEqual(upd._internals().download.verified, true);
+});
+
+/* --------------------------- signed manifests ------------------------------ */
+
+const crypto2 = require('node:crypto');
+/* The signing side, mirrored in production by scripts/sign-release.mjs: the
+   manifest is signed as the exact bytes transmitted (detached signature), so
+   verification needs no canonicalization rules. */
+const kp = crypto2.generateKeyPairSync('ed25519');
+function signManifest(manifestObj, key = kp.privateKey) {
+  const bytes = Buffer.from(JSON.stringify(manifestObj, null, 1) + '\n', 'utf8');
+  return { bytes, sig: crypto2.sign(null, bytes, key) };
+}
+const manifestFor = (over = {}) => Object.assign({
+  schema: 1, repo: 'mockcomic/Nucleus', tag: 'v1.2.0',
+  generatedAt: '2026-10-01T00:00:00Z', nonce: 'n1',
+  assets: [{ name: 'Nucleus-1.2.0-b1-setup.exe', sha256: 'a'.repeat(64), size: 10 }]
+}, over);
+
+test('verifyManifest accepts a signature made by the trusted key', () => {
+  const m = manifestFor();
+  const { bytes, sig } = signManifest(m);
+  const r = upd.verifyManifest(bytes, sig.toString('base64'), 'v1.2.0', { keyPem: kp.publicKey.export({ type: 'spki', format: 'pem' }) });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.manifest.tag, 'v1.2.0');
+  assert.equal(r.manifest.assets[0].sha256, 'a'.repeat(64));
+});
+
+test('verifyManifest rejects a tampered manifest, a sig from the wrong key, and junk sigs', () => {
+  const keyPem = kp.publicKey.export({ type: 'spki', format: 'pem' });
+  const { bytes, sig } = signManifest(manifestFor());
+  const bad = (b) => upd.verifyManifest(b, sig.toString('base64'), 'v1.2.0', { keyPem });
+  assert.equal(bad(Buffer.concat([bytes, Buffer.from(' ')])).ok, false);                 // one appended byte
+  assert.equal(bad(Buffer.from(bytes.toString().replace('"v1.2.0"', '"v9.9.9"'))).ok, false); // swapped tag (sig dropped)
+  const other = crypto2.generateKeyPairSync('ed25519');
+  const forged = signManifest(manifestFor(), other.privateKey);
+  assert.equal(upd.verifyManifest(forged.bytes, forged.sig.toString('base64'), 'v1.2.0', { keyPem }).ok, false);
+  for (const junk of ['', '!!!!', 'YWJj', 'x'.repeat(200)]) {
+    assert.equal(upd.verifyManifest(bytes, junk, 'v1.2.0', { keyPem }).ok, false, `sig "${junk}"`);
+  }
+  assert.equal(upd.verifyManifest(bytes, sig.toString('base64'), 'v1.2.0', { keyPem: null }).ok, false); // no key = fail closed
+});
+
+test('verifyManifest rejects a tag mismatch, foreign repo, and unknown schema', () => {
+  const keyPem = kp.publicKey.export({ type: 'spki', format: 'pem' });
+  const V = (obj, tag) => { const { bytes, sig } = signManifest(obj); return upd.verifyManifest(bytes, sig.toString('base64'), tag, { keyPem }); };
+  assert.equal(V(manifestFor({ tag: 'v1.1.9' }), 'v1.2.0').ok, false);   // signed for another release
+  assert.equal(V(manifestFor({ tag: 'v1.2.0;' }), 'v1.2.0').ok, false);
+  assert.equal(V(manifestFor({ repo: 'evil/Nucleus' }), 'v1.2.0').ok, false);
+  assert.equal(V(manifestFor({ schema: 2 }), 'v1.2.0').ok, false);
+  assert.equal(V(manifestFor({ generatedAt: 'not-a-date' }), 'v1.2.0').ok, false);
+  assert.equal(V(manifestFor({ assets: [] }), 'v1.2.0').ok, false);      // nothing to pin = no purpose
+  assert.equal(V(manifestFor({ assets: [{ name: 'ok.exe', sha256: 'zz'.repeat(32) }] }), 'v1.2.0').ok, false); // bad hex
+  assert.equal(V(manifestFor({ assets: [{ name: 'ok.exe', sha256: 'a'.repeat(64) }] }), 'v1.2.0').ok, true);   // size optional
+});
+
+/* check() drives two fetch URLs: the release JSON, and (when the release
+   carries the manifest assets) the manifest + signature. */
+function fetchRouter(routes) {
+  return async (url) => {
+    const hit = routes.find((r) => r.on.test(url));
+    if (!hit) return { ok: false, status: 404, url };
+    return hit.res;
+  };
+}
+
+test('a release with a valid signed manifest is authenticated and pins its digests', async () => {
+  upd._reset();
+  const setup = signManifest(manifestFor({
+    assets: [{ name: 'Nucleus-1.2.0-b1-setup.exe', sha256: 'b'.repeat(64), size: 10 }]
+  }));
+  const rel = ghRelease({
+    assets: [
+      ghRelease().assets[0],
+      { name: 'update-manifest.json', size: 200, browser_download_url: 'https://github.com/mockcomic/Nucleus/releases/download/v1.2.0/update-manifest.json' },
+      { name: 'update-manifest.json.sig', size: 88, browser_download_url: 'https://github.com/mockcomic/Nucleus/releases/download/v1.2.0/update-manifest.json.sig' }
+    ]
+  });
+  const r = await upd.check({
+    fetch: fetchRouter([
+      { on: /api\.github\.com/, res: fakeResponse(rel) },
+      { on: /update-manifest\.json$/, res: fakeResponse(setup.bytes) },
+      { on: /\.sig$/, res: fakeResponse(setup.sig.toString('base64')) }
+    ]),
+    appVersion: '1.0.0', appPublishMs: Date.parse('2020-01-01'), now: () => 1, verifyKeyPem: kp.publicKey.export({ type: 'spki', format: 'pem' })
+  });
+  assert.equal(r.status, 'available');
+  const s = upd.snapshot('1.0.0', Date.parse('2020-01-01'));
+  assert.equal(s.info.authenticated, true);
+  assert.equal(s.info.authReason, null);
+  const exe = s.info.assets.find((a) => a.name === 'Nucleus-1.2.0-b1-setup.exe');
+  assert.equal(exe.sha256, 'b'.repeat(64));          // the MANIFEST digest is the authority
+});
+
+test('a tampered manifest makes the release browse-only (fail-safe), never an error and never verified', async () => {
+  upd._reset();
+  const setup = signManifest(manifestFor());
+  const tampered = Buffer.from(setup.bytes.toString().replace('"' + 'a'.repeat(64), '"' + 'c'.repeat(63) + '1'));
+  const rel = ghRelease({
+    assets: [
+      { name: 'Nucleus-1.2.0-b1-setup.exe', size: 1, digest: 'sha256:' + 'a'.repeat(64), browser_download_url: 'https://github.com/mockcomic/Nucleus/releases/download/v1.2.0/Nucleus-1.2.0-b1-setup.exe' },
+      { name: 'update-manifest.json', size: 200, browser_download_url: 'https://github.com/mockcomic/Nucleus/releases/download/v1.2.0/update-manifest.json' },
+      { name: 'update-manifest.json.sig', size: 88, browser_download_url: 'https://github.com/mockcomic/Nucleus/releases/download/v1.2.0/update-manifest.json.sig' }
+    ]
+  });
+  const r = await upd.check({
+    fetch: fetchRouter([
+      { on: /api\.github\.com/, res: fakeResponse(rel) },
+      { on: /update-manifest\.json$/, res: fakeResponse(tampered) },   // signed content, edited
+      { on: /\.sig$/, res: fakeResponse(setup.sig.toString('base64')) }
+    ]),
+    appVersion: '1.0.0', appPublishMs: Date.parse('2020-01-01'), now: () => 2, verifyKeyPem: kp.publicKey.export({ type: 'spki', format: 'pem' })
+  });
+  assert.equal(r.ok, true);
+  assert.equal(r.status, 'available');                                 // still offered, browse-only
+  const s = upd.snapshot('1.0.0', Date.parse('2020-01-01'));
+  assert.equal(s.info.authenticated, false);
+  assert.match(s.info.authReason, /signature/);
+  const dl = await upd.downloadUpdate({
+    asset: s.info.assets[0], destDir: tmpDir(),
+    fetch: async () => fakeDownload([Buffer.from('anything')])
+  });
+  assert.equal(dl.ok, false);
+  assert.match(dl.error, /authentic/);                                 // not even downloaded
+});
+
+test('a manifest pair missing from the release leaves GitHub-digest verification but no authentication', async () => {
+  upd._reset();
+  const r = await upd.check({
+    fetch: fetchRouter([{ on: /api\.github\.com/, res: fakeResponse(ghRelease()) }]),
+    appVersion: '1.0.0', appPublishMs: Date.parse('2020-01-01'), now: () => 3, verifyKeyPem: kp.publicKey.export({ type: 'spki', format: 'pem' })
+  });
+  assert.equal(r.status, 'available');
+  const s = upd.snapshot('1.0.0', Date.parse('2020-01-01'));
+  assert.equal(s.info.authenticated, false);
+  assert.equal(s.info.authReason, 'no manifest');
+  const dl = await upd.downloadUpdate({
+    asset: { ...s.info.assets[0], sha256: cry.createHash('sha256').update(Buffer.from('x')).digest('hex') },
+    destDir: tmpDir(), fetch: async () => fakeDownload([Buffer.from('x')])
+  });
+  assert.equal(dl.ok, false);                                          // unsigned release: no auto-download
+  assert.match(dl.error, /authentic/);
+});
+
+test('a half pair (manifest without signature or back) fails closed', async () => {
+  for (const which of ['json', 'sig']) {
+    upd._reset();
+    const setup = signManifest(manifestFor());
+    const assets = [ghRelease().assets[0]];
+    if (which === 'json') assets.push({ name: 'update-manifest.json', size: 200, browser_download_url: 'https://github.com/mockcomic/Nucleus/releases/download/v1.2.0/update-manifest.json' });
+    else assets.push({ name: 'update-manifest.json.sig', size: 88, browser_download_url: 'https://github.com/mockcomic/Nucleus/releases/download/v1.2.0/update-manifest.json.sig' });
+    const r = await upd.check({
+      fetch: fetchRouter([
+        { on: /api\.github\.com/, res: fakeResponse(ghRelease({ assets })) },
+        { on: /update-manifest\.json$/, res: fakeResponse(setup.bytes) },
+        { on: /\.sig$/, res: fakeResponse(setup.sig.toString('base64')) }
+      ]),
+      appVersion: '1.0.0', appPublishMs: Date.parse('2020-01-01'), now: () => 4, verifyKeyPem: kp.publicKey.export({ type: 'spki', format: 'pem' })
+    });
+    assert.equal(r.status, 'available');
+    assert.equal(upd.snapshot('1.0.0', Date.parse('2020-01-01')).info.authenticated, false, which);
+  }
+});
+
+test('a manifest signed by another key fails closed, and a network hiccup degrades to browse-only', async () => {
+  upd._reset();
+  const other = crypto2.generateKeyPairSync('ed25519');
+  const setup = signManifest(manifestFor(), other.privateKey);
+  const pair = [
+    { name: 'update-manifest.json', size: 200, browser_download_url: 'https://github.com/mockcomic/Nucleus/releases/download/v1.2.0/update-manifest.json' },
+    { name: 'update-manifest.json.sig', size: 88, browser_download_url: 'https://github.com/mockcomic/Nucleus/releases/download/v1.2.0/update-manifest.json.sig' }
+  ];
+  const r = await upd.check({
+    fetch: fetchRouter([
+      { on: /api\.github\.com/, res: fakeResponse(ghRelease({ assets: [ghRelease().assets[0], ...pair] })) },
+      { on: /update-manifest\.json$/, res: fakeResponse(setup.bytes) },
+      { on: /\.sig$/, res: fakeResponse(setup.sig.toString('base64')) }
+    ]),
+    appVersion: '1.0.0', appPublishMs: Date.parse('2020-01-01'), now: () => 5, verifyKeyPem: kp.publicKey.export({ type: 'spki', format: 'pem' })
+  });
+  assert.equal(r.status, 'available');
+  const s = upd.snapshot('1.0.0', Date.parse('2020-01-01'));
+  assert.equal(s.info.authenticated, false);
+  assert.match(s.info.authReason, /signature/);
+
+  upd._reset();
+  const r2 = await upd.check({
+    fetch: fetchRouter([
+      { on: /api\.github\.com/, res: fakeResponse(ghRelease({ assets: [ghRelease().assets[0], ...pair] })) },
+      { on: /update-manifest\.json$/, res: { ok: false, status: 500 } },
+      { on: /\.sig$/, res: fakeResponse('AA==') }
+    ]),
+    appVersion: '1.0.0', appPublishMs: Date.parse('2020-01-01'), now: () => 6, verifyKeyPem: kp.publicKey.export({ type: 'spki', format: 'pem' })
+  });
+  assert.equal(r2.status, 'available');                                // fail-soft on transport
+  assert.equal(upd.snapshot('1.0.0', Date.parse('2020-01-01')).info.authenticated, false);
+});
+
+test('downloadUpdate requires an authenticated release and gates the run on authentication', async () => {
+  upd._reset();
+  const dir = tmpDir();
+  const body = Buffer.from('signed-installer');
+  const asset = dlAsset(body);                                          // correct published digest
+  const calls = [];
+  const fake = (c) => { calls.push(c); return { unref() {} }; };
+  // Unauthenticated release: the right checksum alone is not enough anymore.
+  const r0 = await upd.downloadUpdate({ asset, destDir: dir, fetch: async () => fakeDownload([body]) });
+  assert.equal(r0.ok, false);
+  assert.match(r0.error, /authentic/);
+  assert.equal(fsx.readdirSync(dir).length, 0);
+  // Authenticated release: download + run.
+  const r = await upd.downloadUpdate({ asset, destDir: dir, authenticated: true, fetch: async () => fakeDownload([body]) });
+  assert.equal(r.ok, true);
+  assert.equal(r.verified, true);
+  assert.equal(r.authenticated, true);
+  assert.equal(upd.snapshot('1.0.0', NaN).download.authenticated, true);
+  assert.equal(upd.runUpdate(r.path, { spawn: fake }).ok, true);
+  assert.deepEqual(calls, [r.path]);
+  // Authenticated release but no digest to pin (manifest lost): refuse.
+  upd._reset();
+  const dir2 = tmpDir();
+  const r2 = await upd.downloadUpdate({ asset: dlAsset(body, { sha256: null }), destDir: dir2, authenticated: true, fetch: async () => fakeDownload([body]) });
+  assert.equal(r2.ok, false);
+  assert.match(r2.error, /checksum/);
+});
+
+test('chooseAsset never mistakes the manifest files for an installer', () => {
+  const rel = sanitizeRelease(ghRelease({
+    assets: [
+      { name: 'update-manifest.json', size: 1, browser_download_url: 'https://github.com/mockcomic/Nucleus/releases/download/v1.2.0/update-manifest.json' },
+      { name: 'update-manifest.json.sig', size: 1, browser_download_url: 'https://github.com/mockcomic/Nucleus/releases/download/v1.2.0/update-manifest.json.sig' }
+    ]
+  }));
+  assert.equal(chooseAsset(rel, false), null);
+  assert.equal(chooseAsset(rel, true), null);
+});
+
+test('the cache round-trip keeps manifest digests but never carries authentication', () => {
+  // A release as saved by saveCache (already sanitized, digests folded in,
+  // authenticated from the last live verification) re-enters through
+  // sanitizeRelease: digests survive, authenticated does not — until the
+  // next check re-verifies, a cached release is browse-only (fail-closed).
+  const cached = {
+    tag: 'v1.2.0', versionLabel: '1.2.0', publishedAt: '2026-10-01T00:00:00Z',
+    name: 'N', draft: false, prerelease: false,
+    assets: [{ name: 'Nucleus-1.2.0-b1-setup.exe', size: 10, sha256: 'a'.repeat(64), url: 'https://github.com/mockcomic/Nucleus/releases/download/v1.2.0/Nucleus-1.2.0-b1-setup.exe' }],
+    authenticated: true, authReason: null
+  };
+  const rel = sanitizeRelease(cached);
+  assert.equal(rel.assets[0].sha256, 'a'.repeat(64));
+  assert.notEqual(rel.authenticated, true);
 });

@@ -217,8 +217,11 @@ async function offerUpdate(snap, parent) {
      so a release the user has already been asked about never asks twice. */
   setState('updateSeenTag', info.tag);
   const asset = update.chooseAsset(info, isPortableBuild());
-  // A dev checkout ("npm start") has no installed copy to replace: browse.
-  const canInstall = !!(asset && app.isPackaged);
+  /* A dev checkout ("npm start") has no installed copy to replace: browse.
+     An unauthenticated release (no signed manifest / bad signature) is
+     browse-only too — there is no unsigned fallback to download or run. */
+  const authenticated = info.authenticated === true;
+  const canInstall = !!(asset && app.isPackaged && authenticated);
   const approx = asset && Number.isFinite(asset.size) ? ' \u2248 ' + Math.round(asset.size / 1048576) + ' MB' : '';
   const bn = log.buildNumber();
   const buttons = canInstall ? ['Update now', 'Open release page', 'Later'] : ['Open release page', 'Later'];
@@ -232,8 +235,10 @@ async function offerUpdate(snap, parent) {
         : `Nucleus ${info.version} is available.`,
       detail: `You are running ${app.getVersion()}${bn ? ` (build ${bn})` : ''}.`
         + (canInstall
-          ? `\n\n\u201cUpdate now\u201d downloads ${asset.name}${approx} to your Downloads folder, checks its checksum, and runs it. Nucleus quits while the update installs; your settings stay put.`
-          : '\n\nOpen the release page to download it.'),
+          ? `\n\n\u201cUpdate now\u201d downloads ${asset.name}${approx} to your Downloads folder, checks it against the signed update manifest, and runs it. Nucleus quits while the update installs; your settings stay put.`
+          : authenticated
+            ? '\n\nOpen the release page to download it.'
+            : `\n\nThis release carries no valid signed update manifest${info.authReason ? ` (${info.authReason})` : ''}, so Nucleus will not download or run it automatically. Open the release page to get it.`),
       buttons,
       defaultId: 0,
       cancelId: buttons.length - 1,
@@ -250,7 +255,7 @@ async function offerUpdate(snap, parent) {
     if (tray) tray.balloon('Downloading update', `Downloading ${asset.name} to your Downloads folder\u2026`);
     let lastPushMs = 0;
     const r = await update.downloadUpdate({
-      asset, tag: info.tag, destDir: downloadsDir(),
+      asset, tag: info.tag, destDir: downloadsDir(), authenticated: info.authenticated === true,
       onProgress: (p) => {
         const now = Date.now();
         if (p.pct === null || p.pct >= 100 || now - lastPushMs >= 500) { lastPushMs = now; pushUpdateState(); }
@@ -262,17 +267,19 @@ async function offerUpdate(snap, parent) {
         `${r.error || 'Could not download that file.'} \u2014 open the release page to try again.`, 'error');
       return after;
     }
-    /* A file with no published checksum stays manual-install-only: Nucleus
-       downloaded it, but runUpdate refuses to spawn it, so the dialog offers
-       "Show in folder" instead of "Run it now". */
+    /* An authenticated release with a mismatching digest never gets here
+       (downloadUpdate refuses it), so "Run it now" always offers a file
+       whose bytes match the signed manifest. A file that somehow arrives
+       unverified stays manual-install-only: "Show in folder", no "Run it
+       now" — runUpdate refuses to spawn it either way. */
     const canRun = !!r.verified;
     const run = await askBox({
       type: 'info',
       title: 'Nucleus update',
       message: 'The update is downloaded.',
       detail: r.path
-        + (r.verified ? '\nThe file matches the published checksum.'
-                      : '\nGitHub published no checksum for this file, so Nucleus will not run it automatically. Open the release page, or run it yourself from your Downloads folder.')
+        + (r.verified ? '\nThe file matches the signed update manifest.'
+                      : '\nThe file could not be verified against the signed update manifest, so Nucleus will not run it automatically. Open the release page, or run it yourself from your Downloads folder.')
         + (isPortableBuild()
           ? '\n\nThis is a portable copy: running it starts the new file from Downloads — replace your own copy of Nucleus to keep it in place.'
             : '\n\nRun it now? Nucleus quits while the update installs.')

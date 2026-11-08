@@ -228,6 +228,11 @@ entry (registry value `local.nucleus` under `HKCU\Software\Microsoft\Windows\Cur
 then points at the real exe and carries the app icon (in dev mode it points at
 Electron). Install the Setup exe, launch it once, and it lives in the tray from then on.
 
+Before publishing a release, sign it: `node scripts/sign-release.mjs <tag>
+dist/*.exe --upload` attaches the signed update manifest the in-app updater
+authenticates against — see [docs/update-signing.md](docs/update-signing.md)
+for the key setup and what the app does with an unsigned release.
+
 To launch from source with no console (e.g. a Startup entry during development):
 `wscript scripts\launch-hidden.vbs`.
 

@@ -28,11 +28,12 @@
    downloadUpdate() takes an injected fetch and writes with plain fs, so
    tests/unit/update.test.js covers the whole thing without the net.
 
-   SECURITY CAVEAT: SHA-256 verifies integrity, not authenticity — the digest
-   arrives in the same unsigned manifest as the URL, so a host that can lie
-   about the release can lie about both. runUpdate therefore spawns ONLY a
-   path this module just verified, but update security is not complete until
-   a SIGNED release manifest (task 2) authenticates what is on offer. */
+   AUTHENTICITY: every candidate release is offered with an authenticated
+   flag — true only when its update-manifest.json verified against the
+   embedded ed25519 public key (see docs/update-signing.md). Unsigned,
+   tampered or unreadable manifests fail CLOSED: the release is still shown
+   and openable, but nothing is downloaded or run for it. A download whose
+   bytes match the manifest digest is the only thing runUpdate will spawn. */
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -40,6 +41,13 @@ const { spawn } = require('child_process');
 const { shell } = require('electron');
 const { readCapped } = require('./capped-fetch');
 const log = require('./logger');
+
+/* The pinned trust anchor for update authenticity (see docs/update-signing.md):
+   the PUBLIC half of a release-time ed25519 keypair; the private half never
+   ships with the app and never touches this repo. Absent (key never
+   generated) fails CLOSED — every release is browse-only, never auto-run. */
+let TRUSTED_KEY_PEM = null;
+try { TRUSTED_KEY_PEM = fs.readFileSync(path.join(__dirname, 'update-key.pub.pem'), 'utf8'); } catch { /* fail closed */ }
 
 /* The renamed repo is the authority — the old `mockcomic/radial-wheel` URL
    only still answers because GitHub redirects renamed repos, and a redirect
@@ -122,30 +130,46 @@ function releaseUrl(tag) {
     Unknown fields are dropped, not passed through. */
 function sanitizeRelease(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
-  const tag = typeof raw.tag_name === 'string' ? raw.tag_name.trim() : '';
+  /* Accept BOTH shapes: the GitHub API field (tag_name) and our own
+     sanitized `tag` — update-info.json caches the sanitized release, and
+     read-back must round-trip, not silently drop to null. (Before this, the
+     cache never actually loaded: the sanitizer only knew tag_name.) */
+  const tag = typeof raw.tag_name === 'string' ? raw.tag_name.trim()
+    : (typeof raw.tag === 'string' ? raw.tag.trim() : '');
   if (!TAG_RE.test(tag)) return null;
-  const publishedAt = typeof raw.published_at === 'string' && Number.isFinite(Date.parse(raw.published_at))
-    ? raw.published_at : null;
+  const publishedRaw = typeof raw.published_at === 'string' ? raw.published_at
+    : (typeof raw.publishedAt === 'string' ? raw.publishedAt : '');
+  const publishedAt = publishedRaw && Number.isFinite(Date.parse(publishedRaw)) ? publishedRaw : null;
   if (!publishedAt) return null;                       // the date rule needs the date
   const draft = raw.draft === true;
   const prerelease = raw.prerelease === true;
   const assets = [];
+  let hasManifest = false, hasManifestSig = false;
   if (Array.isArray(raw.assets)) {
     for (const a of raw.assets) {
       const name = a && typeof a.name === 'string' ? a.name.trim() : '';
-      const url = a && typeof a.browser_download_url === 'string' ? a.browser_download_url.trim() : '';
+      const url = a && (typeof a.browser_download_url === 'string' ? a.browser_download_url
+        : (typeof a.url === 'string' ? a.url : '')).trim();   // both shapes, same round-trip rule
       if (!TAG_RE.test(name)) continue;
       // A name with no word character outside leading dots ('.', '..', '...')
       // survives TAG_RE but basename()'s to itself — path.join would aim the
       // rename at the parent directory. Not a file name; drop it.
       if (!/[\w]/.test(name.replace(/^\.+/, ''))) continue;
       if (!ASSET_URL_RE.test(url)) continue;
-      /* GitHub publishes `digest: "sha256:<hex>"` per asset — the ONLY thing a
-         downloaded file is checked against. Absent (older release, proxy that
-         strips it) stays null and the download reports unverified. */
+      if (name === MANIFEST_NAME) hasManifest = true;
+      if (name === MANIFEST_SIG_NAME) hasManifestSig = true;
+      /* GitHub publishes `digest: "sha256:<hex>"` per asset — a second,
+         independent digest to cross-check against the signed manifest.
+         Absent stays null: the manifest (when valid) is the authority. */
       const d = typeof a.digest === 'string' ? a.digest.trim().toLowerCase() : '';
+      /* Two accepted shapes: GitHub's `digest` field, or an already-sanitized
+         `sha256` (the update-info.json cache round-trip). authenticated is
+         DELIBERATELY not carried across the cache — read-back is data, not
+         authority, so a cached release stays browse-only until the next
+         check re-verifies its manifest (seconds after launch). */
       const sha256 = /^sha256:[a-f0-9]{64}$/.test(d) ? d.slice(7)
-        : (SHA256_RE.test(d) ? d : null);
+        : (SHA256_RE.test(d) ? d
+          : (typeof a.sha256 === 'string' && SHA256_RE.test(a.sha256) ? a.sha256 : null));
       assets.push({ name, url, size: Number.isFinite(+a.size) ? +a.size : null, sha256 });
       if (assets.length >= 16) break;                  // generous ceiling, bounded parsing
     }
@@ -159,8 +183,79 @@ function sanitizeRelease(raw) {
     publishedAt,
     draft,
     prerelease,
-    assets
+    assets,
+    /* Settled by check(): the pair GitHub reports, before any verification.
+       'pair' | 'half' | 'none' — a half pair fails closed, like a bad sig. */
+    manifestPair: hasManifest && hasManifestSig ? 'pair' : (hasManifest || hasManifestSig ? 'half' : 'none')
   };
+}
+
+/* --------------------------- signed manifests ----------------------------- */
+
+/* The manifest files every release SHOULD carry (see docs/update-signing.md):
+   update-manifest.json + update-manifest.json.sig, the signature over the
+   manifest's exact bytes, base64. Fixed names, so the pair is found by name
+   in the sanitized asset list and downloaded through the same pinned-URL,
+   redirect-checked, byte-capped path as every other asset. */
+const MANIFEST_NAME = 'update-manifest.json';
+const MANIFEST_SIG_NAME = 'update-manifest.json.sig';
+const MANIFEST_MAX_BYTES = 64 * 1024;
+
+/** Verify the manifest bytes against the base64 signature and the pinned
+    public key. Pure: {keyPem} injectable for tests (null key = fail closed).
+    Returns { ok, manifest } or { ok:false, reason } — the reason is shown to
+    the user, so it says WHAT failed, not how the crypto works.
+    Rules: valid ed25519 sig over the exact bytes; JSON parses to schema 1;
+    repo is ours; tag matches `expectTag` (a manifest signed for v1.2.0 cannot
+    vouch for a release re-tagged later); assets non-empty with clean names
+    and 64-hex digests. */
+function verifyManifest(bytes, sigB64, expectTag, opts = {}) {
+  const fail = (reason) => ({ ok: false, reason });
+  const keyPem = opts.keyPem === undefined ? TRUSTED_KEY_PEM : opts.keyPem;
+  if (!keyPem) return fail('no signing key is bundled with this build');
+  if (!Buffer.isBuffer(bytes)) return fail('manifest is not bytes');
+  if (bytes.length === 0 || bytes.length > MANIFEST_MAX_BYTES) return fail('manifest size is invalid');
+  if (typeof sigB64 !== 'string' || !/^[A-Za-z0-9+/=\s]{64,128}$/.test(sigB64.trim())) return fail('signature is malformed');
+  let sig;
+  try { sig = Buffer.from(sigB64.trim(), 'base64'); } catch { return fail('signature is malformed'); }
+  if (sig.length !== 64) return fail('signature is malformed');
+  let pub;
+  try { pub = crypto.createPublicKey(keyPem); } catch { return fail('the bundled signing key is unreadable'); }
+  let ok;
+  try { ok = crypto.verify(null, bytes, pub, sig); } catch { ok = false; }
+  if (!ok) return fail('signature does not verify (tampered manifest or the wrong key)');
+  let raw;
+  try { raw = JSON.parse(bytes.toString('utf8')); } catch { return fail('manifest is not valid JSON'); }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return fail('manifest is not an object');
+  if (raw.schema !== 1) return fail('manifest schema is not understood by this build');
+  if (raw.repo !== REPO) return fail('manifest was signed for a different repository');
+  if (typeof raw.tag !== 'string' || raw.tag !== expectTag) return fail('manifest was signed for a different release');
+  if (!Number.isFinite(Date.parse(String(raw.generatedAt || '')))) return fail('manifest carries no valid date');
+  if (!Array.isArray(raw.assets) || raw.assets.length === 0 || raw.assets.length > 16) return fail('manifest lists no usable files');
+  const assets = [];
+  for (const a of raw.assets) {
+    const name = a && typeof a.name === 'string' ? a.name : '';
+    const sha256 = a && typeof a.sha256 === 'string' ? a.sha256.toLowerCase() : '';
+    if (!TAG_RE.test(name) || !/[\w]/.test(name.replace(/^\.+/, ''))) return fail('manifest carries a bad file name');
+    if (!SHA256_RE.test(sha256)) return fail('manifest carries a bad checksum');
+    assets.push({ name, sha256, size: Number.isFinite(+a.size) && +a.size >= 0 ? +a.size : null });
+  }
+  return { ok: true, manifest: { schema: 1, tag: raw.tag, generatedAt: raw.generatedAt, assets } };
+}
+
+/** Fold a VERIFIED manifest into the sanitized release: the manifest's digest
+    becomes the only digest a download may match (a different published digest
+    is a contradiction, and the manifest — the signed authority — wins), and
+    assets the manifest omits lose their digest (nothing trustworthy to match).
+    Returns the release with authenticated/authReason set. Pure. */
+function applyManifest(rel, manifest) {
+  const byName = new Map(manifest.assets.map((a) => [a.name, a]));
+  const assets = rel.assets.map((a) => {
+    const m = byName.get(a.name);
+    if (!m) return { ...a, sha256: null };
+    return (a.sha256 && a.sha256 !== m.sha256) ? { ...a, sha256: m.sha256, digestConflict: true } : { ...a, sha256: m.sha256 };
+  });
+  return { ...rel, assets, authenticated: true, authReason: null };
 }
 
 /* ------------------------------ asset picker ------------------------------ */
@@ -172,7 +267,9 @@ function sanitizeRelease(raw) {
     .exe will do, and with no .exe at all the first asset — the release page
     stays the fallback either way. */
 function chooseAsset(release, wantPortable) {
-  const list = (release && Array.isArray(release.assets)) ? release.assets : [];
+  const list = (release && Array.isArray(release.assets))
+    ? release.assets.filter((a) => a.name !== MANIFEST_NAME && a.name !== MANIFEST_SIG_NAME)
+    : [];
   const want = wantPortable ? /-portable\.exe$/i : /-setup\.exe$/i;
   return list.find((a) => want.test(a.name))
     || list.find((a) => /\.exe$/i.test(a.name))
@@ -224,6 +321,29 @@ function saveCache() {
   } catch { /* cache is a convenience, never a requirement */ }
 }
 
+/** Fetch one asset through the same discipline as the installer download:
+    pinned URL (the asset list is already sanitized), https-only redirects,
+    hard byte cap. Returns the exact bytes, or null on any transport failure
+    (fail-soft at the CALLER: no manifest degrades to browse-only, never to
+    an error or an unsigned auto-install). */
+async function fetchAssetBytes(asset, doFetch, maxBytes) {
+  try {
+    const res = await doFetch(asset.url, {
+      redirect: 'follow',
+      headers: { 'User-Agent': 'Nucleus/update-manifest' },
+      signal: AbortSignal.timeout ? AbortSignal.timeout(FETCH_TIMEOUT) : undefined,
+      cache: 'no-store'
+    });
+    if (!res || !res.ok) return null;
+    if (typeof res.url === 'string' && res.url) {
+      try { const u = new URL(res.url); if (u.protocol !== 'https:' || !FINAL_URL_HOSTS.includes(u.hostname)) return null; } catch { return null; }
+    }
+    const got = await readCapped(res, maxBytes);
+    if (got.overflow || got.failed || !got.buf) return null;
+    return got.buf;
+  } catch { return null; }
+}
+
 /** One request to the Releases API. fetchImpl/clock injectable for tests. */
 async function check(opts = {}) {
   const doFetch = opts.fetch || fetch;
@@ -268,6 +388,26 @@ async function check(opts = {}) {
         status = 'ready';
         return { ok: true, status: 'none' };
       }
+      /* Authenticity (docs/update-signing.md): the release may carry the
+         signed manifest pair. Verifying it is best-effort FETCH but STRICT
+         VERDICT — a half pair, a transport failure, or a failed signature
+         leaves the release browse-only (authenticated:false). The absence of
+         proof is never treated as proof: there is no unsigned fallback. */
+      rel.authenticated = false;
+      rel.authReason = rel.manifestPair === 'none' ? 'no manifest' : 'no valid manifest';
+      if (rel.manifestPair === 'pair') {
+        const mA = rel.assets.find((a) => a.name === MANIFEST_NAME);
+        const mS = rel.assets.find((a) => a.name === MANIFEST_SIG_NAME);
+        const [bytesBuf, sigBuf] = await Promise.all([
+          fetchAssetBytes(mA, doFetch, MANIFEST_MAX_BYTES),
+          fetchAssetBytes(mS, doFetch, 1024)
+        ]);
+        if (bytesBuf && sigBuf) {
+          const v = verifyManifest(bytesBuf, sigBuf.toString('utf8').trim(), rel.tag, { keyPem: opts.verifyKeyPem });
+          if (v.ok) Object.assign(rel, applyManifest(rel, v.manifest));
+          else rel.authReason = v.reason;
+        }
+      }
       latest = rel;
       status = 'ready';
       saveCache();
@@ -303,7 +443,7 @@ function snapshot(appVersion, appPublishMs) {
     ok: true,
     status: st,
     kind: (dec && dec.kind) || null,
-    info: latest ? { tag: latest.tag, version: latest.versionLabel, url: latest.url, name: latest.name, publishedAt: latest.publishedAt, assets: latest.assets } : null,
+    info: latest ? { tag: latest.tag, version: latest.versionLabel, url: latest.url, name: latest.name, publishedAt: latest.publishedAt, assets: latest.assets, authenticated: !!latest.authenticated, authReason: latest.authReason || null } : null,
     download: download ? { ...download } : null,
     lastCheckMs,
     error: st === 'error' ? lastError : null
@@ -340,6 +480,15 @@ async function downloadUpdate(opts = {}) {
   if (!asset || typeof asset.url !== 'string' || !ASSET_URL_RE.test(asset.url)
       || typeof asset.name !== 'string' || !TAG_RE.test(asset.name)) {
     return { ok: false, error: 'no downloadable file in that release' };
+  }
+  /* Authenticity before bytes: the caller can only say `authenticated` from
+     the sanitized release whose manifest verified (main.js passes
+     snap.info.authenticated). An unauthenticated release is browse-only —
+     no unsigned fallback, ever. And an authenticated release with no digest
+     for THIS asset (a contradiction we cannot resolve) is not runnable. */
+  if (opts.authenticated !== true) return { ok: false, error: 'that update is not authenticated; open the release page instead' };
+  if (typeof asset.sha256 !== 'string' || !SHA256_RE.test(asset.sha256)) {
+    return { ok: false, error: 'no published checksum for that file' };
   }
   const destDir = typeof opts.destDir === 'string' ? opts.destDir : '';
   if (!destDir) return { ok: false, error: 'no Downloads folder to write to' };
@@ -394,13 +543,13 @@ async function downloadUpdate(opts = {}) {
     await new Promise((r) => out.end(r));
     out = null;
     const digest = hash.digest('hex');
-    if (asset.sha256 && digest !== asset.sha256) throw new Error('checksum mismatch');
+    if (digest !== asset.sha256) throw new Error('checksum mismatch');
     try { fs.rmSync(finalPath, { force: true }); } catch { /* a re-download replaces it */ }
     fs.renameSync(partPath, finalPath);                        // same folder, so atomic
-    if (asset.sha256) verifiedDownloads.add(finalPath);        // the ONLY paths runUpdate will spawn
-    setDownload({ pct: 100, bytes, error: null, done: true, verified: !!asset.sha256 });
-    log.info('update download: ' + finalPath + (asset.sha256 ? ' (sha256 verified)' : ' (no published checksum)'));
-    return { ok: true, path: finalPath, size: bytes, sha256: digest, verified: !!asset.sha256 };
+    verifiedDownloads.add(finalPath);                          // the ONLY paths runUpdate will spawn
+    setDownload({ pct: 100, bytes, error: null, done: true, verified: true, authenticated: true });
+    log.info('update download: ' + finalPath + ' (sha256 verified)');
+    return { ok: true, path: finalPath, size: bytes, sha256: digest, verified: true, authenticated: true };
   } catch (err) {
     const msg = String((err && err.message) || err);
     if (out) { try { out.destroy(); } catch { /* already gone */ } }
@@ -430,8 +579,9 @@ function runUpdate(filePath, opts = {}) {
 }
 
 module.exports = {
-  REPO, RELEASES_PAGE, API_URL,
+  REPO, RELEASES_PAGE, API_URL, MANIFEST_NAME, MANIFEST_SIG_NAME,
   parseVersion, compareVersions, decide, releaseUrl, sanitizeRelease, chooseAsset,
+  verifyManifest, applyManifest,
   configure, check, snapshot, openRelease, downloadUpdate, runUpdate,
   /* Test-only state wipe (the module is a singleton like the other main-side
      services; unit tests need each scenario to start from a blank slate). */
