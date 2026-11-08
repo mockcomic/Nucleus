@@ -16,7 +16,7 @@ const donate = require('./donate');
 const iconGen = require('./icon-gen');
 const usage = require('./usage');
 const sys = require('./sys');
-const { walkItems, sanitizeItem } = require('./config');
+const { walkItems, sanitizeItem, collectExecutableItems } = require('./config');
 const log = require('./logger');
 const { supportsVibrancy } = require('./windows');
 
@@ -304,6 +304,30 @@ function registerIpc(deps) {
          summon after the config lands already finds its art. Per-icon failures
          are skips, never aborts — the config import proceeds regardless. */
       const isBundle = bundle.looksLikeBundle(raw);
+      /* Imported ≠ local: a file from somewhere else can carry command/app/
+         macro items that will run the moment the wheel fires them. Show the
+         user WHAT the import makes launchable, and only then apply. Restore
+         is exempt (those files are this app's own backups, written after the
+         original approval) — the trust boundary is provenance, not format. */
+      if (reason === 'import') {
+        const exec = collectExecutableItems(isBundle ? raw.config : raw);
+        if (exec.length) {
+          const lines = exec.slice(0, 12).map((e) => `\u2022 ${e.type}: \u201c${e.label || '(no name)'}\u201d \u2192 ${e.value || '(empty)'}`);
+          if (exec.length > 12) lines.push(`\u2026and ${exec.length - 12} more`);
+          const verdict = await dialog.showMessageBox(settings.win, {
+            type: 'warning',
+            title: 'Import — these items will be able to run things',
+            message: `This ${isBundle ? 'package' : 'config'} contains ${exec.length} item${exec.length === 1 ? '' : 's'} that launch or run something:`,
+            detail: lines.join('\n') + '\n\nImporting replaces your current config (a backup is kept). Restore or Reload later to undo.',
+            buttons: ['Import anyway', 'Cancel'],
+            defaultId: 1,           // Cancel wins Enter and the X
+            cancelId: 1,
+            noLink: true
+          });
+          const choseImport = verdict && Number.isFinite(verdict.response) && verdict.response === 0;
+          if (!choseImport) return { ok: false, canceled: true };
+        }
+      }
       let icons = null;
       if (isBundle) {
         const got = bundle.importIcons(raw);
@@ -457,7 +481,11 @@ function registerIpc(deps) {
      key. Both families resolve through ONE channel so the overlay, the Settings
      rows and the live preview share a single lookup. */
   dashboardIcons.configure(path.join(app.getPath('userData'), 'icons', 'dashboard'));
-  customIcons.configure(path.join(app.getPath('userData'), 'icons', 'custom'));
+  customIcons.configure(path.join(app.getPath('userData'), 'icons', 'custom'), {
+    // Live read, so flipping the toggle takes effect on the next fetch with
+    // no re-configure; validate() fails closed on absent/junk.
+    allowLan: () => !!(store.get().behavior && store.get().behavior.lanIcons)
+  });
   const ringItems = (cfg) => {
     const out = [];
     walkItems(cfg, (it) => { out.push(it); });
