@@ -8,6 +8,19 @@ const log = require('./logger');
 const { themes, themeById, themeBySignature, signature } = require('./themes');
 
 const VERSION = 2;
+
+/* One-time glyph fix-up, applied inside validate() so it heals every load
+   (file watch, import, legacy import alike). Older factory defaults stored
+   three code points whose Fluent/MDL2 glyphs are not what the labels claim:
+   E74E is the Save floppy (Mute is E74F), E7B5 is a lock-screen monitor
+   (Snip is F7ED), E7E8 is the power button (Sleep is the E708 moon). The
+   remap fires only on the exact legacy id+glyph pair, so an intentional
+   custom glyph — a floppy picked from the picker — survives untouched. */
+const SYS_GLYPH_FIX = {
+  mute: { from: '\uE74E', to: '\uE74F' },
+  screenshot: { from: '\uE7B5', to: '\uF7ED' },
+  sleep: { from: '\uE7E8', to: '\uE708' }
+};
 let idSeq = 0;
 const nid = () => `i${Date.now().toString(36)}${(idSeq++).toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 
@@ -95,6 +108,11 @@ function defaults() {
     appearance: {
       innerRadius: 70, outerRadius: 210, ringSplit: 0.5, startAngle: 0, gapDeg: 3,
       showLabels: true, fontSize: 12, centerLabel: '', animationMs: 160,
+      /* The 1px machined rim wheel-core draws as a circle at outerRadius. It
+         closes across the gaps between outer plates, which on some palettes
+         reads as a stray ring around the outermost segments — opt-out lives in
+         Settings → Appearance. */
+      showRim: true,
       colors: { ...DEFAULT_COLORS }
     },
     behavior: {
@@ -164,14 +182,14 @@ function defaults() {
         { id: nid(), label: 'Browser', icon: '\uE774', type: 'url', value: 'https://google.com', color: null },
         { id: nid(), label: 'Files', icon: '\uE8B7', type: 'app', value: 'explorer.exe', color: null },
         { id: nid(), label: 'Settings', icon: '\uE713', type: 'sys', value: 'settings', color: null },
-        { id: nid(), label: 'Notes', icon: '\uE70F', type: 'app', value: 'notepad.exe', color: null }
+        { id: nid(), label: 'Notes', icon: '\uE70B', type: 'app', value: 'notepad.exe', color: null }
       ],
       2: [
         { id: nid(), label: 'Calculator', icon: '\uE8EF', type: 'app', value: 'calc.exe', color: null },
-        { id: nid(), label: 'Screenshot', icon: '\uE7B5', type: 'sys', value: 'screenshot', color: null },
-        { id: nid(), label: 'Mute', icon: '\uE74E', type: 'sys', value: 'mute', color: null },
+        { id: nid(), label: 'Screenshot', icon: '\uF7ED', type: 'sys', value: 'screenshot', color: null },
+        { id: nid(), label: 'Mute', icon: '\uE74F', type: 'sys', value: 'mute', color: null },
         { id: nid(), label: 'Lock', icon: '\uE72E', type: 'sys', value: 'lock', color: null },
-        { id: nid(), label: 'Sleep', icon: '\uE7E8', type: 'sys', value: 'sleep', color: null },
+        { id: nid(), label: 'Sleep', icon: '\uE708', type: 'sys', value: 'sleep', color: null },
         { id: nid(), label: 'Recycle Bin', icon: '\uE74D', type: 'sys', value: 'recycle_bin', color: null },
         { id: nid(), label: 'Task Mgr', icon: '\uE9D9', type: 'sys', value: 'task_manager', color: null },
         { id: nid(), label: 'Desktop', icon: '\uE7F4', type: 'sys', value: 'show_desktop', color: null }
@@ -249,10 +267,13 @@ function validate(raw) {
     let id = typeof it.id === 'string' && it.id ? it.id : nid();
     while (seenIds.has(id)) id = nid();
     seenIds.add(id);
+    let icon = typeof it.icon === 'string' ? Array.from(it.icon).slice(0, 2).join('') : '';
+    const fix = SYS_GLYPH_FIX[type === 'sys' ? String(it.value ?? '') : ''];
+    if (fix && icon === fix.from) icon = fix.to;
     return {
       id,
       label: String(it.label ?? `Item ${i + 1}`).slice(0, 40),
-      icon: typeof it.icon === 'string' ? Array.from(it.icon).slice(0, 2).join('') : '',
+      icon,
       // Logo/artwork slot: a Dashboard Icons slug, a `custom:<hash>.<kind>`
       // key (see dashboard-icons.js and custom-icons.js), or the reserved
       // `builtin:app` key (icon-gen's own-app artwork). Anything neither
@@ -275,6 +296,11 @@ function validate(raw) {
       // Per-segment icon-only override; the global appearance.showLabels
       // toggle still wins when labels are off for everyone.
       hideLabel: !!it.hideLabel,
+      // Per-segment label placement on the plate (wheel-core.paintItemContent):
+      // '' = outward beside the icon (the classic layout), 'center' parks the
+      // label on the band mid-line and 'inward' pulls it to the hub edge —
+      // both move the icon to the rim side instead so the pair never collides.
+      labelPos: it.labelPos === 'center' || it.labelPos === 'inward' ? it.labelPos : '',
       // Optional parameter slot; currently only the sys `explorer` action
       // consumes it (the folder Explorer opens in). Wiped on containers and
       // on `setting` (whose only parameter is the setting id in `value`);
@@ -383,6 +409,8 @@ function validate(raw) {
       startAngle: clamp(ap.startAngle, 0, 359.9, base.appearance.startAngle),
       gapDeg: clamp(ap.gapDeg, 0, 10, base.appearance.gapDeg),
       showLabels: ap.showLabels !== false,
+      // Opt-out only: absent/junk keeps the machined rim ON, as before.
+      showRim: ap.showRim !== false,
       fontSize: clamp(ap.fontSize, 8, 20, base.appearance.fontSize),
       centerLabel: String(ap.centerLabel ?? '').slice(0, 24),
       animationMs: clamp(ap.animationMs, 0, 400, base.appearance.animationMs),

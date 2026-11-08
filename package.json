@@ -8,6 +8,8 @@
   "license": "MIT",
   "scripts": {
     "start": "electron .",
+    "dev": "node scripts/start-agent.js",
+    "dev:watch": "electronmon . --user-data-dir=.dev-userdata",
     "start:agent": "node scripts/start-agent.js",
     "start:hidden": "wscript scripts/launch-hidden.vbs",
     "make-icons": "node scripts/make-icons.mjs",
@@ -21,12 +23,20 @@
   },
   "devDependencies": {
     "electron": "^44.7.2",
-    "electron-builder": "^26.0.12"
+    "electron-builder": "^26.0.12",
+    "electronmon": "^2.0.4"
+  },
+  "electronmon": {
+    "patterns": [
+      "!.dev-userdata/**",
+      "!dist/**",
+      "!tests/**"
+    ]
   },
   "build": {
     "appId": "local.nucleus",
     "productName": "Nucleus",
-    "buildNumber": "21",
+    "buildNumber": "31",
     "directories": {
       "output": "dist"
     },
@@ -53,5 +63,9 @@
     "portable": {
       "artifactName": "Nucleus-${version}-b${buildNumber}-portable.exe"
     }
+  },
+  "allowScripts": {
+    "electron-winstaller@5.4.0": true,
+    "koffi@2.16.3": true
   }
 }

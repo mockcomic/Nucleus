@@ -17,7 +17,9 @@ const ENTRIES = [
   { id: 'toggle_wheel_sound', label: 'Wheel sounds', group: 'Wheel',
     icon: '\uE767', path: ['behavior', 'wheelSound'] },
   { id: 'toggle_labels', label: 'Segment labels', group: 'Wheel',
-    icon: '\uE8C4', path: ['appearance', 'showLabels'] },
+    icon: '\uE932', path: ['appearance', 'showLabels'] },
+  { id: 'toggle_wheel_rim', label: 'Wheel outer edge line', group: 'Wheel',
+    icon: '\uEA3A', path: ['appearance', 'showRim'] },
   { id: 'toggle_marking', label: 'Press-drag marking', group: 'Wheel',
     icon: '\uE73A', path: ['behavior', 'markingSelect'] },
   { id: 'toggle_type_filter', label: 'Type-to-filter', group: 'Wheel',
@@ -27,18 +29,18 @@ const ENTRIES = [
   { id: 'toggle_dismiss_escape', label: 'Dismiss with Esc', group: 'Dismissal',
     icon: '\uE711', path: ['behavior', 'dismissOnEscape'] },
   { id: 'toggle_dismiss_rightclick', label: 'Dismiss with right-click', group: 'Dismissal',
-    icon: '\uE974', path: ['behavior', 'dismissOnRightClick'] },
+    icon: '\uE8B0', path: ['behavior', 'dismissOnRightClick'] },
   { id: 'toggle_click_through', label: 'Mouse click-through', group: 'Dismissal',
     icon: '\uE962', path: ['behavior', 'mouseClickThrough'] },
   { id: 'toggle_focus_existing', label: 'Focus running apps', group: 'App',
-    icon: '\uE8B7', path: ['behavior', 'focusExistingApp'] },
+    icon: '\uE73F', path: ['behavior', 'focusExistingApp'] },
   { id: 'toggle_profiles', label: 'App profiles', group: 'App',
     icon: '\uE7EE', path: ['behavior', 'profilesEnabled'] },
   { id: 'toggle_game_mode', label: 'Game mode', group: 'App',
     icon: '\uE7FC', path: ['behavior', 'gameMode', 'enabled'],
     parent: ['behavior'], fill: () => ({ enabled: false, apps: [] }) },
   { id: 'toggle_autostart', label: 'Start with Windows', group: 'App',
-    icon: '\uE77B', path: ['behavior', 'autostart'] }
+    icon: '\uE8FC', path: ['behavior', 'autostart'] }
 ];
 
 const CATALOG = ENTRIES.map((e) => ({ id: e.id, label: e.label, group: e.group, icon: e.icon }));

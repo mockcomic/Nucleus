@@ -21,16 +21,22 @@ const ALIAS = {
   setout: 'set_output_device', setin: 'set_input_device'
 };
 
+/* Icons are Segoe Fluent / MDL2 code points, each shape-checked against the
+   installed fonts (docs cmap names + a rendered contact sheet): Sleep is the
+   E708 moon (E7E8 is the power button), Snip is the F7ED snipping glyph
+   (E7B5 is the lock-screen monitor), Mute is the E74F muted speaker (E74E is
+   the Save floppy), track skip is E892/E893 (E950 is a chip), Task View is
+   the E7C4 window pair, and so on. */
 const CATALOG = [
   { id: 'lock', label: 'Lock workstation', icon: '\uE72E', group: 'System' },
-  { id: 'sleep', label: 'Sleep', icon: '\uE7E8', group: 'System' },
-  { id: 'screenshot', label: 'Snip / screenshot', icon: '\uE7B5', group: 'System' },
+  { id: 'sleep', label: 'Sleep', icon: '\uE708', group: 'System' },
+  { id: 'screenshot', label: 'Snip / screenshot', icon: '\uF7ED', group: 'System' },
   { id: 'show_desktop', label: 'Show desktop', icon: '\uE7F4', group: 'System' },
   { id: 'task_manager', label: 'Task Manager', icon: '\uE9D9', group: 'System' },
-  { id: 'action_center', label: 'Action Center', icon: '\uE81E', group: 'System' },
+  { id: 'action_center', label: 'Action Center', icon: '\uE7E7', group: 'System' },
   { id: 'run_dialog', label: 'Run dialog', icon: '\uE756', group: 'System' },
   { id: 'exit_app', label: 'Quit Nucleus', icon: '\uE711', group: 'System' },
-  { id: 'mute', label: 'Mute audio', icon: '\uE74E', group: 'Audio' },
+  { id: 'mute', label: 'Mute audio', icon: '\uE74F', group: 'Audio' },
   { id: 'volume_up', label: 'Volume up', icon: '\uE995', group: 'Audio' },
   { id: 'volume_down', label: 'Volume down', icon: '\uE993', group: 'Audio' },
   { id: 'volume_mixer', label: 'Volume Mixer', icon: '\uE767', group: 'Audio' },
@@ -39,50 +45,50 @@ const CATALOG = [
      flow and stores the chosen endpoint id in the item's `dir` field. */
   { id: 'set_output_device', label: 'Set audio output device', icon: '\uE995', group: 'Audio', hasDevice: 'render' },
   { id: 'set_input_device', label: 'Set audio input device', icon: '\uE720', group: 'Audio', hasDevice: 'capture' },
-  { id: 'play_pause', label: 'Play / Pause', icon: '\uE9A1', group: 'Audio' },
-  { id: 'next_track', label: 'Next track', icon: '\uE950', group: 'Audio' },
-  { id: 'prev_track', label: 'Previous track', icon: '\uE950', group: 'Audio' },
+  { id: 'play_pause', label: 'Play / Pause', icon: '\uE768', group: 'Audio' },
+  { id: 'next_track', label: 'Next track', icon: '\uE893', group: 'Audio' },
+  { id: 'prev_track', label: 'Previous track', icon: '\uE892', group: 'Audio' },
   { id: 'sound', label: 'Sound settings', icon: '\uE767', group: 'Audio' },
-  { id: 'task_view', label: 'Task View', icon: '\uE9D9', group: 'Windows' },
-  { id: 'snap_layouts', label: 'Snap layouts', icon: '\uE8F1', group: 'Windows' },
-  { id: 'minimize_windows', label: 'Minimize all windows', icon: '\uE838', group: 'Windows' },
+  { id: 'task_view', label: 'Task View', icon: '\uE7C4', group: 'Windows' },
+  { id: 'snap_layouts', label: 'Snap layouts', icon: '\uF0E2', group: 'Windows' },
+  { id: 'minimize_windows', label: 'Minimize all windows', icon: '\uE921', group: 'Windows' },
   { id: 'project', label: 'Project screen', icon: '\uE7F4', group: 'Windows' },
-  { id: 'desktop_left', label: 'Switch desktop ←', icon: '\uE7F4', group: 'Windows' },
-  { id: 'desktop_right', label: 'Switch desktop →', icon: '\uE7F4', group: 'Windows' },
+  { id: 'desktop_left', label: 'Switch desktop ←', icon: '\uE72B', group: 'Windows' },
+  { id: 'desktop_right', label: 'Switch desktop →', icon: '\uE72A', group: 'Windows' },
   /* hasDir: the action accepts an optional folder in the item's `dir` field
      (surfaced as a Folder input + Browse… in the settings editor). Anything
      Explorer's address bar takes works — absolute paths, `%VAR%\…`, `~/Downloads`,
      a bare known-folder name, and `shell:` / `::{CLSID}` verbs. */
   { id: 'explorer', label: 'File Explorer', icon: '\uE8B7', group: 'Files', hasDir: true },
   { id: 'recycle_bin', label: 'Recycle Bin', icon: '\uE74D', group: 'Files' },
-  { id: 'this_pc', label: 'This PC', icon: '\uE9DB', group: 'Files' },
+  { id: 'this_pc', label: 'This PC', icon: '\uE7F4', group: 'Files' },
   { id: 'settings', label: 'Windows Settings', icon: '\uE713', group: 'Settings' },
-  { id: 'control_panel', label: 'Control Panel', icon: '\uE8F1', group: 'Settings' },
-  { id: 'device_manager', label: 'Device Manager', icon: '\uE713', group: 'Settings' },
-  { id: 'services', label: 'Services', icon: '\uE8CC', group: 'Settings' },
+  { id: 'control_panel', label: 'Control Panel', icon: '\uECA5', group: 'Settings' },
+  { id: 'device_manager', label: 'Device Manager', icon: '\uE772', group: 'Settings' },
+  { id: 'services', label: 'Services', icon: '\uEA37', group: 'Settings' },
   { id: 'wifi', label: 'Wi-Fi settings', icon: '\uE701', group: 'Settings' },
   { id: 'bluetooth', label: 'Bluetooth settings', icon: '\uE702', group: 'Settings' },
   { id: 'notifications', label: 'Notifications / focus', icon: '\uE91C', group: 'Settings' },
   { id: 'night_light', label: 'Night light', icon: '\uE708', group: 'Settings' },
   { id: 'display', label: 'Display settings', icon: '\uE7F4', group: 'Settings' },
-  { id: 'game_bar', label: 'Xbox Game Bar', icon: '\uE9AC', group: 'Settings' },
-  { id: 'windows_update', label: 'Windows Update', icon: '\uE71D', group: 'Settings' },
-  { id: 'installed_apps', label: 'Installed apps', icon: '\uE734', group: 'Settings' },
-  { id: 'default_apps', label: 'Default apps', icon: '\uE70F', group: 'Settings' },
-  { id: 'storage', label: 'Storage settings', icon: '\uE825', group: 'Settings' },
-  { id: 'privacy', label: 'Privacy settings', icon: '\uE721', group: 'Settings' },
+  { id: 'game_bar', label: 'Xbox Game Bar', icon: '\uE7FC', group: 'Settings' },
+  { id: 'windows_update', label: 'Windows Update', icon: '\uE895', group: 'Settings' },
+  { id: 'installed_apps', label: 'Installed apps', icon: '\uE71D', group: 'Settings' },
+  { id: 'default_apps', label: 'Default apps', icon: '\uECAA', group: 'Settings' },
+  { id: 'storage', label: 'Storage settings', icon: '\uEDA2', group: 'Settings' },
+  { id: 'privacy', label: 'Privacy settings', icon: '\uE72E', group: 'Settings' },
   { id: 'power', label: 'Power settings', icon: '\uE850', group: 'Settings' },
   { id: 'clipboard_history', label: 'Clipboard history', icon: '\uF0E3', group: 'Input' },
-  { id: 'emoji_picker', label: 'Emoji picker', icon: '\uE740', group: 'Input' },
-  { id: 'screen_keyboard', label: 'On-Screen Keyboard', icon: '\uE8A1', group: 'Input' },
+  { id: 'emoji_picker', label: 'Emoji picker', icon: '\uE899', group: 'Input' },
+  { id: 'screen_keyboard', label: 'On-Screen Keyboard', icon: '\uE765', group: 'Input' },
   { id: 'magnifier', label: 'Magnifier', icon: '\uE754', group: 'Input' },
-  { id: 'hibernate', label: 'Hibernate', icon: '\uE709', group: 'Power' },
+  { id: 'hibernate', label: 'Hibernate', icon: '\uE708', group: 'Power' },
   /* Shutdown / restart get a 15 s grace window (visible countdown + cancel
      note in the Windows shutdown dialog) — a mis-clicked wheel segment must
      not vaporise an unsaved document. `shutdown /a` also aborts within it. */
   { id: 'restart', label: 'Restart', icon: '\uE72C', group: 'Power' },
-  { id: 'shutdown', label: 'Shut down', icon: '\uE850', group: 'Power' },
-  { id: 'sign_out', label: 'Sign out', icon: '\uE711', group: 'Power' }
+  { id: 'shutdown', label: 'Shut down', icon: '\uE7E8', group: 'Power' },
+  { id: 'sign_out', label: 'Sign out', icon: '\uE72B', group: 'Power' }
 ];
 
 const IDS = new Set(CATALOG.map(c => c.id));

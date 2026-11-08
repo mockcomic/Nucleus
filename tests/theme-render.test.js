@@ -55,6 +55,31 @@ test('theme chips: buildWheel renders a themed mini wheel for every catalog them
   }
 });
 
+test('the machined rim is the only disc appearance.showRim removes', () => {
+  const discs = (appearance) => {
+    const host = makeNode();
+    buildWheel(host, {
+      appearance: {
+        innerRadius: 12, outerRadius: 27, ringSplit: 0.5, startAngle: 0, gapDeg: 3,
+        showLabels: false, fontSize: 12, centerLabel: '', animationMs: 0,
+        colors: THEMES[0].colors, ...appearance,
+      },
+      rings: { 1: Array.from({ length: 6 }, (_, i) => ({ id: 'a' + i, label: 'x', icon: '', type: 'app', value: '', color: null })) },
+    }, { preview: true, scale: 1 });
+    const found = [];
+    (function walk(n) {
+      if (n.attrs && typeof n.attrs.class === 'string') found.push(n.attrs.class);
+      for (const c of n.children || []) walk(c);
+    })(host);
+    return found;
+  };
+  assert.ok(discs({}).includes('rim'), 'absent flag = the rim every pre-toggle config drew');
+  assert.ok(discs({ showRim: true }).includes('rim'), 'explicit on = rim');
+  const off = discs({ showRim: false });
+  assert.ok(!off.includes('rim'), 'off = no rim disc at all');
+  assert.ok(off.includes('top-light') && off.includes('hub-top'), 'the rest of the machined-light pass survives');
+});
+
 test('chromeVarMap covers exactly the vars settings.css consumes from <html>', () => {
   const css = readFileSync(path.join(ROOT, 'src/renderer/settings/settings.css'), 'utf8');
   const map = chromeVarMap(computeChrome(THEMES[0].colors));

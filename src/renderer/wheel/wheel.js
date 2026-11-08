@@ -203,7 +203,7 @@ function mxRow(host, { icon, label, aria, onVolume, onMute }) {
   const slider = h('input', 'mx-slider', { type: 'range', min: '0', max: '100', step: '1', 'aria-label': aria }, row);
   const pct = h('span', 'mx-pct', { text: '—' }, row);
   const mute = h('button', 'mx-mute', { type: 'button', 'aria-pressed': 'false', title: label + ' — click to mute', 'aria-label': 'Mute ' + label }, row);
-  h('span', 'g', { text: '\uE74E' }, mute);           // speaker-off glyph
+  h('span', 'g', { text: '\uE74F' }, mute);           // speaker-off glyph
   const st = { row, name, slider, pct, mute, busy: false, idle: null, lastLabel: label };
 
   slider.addEventListener('input', () => {

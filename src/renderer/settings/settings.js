@@ -1,6 +1,7 @@
 import { buildWheel, createFlyoutNavigator } from '../shared/wheel-core.js';
 import { THEMES, themeById, themeBySignature, signature, computeChrome, chromeVarMap, paletteMode } from '../../main/themes.mjs';
 import { ICON_CATALOG } from '../shared/icon-catalog.js';
+import { collapseEditorKey } from '../shared/seg-keys.js';
 
 const api = window.wheelAPI;
 const $ = (s, r = document) => r.querySelector(s);
@@ -368,7 +369,7 @@ function renderSegments() {
       if (lbl) { lbl.focus(); lbl.select(); }
     };
     if (ring === keys[N - 1] && N >= 3) {
-      const rm = el('button', 'btn small glyph', { text: '\uE75D', title: 'Remove this ring', 'aria-label': 'Remove ' + ringTitle(ring, N) }, head);
+      const rm = el('button', 'btn small glyph', { text: '\uE74D', title: 'Remove this ring', 'aria-label': 'Remove ' + ringTitle(ring, N) }, head);
       rm.onclick = () => removeRing(ring);
     }
     if (!R[ring].length) {
@@ -433,7 +434,7 @@ const GUARDED_TYPES = new Set(['command', 'macro', 'sys', 'setting']);
    (depth > 0, owner = parentItem.children). `key` addresses disclosure state
    across the tree ("1-3", "1-3/0", …). */
 function newSegItem(type = 'app') {
-  const it = { id: crypto.randomUUID(), label: 'New item', icon: '', iconImage: '', type, value: '', color: null };
+  const it = { id: crypto.randomUUID(), label: 'New item', icon: '', iconImage: '', labelPos: '', type, value: '', color: null };
   if (type === 'folder') it.children = [];
   return it;
 }
@@ -517,7 +518,7 @@ function segRow(ctx) {
     // A folder/recents/mixer container executes nothing (main refuses them
     // too) — no Play affordance to dangle.
     let armed = false, armTimer = null;
-    const runBtn = mini('\uE9A1', 'Try this action now', async () => {   // Play — E768 renders the catalog's Mic glyph
+    const runBtn = mini('\uE768', 'Try this action now', async () => {   // Play
       if (GUARDED_TYPES.has(item.type) && !armed) {
         armed = true;
         runBtn.querySelector('.g').textContent = '\uE7BA';   // Warning
@@ -534,12 +535,12 @@ function segRow(ctx) {
     function disarm() {
       armed = false;
       clearTimeout(armTimer);
-      runBtn.querySelector('.g').textContent = '\uE9A1';
+      runBtn.querySelector('.g').textContent = '\uE768';
       runBtn.classList.remove('armed');
       runBtn.title = 'Try this action now';
     }
   }
-  mini('\uE75D', 'Delete segment', () => {   // Trash (E894 stays reserved for clear/close)
+  mini('\uE74D', 'Delete segment', () => {   // Trash (E894 stays reserved for clear/close)
     if (depth === 0 && ringItems().length <= 1) {
       toast('The wheel needs at least one segment', true);
       return;
@@ -563,7 +564,12 @@ function segRow(ctx) {
   }, 'act-del');
 
   const toggleEditor = () => {
-    openEditorKey = openEditorKey === key ? null : key;
+    /* openEditorKey is one slot for the whole tree. Closing a NESTED row has to
+       hand it back to the folder that contains it — a null key also drops that
+       folder's `openDesc`, so collapsing a sub-menu row's editor hid the entire
+       sub-menu manager the row had been clicked through. A ring-level row has
+       no ancestor to fall back to, so it still collapses to nothing. */
+    openEditorKey = openEditorKey === key ? collapseEditorKey(key) : key;
     renderSegments();
     const rowEl = document.querySelector(`[data-seg-key="${key}"]`);
     const ed = rowEl && rowEl.querySelector('.seg-edit');
@@ -719,6 +725,17 @@ function segEditor(ctx, withFields = true) {
   el('span', null, { text: 'Hide label' }, hideLb);
   chkHide.checked = !!item.hideLabel;
   chkHide.addEventListener('change', () => { item.hideLabel = chkHide.checked; touch(false); });
+
+  // Where the label sits on the plate (mirrors wheel-core's labelPos). The
+  // two non-default placements move the icon to the rim side, so this reads
+  // as a label/icon pair swap on the plate, not a collision you must dodge.
+  const cPos = field('Label position', uid + '-labelpos');
+  const selPos = el('select', null, { id: uid + '-labelpos', title: 'Where the label text sits on the wheel plate — Centered and Inward move the icon to the rim side' }, cPos);
+  el('option', null, { value: '', text: 'Outward — beside the icon (default)' }, selPos);
+  el('option', null, { value: 'center', text: 'Centered on the plate' }, selPos);
+  el('option', null, { value: 'inward', text: 'Inward — toward the hub' }, selPos);
+  selPos.value = item.labelPos === 'center' || item.labelPos === 'inward' ? item.labelPos : '';
+  selPos.addEventListener('change', () => { item.labelPos = selPos.value; touch(false); });
 
   const cType = field('Type', uid + '-type');
   const selType = el('select', null, { id: uid + '-type' }, cType);
@@ -1646,10 +1663,12 @@ function closeIconModal() {
   iconModalOpener = null;
 }
 
-/* The glyph wall is 57 cells deep — nobody scans that. A curated dozen is the
-   default decision surface; the full grid is one explicit click away. */
-const CURATED_GLYPHS = new Set(['\uE713', '\uE774', '\uE756', '\uE8C4', '\uE706', '\uE793',
-  '\uE734', '\uE9AC', '\uE9A1', '\uE77B', '\uE950', '\uE721', '\uE80F', '\uE754']);
+/* The glyph wall runs deep — nobody scans that. A curated dozen is the
+   default decision surface; the full grid is one explicit click away.
+   Every code here is shape-checked against Segoe Fluent / MDL2 (see
+   icon-catalog.js) — the first twelve are the original curated intents. */
+const CURATED_GLYPHS = new Set(['\uE713', '\uE774', '\uE756', '\uE715', '\uE70B', '\uE8EF',
+  '\uE719', '\uE7FC', '\uE768', '\uE722', '\uE8D6', '\uE72E', '\uE80F', '\uE721']);
 
 (function buildIconGrid() {
   const grid = $('#icon-grid');
@@ -2333,6 +2352,8 @@ function wireBehaviorCheckboxes() {
   updateMouseControls();   // dim/enable the click-through toggle for the current trigger
   $('#ap-showlabels').checked = cfg.appearance.showLabels;
   $('#ap-showlabels').onchange = (e) => { cfg.appearance.showLabels = e.target.checked; renderPreview(); touch(false); };
+  $('#ap-showrim').checked = cfg.appearance.showRim !== false;
+  $('#ap-showrim').onchange = (e) => { cfg.appearance.showRim = e.target.checked; renderPreview(); touch(false); };
   const cl = $('#ap-centerlabel');
   cl.value = cfg.appearance.centerLabel;
   cl.oninput = () => { cfg.appearance.centerLabel = cl.value; touch(false); };   // preview live AND persist (touch(false) rerenders the preview without the row-list rebuild)
@@ -2835,7 +2856,7 @@ async function wireAudio() {
     const muteBtn = el('button', 'btn small glyph au-mute', {
       type: 'button', title: 'Mute this app', 'aria-label': 'Mute this app', 'aria-pressed': 'false'
     }, row);
-    el('span', 'g', { text: '\uE74E' }, muteBtn);           // in-brand speaker-off glyph
+    el('span', 'g', { text: '\uE74F' }, muteBtn);           // speaker-off glyph
     const st = { el: row, name, slider, pct, muteBtn, busy: false, idle: null };
 
     slider.addEventListener('input', () => {

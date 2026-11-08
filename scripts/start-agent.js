@@ -64,6 +64,16 @@ function buildLaunch(env, extraArgs = [], opts = {}) {
     args.push(`--user-data-dir=${userDataDir}`);
     notes.push(`profile ${userDataDir}`);
   }
+  /* Visible launch: main.js opens the wheel shortly after boot when the argv
+     carries --show-wheel (first- AND second-instance), so a dev run shows
+     itself instead of quietly joining the tray. A caller asking for --hidden
+     (or passing --show-wheel themselves) opts out of the default. Without
+     this, a dev instance whose hotkey lost to an installed copy looks
+     exactly like a launch that never happened. */
+  if (!hasFlag(extra, '--show-wheel') && !hasFlag(extra, '--hidden')) {
+    args.push('--show-wheel');
+    notes.push('--show-wheel added (visible launch)');
+  }
   return { env: childEnv, args, stripped, notes };
 }
 
@@ -89,6 +99,33 @@ function seedProfile(agentDir = AGENT_PROFILE, realDir = REAL_PROFILE, legacyDir
   return 'seeded defaults (autostart off)';
 }
 
+/* Advisory, best-effort: an installed Nucleus running side by side owns the
+   wheel hotkey and shows an identical tray icon — the classic reason a dev
+   run "doesn't appear". Read-only tasklist probe; silence on any failure. */
+function warnInstalledCopy() {
+  try {
+    const { execFileSync } = require('child_process');
+    const out = execFileSync('tasklist', ['/FI', 'IMAGENAME eq Nucleus.exe', '/NH'],
+      { encoding: 'utf8', windowsHide: true });
+    if (/Nucleus\.exe/i.test(out)) {
+      console.log('[start-agent] note: an installed Nucleus is running — it owns the wheel hotkey');
+      console.log('[start-agent]   and its tray icon is identical. Quit it to feel the dev build');
+      console.log('[start-agent]   (the dev wheel opens on start anyway, via --show-wheel).');
+    }
+  } catch { /* advisory only */ }
+}
+
+/* Last lines of the dev-profile log — what a fast death actually said. */
+function devLogTail(lines = 8) {
+  try {
+    const dir = path.join(AGENT_PROFILE, 'logs');
+    const names = fs.readdirSync(dir).filter((n) => /^(?:nucleus|radial-wheel)-\d{4}-\d{2}-\d{2}\.log$/.test(n)).sort();
+    const last = names[names.length - 1];
+    if (!last) return '';
+    return fs.readFileSync(path.join(dir, last), 'utf8').split(/\r?\n/).filter(Boolean).slice(-lines).join('\n');
+  } catch { return ''; }
+}
+
 function main() {
   const { spawn } = require('child_process');
   const bin = require('electron');
@@ -103,18 +140,39 @@ function main() {
 
   const { env, args, stripped, notes } = buildLaunch(process.env, process.argv.slice(2));
   const seed = seedProfile();
+  warnInstalledCopy();
   console.log(`[start-agent] ${notes.join(' + ')}`);
   console.log(`[start-agent] profile config: ${seed}`);
   console.log(`[start-agent] ${path.basename(bin)} ${args.join(' ')}`);
 
+  const t0 = Date.now();
+  /* Ctrl+C (or a killed terminal) must not look like a failure: on Windows a
+     signaled child reports exit code 1 via TerminateProcess, so record that
+     the death was OUR doing — report success and skip the fast-death
+     diagnostic for a deliberate early interrupt. */
+  let shuttingDown = false;
   const child = spawn(bin, args, { cwd: ROOT, env, stdio: 'inherit' });
-  child.on('exit', (code, signal) => process.exit(signal ? 1 : (code ?? 0)));
+  child.on('exit', (code, signal) => {
+    if (shuttingDown) process.exit(0);
+    /* Anything that dies in under ~3s never became a real session: an app the
+       user quit lives at least until they quit it. Show the log tail so a
+       "didn't launch" is never a silent one (locked-out second instance,
+       confined-shell wall, corrupted profile — they all read differently). */
+    if (!signal && Date.now() - t0 < 3000) {
+      console.error(`[start-agent] Electron exited after ${Date.now() - t0} ms (code ${code ?? 'null'}) — this was not a normal session.`);
+      const tail = devLogTail();
+      console.error(tail ? `[start-agent] last dev-profile log lines:\n${tail}` :
+        '[start-agent] no dev-profile log line was written — the process died before app logging started (confined shell? see the two walls at the top of this file).');
+      console.error(`[start-agent] dev profile: ${AGENT_PROFILE} — an earlier dev instance may already own its lock.`);
+    }
+    process.exit(signal ? 1 : (code ?? 0));
+  });
   child.on('error', (e) => {
     console.error(`[start-agent] failed to launch Electron: ${e.message}`);
     process.exit(1);
   });
   for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
-    process.on(sig, () => { try { child.kill(sig); } catch { /* already gone */ } });
+    process.on(sig, () => { shuttingDown = true; try { child.kill(sig); } catch { /* already gone */ } });
   }
   if (stripped) console.log('[start-agent] note: this shell injects ELECTRON_RUN_AS_NODE; plain `electron .` here runs as Node.');
 }

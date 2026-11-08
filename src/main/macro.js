@@ -82,6 +82,28 @@ try {
   comLoadError = e && e.message ? e.message : String(e);
 }
 
+/* ---------------- GDI surface for the program-icon module -------------------
+   exe-icon.js reads a program's own icon out of the file's resources
+   (PrivateExtractIconsW → DrawIconEx into a 32bpp DIB section). The DIB calls
+   live in gdi32.dll and lifting the pixels out needs plain C memcpy, so both
+   are loaded here: macro.js stays the single place koffi is loaded (see
+   .dsh/skills/win32-koffi) and the consumer declares its own __stdcall
+   prototypes through ffi.declareGdi32()/ffi.declareMsvcrt(). Guarded like every
+   other block here — a failed load leaves gdiAvailable false with a human
+   gdiLoadError, and program icons degrade to a clean {ok:false, error} instead
+   of crashing at require-time or exposing a half-declared surface. */
+let gdi32 = null, msvcrt = null, gdiAvailable = false, gdiLoadError = null;
+try {
+  if (available) {
+    gdi32 = koffi.load('gdi32.dll');
+    msvcrt = koffi.load('msvcrt.dll');
+    gdiAvailable = true;
+  }
+} catch (e) {
+  gdiAvailable = false;
+  gdiLoadError = e && e.message ? e.message : String(e);
+}
+
 const readRect = (b, off) => [b.readInt32LE(off), b.readInt32LE(off + 4), b.readInt32LE(off + 8), b.readInt32LE(off + 12)];
 
 /* ---- AudioSes.dll: the registry-free route to the audio policy object -----
@@ -755,6 +777,21 @@ const ffi = {
   declareOle32(spec) {
     if (!comAvailable) throw new Error(comLoadError || 'ole32 unavailable');
     return ole32.func(spec);
+  },
+  /** True when gdi32.dll + msvcrt.dll loaded (the program-icon route). */
+  get gdiAvailable() { return gdiAvailable; },
+  get gdiLoadError() { return gdiLoadError; },
+  /** Declare a gdi32 symbol (CreateDIBSection, SelectObject & friends). */
+  declareGdi32(spec) {
+    if (!gdiAvailable) throw new Error(gdiLoadError || 'gdi32 unavailable');
+    return gdi32.func(spec);
+  },
+  /** Declare a msvcrt.dll symbol — today only memcpy, which copies the pixels
+      out of a DIB section by address. Guarded as one unit with declareGdi32:
+      both arrive together or neither does. */
+  declareMsvcrt(spec) {
+    if (!gdiAvailable) throw new Error(gdiLoadError || 'msvcrt unavailable');
+    return msvcrt.func(spec);
   },
   /** True when AudioSes.dll (the audio-policy class factory) is loadable. */
   get audioSesAvailable() { ensureAudioSes(); return audioSesAvailable; },

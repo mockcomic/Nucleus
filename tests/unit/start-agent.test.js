@@ -29,7 +29,18 @@ test('buildLaunch: adds the sandbox escape and an isolated profile by default', 
   assert.equal(args[0], '.', 'app path leads');
   assert.ok(args.includes('--no-sandbox'));
   assert.ok(args.includes('--user-data-dir=C:\\repo\\.dev-userdata'));
-  assert.equal(notes.length, 2);
+  assert.equal(notes.length, 3);
+});
+
+test('buildLaunch: visible launch — --show-wheel is the default', () => {
+  const { args, notes } = buildLaunch({}, [], {});
+  assert.ok(args.includes('--show-wheel'));
+  assert.ok(notes.some((n) => /show-wheel/.test(n)));
+});
+
+test('buildLaunch: --hidden opts out of the visible launch', () => {
+  const { args } = buildLaunch({}, ['--hidden'], {});
+  assert.equal(args.includes('--show-wheel'), false);
 });
 
 test('buildLaunch: extra app args are kept and precede the injected switches', () => {
@@ -38,9 +49,10 @@ test('buildLaunch: extra app args are kept and precede the injected switches', (
 });
 
 test('buildLaunch: a caller-supplied flag wins — never doubled', () => {
-  const own = buildLaunch({}, ['--no-sandbox', '--user-data-dir=D:\\other'], {});
+  const own = buildLaunch({}, ['--no-sandbox', '--user-data-dir=D:\\other', '--show-wheel'], {});
   assert.equal(own.args.filter((a) => a === '--no-sandbox').length, 1);
   assert.equal(own.args.filter((a) => a.startsWith('--user-data-dir')).length, 1);
+  assert.equal(own.args.filter((a) => a === '--show-wheel').length, 1);
   assert.ok(own.args.includes('--user-data-dir=D:\\other'));
   assert.deepEqual(own.notes, []);
 });
