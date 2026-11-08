@@ -2247,6 +2247,8 @@ function wireBehaviorCheckboxes() {
     // Update poll is opt-OUT (default on, mirroring validate); the manual
     // "Check for updates" button below ignores the flag.
     'bh-update-checks': ['behavior', 'updateChecks'],
+    // SSRF opt-in for icon URLs (netguard.js): opt-in, fail-closed like validate.
+    'bh-lan-icons': ['behavior', 'lanIcons'],
     // Master switch for the Segments tab's profile chips.
     'bh-profiles': ['behavior', 'profilesEnabled']
   };  for (const [id, [sec, key]] of Object.entries(map)) {

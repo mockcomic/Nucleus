@@ -146,6 +146,9 @@ function defaults() {
          tray/Settings check ignores this flag; it only gates the background
          checks. */
       updateChecks: true,
+      /* Custom icon URLs may reach the user's own network (private ranges +
+         plain https-optional http). Off by default — see netguard.js. */
+      lanIcons: false,
       /* Devices the pickers hold back (app-level hiding — Windows itself is
          untouched). [{id, name}] per flow; the id hides, the name keeps the
          Manage panel readable when the device is unplugged. The CURRENT
@@ -413,6 +416,11 @@ function validate(raw) {
       // Opt-out like autostart: absent/junk keeps background update checks ON
       // (a check-only network poll; the manual check ignores this flag).
       updateChecks: bhvIn.updateChecks !== false,
+      /* SSRF opt-in for custom icon URLs (custom-icons.js/netguard.js):
+         off = never reach loopback/private/link-local, https only. On =
+         the user's own network may serve icons (still not link-local or
+         multicast). Absent/junk = off, fail-closed like mouseClickThrough. */
+      lanIcons: bhvIn.lanIcons === true,
       // Always the full {render, capture} shape — a half-written field can
       // never leave one direction missing for the picker filter.
       audioHidden: normalizeHiddenDevices(bhvIn.audioHidden)
@@ -462,6 +470,29 @@ function walkItems(cfg, fn) {
   for (const rings of groups) {
     for (const k of Object.keys(rings)) if (down(rings[k], 0) === false) return;
   }
+}
+
+/* The item types that LAUNCH or WRITE something when fired (actions.js
+   cases). folder/recent/mixer carry no payload; `setting` flips an app
+   setting, not a process. An IMPORTED config full of these types is the
+   user about to hand their shell to a file from somewhere else — the
+   import dialog shows them before applying (ipc.js). */
+const EXEC_TYPES = new Set(['app', 'url', 'file', 'command', 'macro', 'sys']);
+function collectExecutableItems(cfg) {
+  const out = [];
+  const seen = new Set();
+  walkItems(cfg, (it) => {
+    const type = String(it.type || 'app').toLowerCase();
+    if (!EXEC_TYPES.has(type)) return;
+    const label = String(it.label ?? '').slice(0, 60);
+    const value = String(it.value ?? '').slice(0, 200);
+    const k = type + ' ' + label + ' ' + value;
+    if (seen.has(k)) return;
+    seen.add(k);
+    out.push({ type, label, value });
+    if (out.length >= 64) return false;            // bounded: a hostile file cannot balloon the dialog
+  });
+  return out;
 }
 
 /* Map the old Python wheel_config.json (flat items[] with ring field) into v1. */
@@ -715,4 +746,4 @@ class ConfigStore extends EventEmitter {
   }
 }
 
-module.exports = { ConfigStore, validate, defaults, sanitizeItem, walkItems, backupName, VERSION, MAX_RINGS, MAX_CHILDREN, MAX_FOLDER_DEPTH, MAX_PROFILES, MAX_PROFILE_APPS, MAX_BACKUPS, BACKUP_MIN_INTERVAL_MS };
+module.exports = { ConfigStore, validate, defaults, sanitizeItem, walkItems, collectExecutableItems, EXEC_TYPES, backupName, VERSION, MAX_RINGS, MAX_CHILDREN, MAX_FOLDER_DEPTH, MAX_PROFILES, MAX_PROFILE_APPS, MAX_BACKUPS, BACKUP_MIN_INTERVAL_MS };

@@ -40,6 +40,7 @@ const crypto = require('crypto');
 const { spawn } = require('child_process');
 const { shell } = require('electron');
 const { readCapped } = require('./capped-fetch');
+const netguard = require('./netguard');
 const log = require('./logger');
 
 /* The pinned trust anchor for update authenticity (see docs/update-signing.md):
@@ -73,6 +74,17 @@ const ASSET_URL_RE = new RegExp(
   '|https://objects\\.githubusercontent\\.com/[^\\s]+)$'
 );
 const FINAL_URL_HOSTS = ['github.com', 'objects.githubusercontent.com'];
+
+/* ------------------------------ fetch policy ------------------------------ */
+
+/* The production transport for every update request. The GitHub URLs are
+   already pinned by ASSET_URL_RE (so this is defense-in-depth, not the first
+   line), but the update path still must not be the one fetch in the app that
+   a hostile edge could redirect onto the user's LAN — no LAN exemption
+   here, and the redirect walk/limits come from netguard. The explicit
+   `redirect` init is meaningless to the guard (it walks redirects itself)
+   and kept for an injected test fetch that mimics plain fetch. */
+const guardedTransport = (url, init = {}) => netguard.guardedFetch(url, { ...init }, {});
 
 /* ------------------------------ pure helpers ------------------------------ */
 
@@ -346,7 +358,7 @@ async function fetchAssetBytes(asset, doFetch, maxBytes) {
 
 /** One request to the Releases API. fetchImpl/clock injectable for tests. */
 async function check(opts = {}) {
-  const doFetch = opts.fetch || fetch;
+  const doFetch = opts.fetch || guardedTransport;
   const appVersion = typeof opts.appVersion === 'string' ? opts.appVersion : '';
   const appPublishMs = Number.isFinite(+opts.appPublishMs) ? +opts.appPublishMs : NaN;
   const nowMs = typeof opts.now === 'function' ? opts.now() : Date.now();
@@ -492,7 +504,7 @@ async function downloadUpdate(opts = {}) {
   }
   const destDir = typeof opts.destDir === 'string' ? opts.destDir : '';
   if (!destDir) return { ok: false, error: 'no Downloads folder to write to' };
-  const doFetch = opts.fetch || fetch;
+  const doFetch = opts.fetch || guardedTransport;
   const onProgress = typeof opts.onProgress === 'function' ? opts.onProgress : null;
   const maxBytes = Number.isFinite(+opts.maxBytes) && +opts.maxBytes > 0 ? +opts.maxBytes : DOWNLOAD_MAX_BYTES;
   const base = path.basename(asset.name);                    // TAG_RE-checked: no path, no dots-dot

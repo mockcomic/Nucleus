@@ -16,6 +16,7 @@
 const fs = require('fs');
 const path = require('path');
 const { readCapped } = require('./capped-fetch');
+const netguard = require('./netguard');
 const { looksLikeSvg } = require('./custom-icons');
 
 const REPO = 'homarr-labs/dashboard-icons';
@@ -203,12 +204,15 @@ function dataUrl(kind, buf) {
 }
 
 /* ------------------------------ network ----------------------------------- */
+/* Fixed, public CDN URLs — but a hostile or compromised edge can redirect,
+   so this goes through the same guard (no LAN exemption: dashboard art has
+   no business living on the user's network). */
 async function fetchBuffer(url, maxBytes) {
-  const res = await fetch(url, {
+  const res = await netguard.guardedFetch(url, {
+    method: 'GET',
     signal: AbortSignal.timeout(FETCH_TIMEOUT),
-    redirect: 'follow',
     headers: { 'user-agent': 'nucleus-launcher (dashboard icon fetch)' }
-  });
+  }, {});
   if (!res.ok) return null;
   const len = Number(res.headers.get('content-length'));
   if (len > maxBytes) return null;
@@ -285,11 +289,11 @@ async function fetchIcon(slugRaw) {
     for (const k of ['svg', 'png']) if (!kinds.includes(k)) kinds.push(k);
     for (const kind of kinds) {
       try {
-        const res = await fetch(iconUrl(slug, kind), {
+        const res = await netguard.guardedFetch(iconUrl(slug, kind), {
+          method: 'GET',
           signal: AbortSignal.timeout(FETCH_TIMEOUT),
-          redirect: 'follow',
           headers: { 'user-agent': 'nucleus-launcher (dashboard icon fetch)' }
-        });
+        }, {});
         if (!res.ok) continue;
         // jsDelivr answers unknown files with a text/plain 404 body — reject
         // anything that is not actually an image of the expected type.

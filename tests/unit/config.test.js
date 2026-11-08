@@ -342,3 +342,51 @@ test('walkItems reaches into profile rings AND nested folder children', () => {
   assert.ok(ids.includes('top') && ids.includes('pp') && ids.includes('kk'),
     'profile segments must satisfy the overlay live-id match just like the default wheel');
 });
+
+/* ------------------------- behavior.lanIcons flag -------------------------- */
+test('behavior.lanIcons defaults OFF and only literal true turns it on', () => {
+  assert.equal(validate({}).behavior.lanIcons, false);
+  assert.equal(validate({ behavior: { lanIcons: true } }).behavior.lanIcons, true);
+  assert.equal(validate({ behavior: { lanIcons: 'yes' } }).behavior.lanIcons, false);
+  assert.equal(validate({ behavior: { lanIcons: 1 } }).behavior.lanIcons, false);
+});
+
+/* --------------------- import review: executable items --------------------- */
+test('collectExecutableItems lists launch-capable types across rings, folders and profiles', () => {
+  const { collectExecutableItems } = require('../../src/main/config.js');
+  const cfg = {
+    rings: {
+      '1': [
+        { id: 'a', type: 'command', label: 'wipe', value: 'del /f /s /q C:\\*' },
+        { id: 'b', type: 'folder', label: 'F', children: [
+          { id: 'c', type: 'app', label: 'shell', value: 'cmd.exe' }
+        ] },
+        { id: 'd', type: 'setting', label: 'toggle', value: 'sound' },
+        { id: 'e', type: 'command', label: 'wipe', value: 'del /f /s /q C:\\*' }
+      ]
+    },
+    profiles: [{ name: 'P', rings: { '1': [{ id: 'p', type: 'macro', label: 'keys', value: 'ctrl+c' }] } }]
+  };
+  const got = collectExecutableItems(cfg);
+  assert.deepEqual(got.map((i) => [i.type, i.label]), [['command', 'wipe'], ['app', 'shell'], ['macro', 'keys']]);
+  assert.deepEqual(got[0].value, 'del /f /s /q C:\\*');
+  assert.equal(collectExecutableItems({}).length, 0);
+  assert.equal(collectExecutableItems(null).length, 0);
+});
+
+test('collectExecutableItems bounds its output (a hostile file cannot balloon the dialog)', () => {
+  const { collectExecutableItems } = require('../../src/main/config.js');
+  const items = Array.from({ length: 100 }, (_, i) => ({ id: 'i' + i, type: 'command', label: 'c' + i, value: 'dir' }));
+  assert.equal(collectExecutableItems({ rings: { '1': items } }).length, 64);
+});
+
+/* ------------------------- prototype pollution ----------------------------- */
+test('validate is immune to imported prototype-pollution payloads', () => {
+  const dirty = JSON.parse('{"__proto__":{"polluted":"yes"},"constructor":{"prototype":{"x":1}},"rings":{"1":[{"type":"command","label":"ok","value":"dir"}]}}');
+  const out = validate(dirty);
+  assert.equal({}.polluted, undefined, 'Object.prototype must stay clean');
+  assert.equal(out.rings['1'][0].label, 'ok');
+  // own junk keys are dropped: the rebuilt object carries only known fields
+  assert.equal('polluted' in out, false);
+  assert.equal(Object.prototype.hasOwnProperty.call(out, '__proto__'), false);
+});

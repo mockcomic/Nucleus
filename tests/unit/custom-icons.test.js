@@ -234,3 +234,66 @@ test('configure points the store at a new directory', () => {
   assert.equal(a.key, b.key, 'same content, same key — in a different place');
   assert.equal(fs.existsSync(path.join(dirB, b.key.slice('custom:'.length))), true);
 });
+
+/* --------------------------- guarded transport ----------------------------- */
+/* The SSRF policy itself lives in netguard.test.js; these pin the WIRE-UP:
+   the icon fetch goes through the guard, the LAN toggle reaches the policy,
+   and the guard's reason surfaces to the user while a raw socket error does
+   not. */
+function responseOf(buf, ok = true, status = 200) {
+  return {
+    ok, status,
+    headers: { get: (h) => (String(h).toLowerCase() === 'content-length' ? String(buf.length) : null) },
+    body: (async function* () { yield buf; })()
+  };
+}
+
+test('addUrl refuses a loopback icon URL before transport when the LAN toggle is off', async () => {
+  const dir = tmpDir();
+  let sawPolicy = null;
+  ci.configure(dir, {
+    allowLan: () => false,
+    fetchImpl: async (url, init, policy) => { sawPolicy = policy; return responseOf(PNG); }
+  });
+  const r = await ci.addUrl('http://127.0.0.1:8080/icon.png');
+  assert.equal(r.ok, false);
+  assert.match(r.error, /HTTP|not allowed/);
+  assert.equal(sawPolicy, null);                       // rejected at the URL gate: transport never ran
+});
+
+test('the LAN toggle lets a private-IP icon through to the transport', async () => {
+  const dir = tmpDir();
+  const seen = [];
+  ci.configure(dir, {
+    allowLan: () => true,
+    fetchImpl: async (url) => { seen.push(url); return responseOf(PNG); }
+  });
+  const r = await ci.addUrl('http://192.168.0.180:5001/icon.png');
+  assert.equal(r.ok, true);
+  // The proof the toggle reached the gate: the SAME URL with the toggle off
+  // (previous test) never reached transport at all.
+  assert.deepEqual(seen, ['http://192.168.0.180:5001/icon.png']);
+});
+
+test('a private icon URL fails with a clear message even with the toggle on once the address itself is disallowed', async () => {
+  const dir = tmpDir();
+  ci.configure(dir, {
+    allowLan: () => false,
+    fetchImpl: async () => { throw new Error('that address is not allowed (it looks like a private or local network host)'); }
+  });
+  const r = await ci.addUrl('https://internal-host.example/icon.png');
+  assert.equal(r.ok, false);
+  assert.match(r.error, /not allowed|private or local/);
+});
+
+test('a raw socket failure never echoes an internal address into the user message', async () => {
+  const dir = tmpDir();
+  ci.configure(dir, {
+    allowLan: () => false,
+    fetchImpl: async () => { throw new Error('connect ECONNREFUSED 10.0.4.7:8080'); }
+  });
+  const r = await ci.addUrl('https://server.example/icon.png');
+  assert.equal(r.ok, false);
+  assert.equal(r.error, 'Could not download that URL');
+  assert.doesNotMatch(r.error, /10\.0\.4\.7/);
+});

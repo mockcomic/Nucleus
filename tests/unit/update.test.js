@@ -802,3 +802,21 @@ test('the cache round-trip keeps manifest digests but never carries authenticati
   assert.equal(rel.assets[0].sha256, 'a'.repeat(64));
   assert.notEqual(rel.authenticated, true);
 });
+
+test('with no injected fetch, update requests go through the SSRF guard', async () => {
+  upd._reset();
+  const netguard = require('../../src/main/netguard.js');
+  const real = netguard.guardedFetch;
+  const seen = [];
+  netguard.guardedFetch = async (url, init, policy) => {
+    seen.push({ url: String(url), policy });
+    return fakeResponse(ghRelease({ tag_name: 'v2.0.0' }));
+  };
+  try {
+    const r = await upd.check({ appVersion: '1.0.0', appPublishMs: NaN, now: () => 99 });
+    assert.equal(r.status, 'available');
+  } finally { netguard.guardedFetch = real; }
+  assert.equal(seen.length, 1);
+  assert.match(seen[0].url, /api\.github\.com/);
+  assert.notEqual(seen[0].policy.allowPrivate, true);     // updates never use the LAN exemption
+});

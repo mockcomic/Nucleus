@@ -29,6 +29,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { readCapped } = require('./capped-fetch');
+const netguard = require('./netguard');
 
 const PREFIX = 'custom:';
 const KEY_RE = /^custom:([a-f0-9]{16})\.([a-z]{3,4})$/;
@@ -47,10 +48,17 @@ const SVG_PROBE_BYTES = 4096;
 const PICK_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'svg'];
 
 let cacheDir = null;                              // set by configure() from main
+/* SSRF policy hooks, both injected by main at wire-up (ipc.js):
+   allowLan reads behavior.lanIcons live (a toggle flip works without a
+   re-configure), fetchImpl lets tests replace the guarded transport. */
+let allowLan = () => false;
+let fetchImpl = null;
 
-function configure(dir) {
+function configure(dir, opts = {}) {
   cacheDir = dir;
   indexMem = null;                                // re-pointable: never serve an index from the old dir
+  if (typeof opts.allowLan === 'function') allowLan = opts.allowLan;
+  fetchImpl = typeof opts.fetchImpl === 'function' ? opts.fetchImpl : null;
   try { fs.mkdirSync(dir, { recursive: true }); } catch { /* best-effort; callers report */ }
 }
 
@@ -313,13 +321,18 @@ function addFile(src) {
   return install(buf);
 }
 
+/* The transport half of addUrl. `fetchImpl` (tests) replaces the guarded
+   transport wholesale; production always goes through netguard, so a pasted
+   URL can never dial loopback, a private range, or a redirect that lands
+   there — and a failure says why in user-safe words, never an internal
+   ECONNREFUSED with an internal address in it. */
 async function fetchImage(url) {
   try {
-    const res = await fetch(url, {
+    const res = await netguard.guardedFetch(url, {
+      method: 'GET',
       signal: AbortSignal.timeout(FETCH_TIMEOUT),
-      redirect: 'follow',
       headers: { 'user-agent': 'nucleus-launcher (custom icon fetch)' }
-    });
+    }, { allowPrivate: !!allowLan(), fetchImpl });   // fetchImpl (tests) replaces only the transport UNDER the gate
     if (!res.ok) return { error: `The server answered ${res.status}` };
     const len = Number(res.headers.get('content-length'));
     if (len > FILE_MAX_BYTES) return { error: 'That image is larger than ' + Math.round(FILE_MAX_BYTES / 1048576) + ' MB' };
@@ -336,7 +349,11 @@ async function fetchImage(url) {
     if (!sniffImage(buf)) return { error: 'That URL is not a supported image (PNG, JPG, GIF, WebP, BMP, ICO or SVG)' };
     return { buf };
   } catch (err) {
-    return { error: 'Could not download that URL — ' + String((err && err.message) || err) };
+    const msg = String((err && err.message) || err);
+    // netguard messages are user-safe by construction; a raw socket error
+    // (ECONNREFUSED 10.0.4.7:8080) would leak internal topology — drop it.
+    const userSafe = /^(that address|plain HTTP|unsupported URL|URLs with|invalid URL|too many redirects|Could not reach)/i.test(msg);
+    return { error: userSafe ? 'Could not download that URL — ' + msg : 'Could not download that URL' };
   }
 }
 
