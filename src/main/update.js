@@ -283,7 +283,15 @@ function chooseAsset(release, wantPortable) {
     ? release.assets.filter((a) => a.name !== MANIFEST_NAME && a.name !== MANIFEST_SIG_NAME)
     : [];
   const want = wantPortable ? /-portable\.exe$/i : /-setup\.exe$/i;
-  return list.find((a) => want.test(a.name))
+  /* Within each preference tier, prefer a digest-BOUND asset: after
+     applyManifest, only assets the SIGNED manifest vouches for carry a
+     sha256. A release refreshed in place (same tag, newer builds,
+     overwrite_files) keeps older assets on GitHub — the manifest names
+     what is actually current, and an unlisted one could not download
+     anyway. */
+  return list.find((a) => want.test(a.name) && a.sha256)
+    || list.find((a) => want.test(a.name))
+    || list.find((a) => /\.exe$/i.test(a.name) && a.sha256)
     || list.find((a) => /\.exe$/i.test(a.name))
     || list[0]
     || null;

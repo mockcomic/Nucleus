@@ -16,7 +16,7 @@ require.cache[electronPath] = {
 };
 
 const upd = require('../../src/main/update.js');
-const { parseVersion, compareVersions, decide, sanitizeRelease, releaseUrl, chooseAsset } = upd;
+const { parseVersion, compareVersions, decide, sanitizeRelease, releaseUrl, chooseAsset, applyManifest } = upd;
 
 /* The renamed repo is the whole point of the fixed targets: the old
    `radial-wheel` URL only answers through a redirect, and an updater that
@@ -774,6 +774,25 @@ test('downloadUpdate requires an authenticated release and gates the run on auth
   const r2 = await upd.downloadUpdate({ asset: dlAsset(body, { sha256: null }), destDir: dir2, authenticated: true, fetch: async () => fakeDownload([body]) });
   assert.equal(r2.ok, false);
   assert.match(r2.error, /checksum/);
+});
+
+test('chooseAsset prefers the manifest-authenticated assets over stale ones', () => {
+  // A tag refreshed in place: old b22 assets sit BEFORE the signed b32 pair.
+  const rel = applyManifest(sanitizeRelease(ghRelease({
+    assets: [
+      { name: 'Nucleus-1.1.0-b22-setup.exe', size: 1, browser_download_url: 'https://github.com/mockcomic/Nucleus/releases/download/v1.1.0/Nucleus-1.1.0-b22-setup.exe' },
+      { name: 'Nucleus-1.1.0-b32-setup.exe', size: 1, browser_download_url: 'https://github.com/mockcomic/Nucleus/releases/download/v1.1.0/Nucleus-1.1.0-b32-setup.exe' },
+      { name: 'Nucleus-1.1.0-b32-portable.exe', size: 1, browser_download_url: 'https://github.com/mockcomic/Nucleus/releases/download/v1.1.0/Nucleus-1.1.0-b32-portable.exe' }
+    ]
+  })), { assets: [
+    { name: 'Nucleus-1.1.0-b32-setup.exe', sha256: 'b'.repeat(64), size: 1 },
+    { name: 'Nucleus-1.1.0-b32-portable.exe', sha256: 'c'.repeat(64), size: 1 }
+  ] });
+  assert.equal(chooseAsset(rel, false).name, 'Nucleus-1.1.0-b32-setup.exe');       // skip stale b22
+  assert.equal(chooseAsset(rel, true).name, 'Nucleus-1.1.0-b32-portable.exe');
+  // Unauthenticated (no manifest applied): the old preference order still works.
+  const plain = sanitizeRelease(ghRelease());
+  assert.equal(chooseAsset(plain, false).name, 'Nucleus-1.2.0-b1-setup.exe');
 });
 
 test('chooseAsset never mistakes the manifest files for an installer', () => {
