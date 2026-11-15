@@ -531,17 +531,37 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
 } /* destructive hover, distinct from Try's accent hover */
 .seg-disc {
 	align-self: center;
+	touch-action: none; /* the grip is a pointer-drag handle — no scroll hijack on touch */
 }
-.seg-disc[aria-expanded='true'] .g {
+.seg-main[aria-expanded='true'] .seg-disc .g { /* the ROW carries aria-expanded now */
 	transform: rotate(180deg);
+}
+.seg-main:hover .seg-disc {
+	cursor: grab;
 }
 .seg-disc .g {
 	transition: transform 0.14s var(--ease-out);
 }
+.seg-row.dragging {
+	opacity: 0.45;
+}
+.seg-row.dragging .seg-disc {
+	cursor: grabbing;
+}
+/* the drop indicator — accent IS action here, per the Pilot Blue Rule */
+.drag-line {
+	height: 2px;
+	border-radius: 2px;
+	background: var(--accent);
+	margin: 3px 8px;
+}
+.ring-head .btn.at-cap {
+	opacity: 0.45;
+} /* + Add at the 24 cap: visible, speaks 'no' on click */
 
 /* autosave status (sidebar foot) */
 .save-state {
-	font-size: 11px;
+	font-size: 12px; /* 11px failed the page's own AA floor for a live status line */
 	color: var(--dim);
 	min-height: 16px;
 	padding: 0 10px 4px;
@@ -684,18 +704,14 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
 	justify-content: center;
 	margin-top: 8px;
 }
-/* The sub-menu manager stacks hint → list → add-row vertically. Inside the
-   control cell it must escape .f-ctl's flex row; when a DESCENDANT's editor is
-   open the manager drops straight onto the .seg-edit grid, where unpinned
-   children would fall into the 88px label track and squash every kid row
-   (inputs shrank to squares, hints wrapped one word per line). */
+/* The sub-menu manager stacks hint → list → add-row vertically, always inside
+   the Sub-menu control cell — so it must escape .f-ctl's flex row. (The old
+   descendant-collapse render dropped the manager straight onto the .seg-edit
+   grid, where unpinned children fell into the 88px label track and squashed
+   every kid row; that path is gone now that parents keep their fields open
+   beside a child's editor.) */
 .seg-edit .f-ctl.kid-ctl {
 	display: block;
-}
-.seg-edit > .kid-list,
-.seg-edit > .kid-empty,
-.seg-edit > .row-line.kid-add {
-	grid-column: 1 / -1;
 }
 /* Editor: a plain two-column form — every control shares one left anchor */
 .seg-edit {

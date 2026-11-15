@@ -5,6 +5,7 @@ dist/
 .cache/
 .serena/
 .codebase-memory/
+.impeccable/
 assets/tray.ico
 assets/tray-32.png
 

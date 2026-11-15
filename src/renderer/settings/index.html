@@ -28,6 +28,11 @@
   </aside>
 
   <main id="content">
+    <!-- Toast host moved INSIDE main (it used to sit after </main>, the very last
+         tab stop): the 6s undo toast is now reachable within one Tab of the row
+         that spawned it instead of after the whole page. position:fixed — no
+         layout effect, pure tab-order. -->
+    <div id="toasts" role="status" aria-live="polite"></div>
 
     <div id="cfg-warn" class="err cfg-warn hidden" role="alert">
       <span>Your <b>config.json</b> was corrupt and could not be read — defaults are in use. The broken file was kept as <b>config.json.bad</b> in the config folder.</span>
@@ -272,8 +277,6 @@
     </div>
     <div class="hint muted">The preview uses the same renderer as the real overlay. Test pops the actual menu at your mouse.</div>
   </aside>
-
-  <div id="toasts" role="status" aria-live="polite"></div>
 
   <div id="icon-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="icon-modal-title">
     <div class="modal-card">

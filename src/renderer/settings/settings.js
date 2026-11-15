@@ -10,7 +10,9 @@ const clone = (o) => JSON.parse(JSON.stringify(o));
 let cfg = null;
 let dirty = false;
 let saveTimer = null;
-let openEditorKey = null;          // "ring-index" of the expanded row
+let openEditorKey = null;          // expanded row's disclosure key — the item's ID (folder children: "<parent key>/<id>"), so a reorder/fold never retargets the open editor
+let pendingFocus = null;           // { key, sel } | { ringAdd } — where focus lands after the NEXT renderSegments
+let suppressClick = false;         // a drag that ended on a row must not also toggle its editor
 let iconModalTarget = null;        // item currently picking an icon
 
 /* ------------------------------ ring helpers -------------------------------
@@ -354,14 +356,26 @@ function renderSegments() {
   for (const ring of keys) {
     if (!R[ring]) { R[ring] = []; createdRing = true; }
     const sec = el('div', 'ring-sec', {}, host);
+    sec.dataset.ring = ring;                    // drop-target for row drag-reorder
     const head = el('div', 'ring-head', {}, sec);
     el('h3', null, { text: ringTitle(ring, N) }, head);
-    el('span', 'muted', { text: `${R[ring].length} segment${R[ring].length === 1 ? '' : 's'}` }, head);
-    const add = el('button', 'btn small', { text: '+ Add' }, head);
+    const atCap = R[ring].length >= 24;
+    el('span', 'muted', { text: atCap ? '24 of 24 segments' : `${R[ring].length} segment${R[ring].length === 1 ? '' : 's'}` }, head);
+    const add = el('button', 'btn small' + (atCap ? ' at-cap' : ''), { text: '+ Add' }, head);
+    if (atCap) add.setAttribute('aria-disabled', 'true');
+    add.dataset.ringAdd = ring;                 // focus heir when the last row of a full ring is deleted
     add.onclick = () => {
+      // The cap every other write path enforces with a toast (fold, radios,
+      // duplicate) — Add used to push a 25th segment into the array and let
+      // cleanRing's slice(0,24) evaporate it at the next save: the one control
+      // on this page that broke "autosave never destroys your work" (P1-A).
+      if (R[ring].length >= 24) {
+        toast('A ring holds at most 24 segments — remove or move some first', true);
+        return;
+      }
       const item = newSegItem();
       R[ring].push(item);
-      openEditorKey = `${ring}-${R[ring].length - 1}`;
+      openEditorKey = item.id;                  // disclosure keys are item ids — reorder-proof (P2-C)
       touch();
       // touch() rerendered synchronously — land the caret in the new row's Label box
       // so the user can type the name right away (and pre-select "New item" to replace it).
@@ -377,7 +391,7 @@ function renderSegments() {
       continue;
     }
     const list = el('div', 'seg-list', {}, sec);
-    R[ring].forEach((item, i) => list.appendChild(segRow({ ring, owner: R[ring], item, i, key: `${ring}-${i}`, depth: 0 })));
+    R[ring].forEach((item) => list.appendChild(segRow({ ring, owner: R[ring], item, key: item.id, depth: 0 })));
   }
   // renderSegments created a missing ring array — model mutated in render;
   // flag it (preview-only touch) so the repair reaches disk without a keystroke.
@@ -397,6 +411,27 @@ function renderSegments() {
   } else {
     el('div', 'empty-hint muted', { text: `Ring limit reached (${MAX_RINGS}).` }, host);
   }
+  // Where the keyboard asked to land after this rebuild. Row ops rerender
+  // #ring-lists wholesale (innerHTML) — without this, every move/delete/ring
+  // change pressed Tab again from the top of the page (critique P1-B).
+  if (pendingFocus) {
+    const f = pendingFocus;
+    pendingFocus = null;
+    let target = null;
+    if (f.ringAdd != null) target = document.querySelector(`[data-ring-add="${f.ringAdd}"]`);
+    else {
+      const rowEl = document.querySelector(`[data-seg-key="${f.key}"]`);
+      target = (rowEl && (f.sel ? rowEl.querySelector(f.sel) : null)) || rowEl?.querySelector('.seg-main') || rowEl;
+    }
+    (target || document.querySelector('.seg-main'))?.focus?.();
+  }
+}
+
+/* Segments a folder delete takes with it — the count the row caption already
+   shows, now spoken at the moment of eating (critique P2-E). */
+function countInside(item) {
+  if (!Array.isArray(item.children)) return 0;
+  return item.children.reduce((n, c) => n + 1 + countInside(c), 0);
 }
 
 /* Remove the outermost ring: items migrate inward if the neighbour can take
@@ -411,7 +446,10 @@ function removeRing(ring) {
   }
   delete R[ring];
   inner.push(...items);
-  if (openEditorKey && openEditorKey.startsWith(ring + '-')) openEditorKey = null;
+  // Keys are item ids now — the folded rows carry their disclosure/editor state
+  // into the inner ring by themselves; nothing to clear (used to null the
+  // editor by a "ring-" position prefix that ids don't have).
+  if (openEditorKey) pendingFocus = { key: openEditorKey, sel: '.seg-main' };
   touch();
   const moved = items.slice();
   toast(`Removed ${ringTitle(ring, ringKeys().length + 1)}`, false, () => {
@@ -421,6 +459,7 @@ function removeRing(ring) {
       if (k >= 0) inner.splice(k, 1);        // pull the migrated items back
     }
     R2[ring] = moved;                        // and re-raise the ring (on the model being edited)
+    if (moved.length) pendingFocus = { key: moved[0].id, sel: '.seg-main' };   // an empty ring folded nothing — no heir to follow
     touch();
   });
 }
@@ -432,7 +471,10 @@ const GUARDED_TYPES = new Set(['command', 'macro', 'sys', 'setting']);
 /* Row + editor work on an OWNER ARRAY, not a ring key, so the same component
    renders ring segments (depth 0, owner = cfg.rings[ring]) and folder children
    (depth > 0, owner = parentItem.children). `key` addresses disclosure state
-   across the tree ("1-3", "1-3/0", …). */
+   across the tree and is the ITEM ID at ring level ("<id>"), and the parent's
+   path + the child's id one level down ("<parent key>/<id>", …) — id-based, so
+   reordering, folding a ring, or moving between rings never retargets the open
+   editor to whatever row happens to land in the freed index. */
 function newSegItem(type = 'app') {
   const it = { id: crypto.randomUUID(), label: 'New item', icon: '', iconImage: '', labelPos: '', type, value: '', color: null };
   if (type === 'folder') it.children = [];
@@ -449,20 +491,111 @@ function renewIds(it) {
   return c;
 }
 
+/* Pointer drag-reorder for ring rows (depth 0 only — sub-menu rows keep the
+   move buttons; nesting a drag into a scrollable editor is how accidents
+   happen). The chevron grip is the handle; a 6px threshold keeps a plain
+   click on the grip a click. Same-ring and cross-ring drops both route
+   through the 24-cap; a rejected drop just leaves the row where it was. */
+function enableDrag(row, disc, ctx, key) {
+  disc.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();                              // no text-select drag off the grip
+    const startX = e.clientX, startY = e.clientY;
+    const line = document.createElement('div');
+    line.className = 'drag-line';
+    let dragging = false, dest = null, destIndex = 0, placed = false;
+    try { disc.setPointerCapture(e.pointerId); } catch { /* synthetic pointers in tests */ }
+    const cleanup = () => {
+      row.classList.remove('dragging');
+      line.remove();
+      disc.removeEventListener('pointermove', onMove);
+      disc.removeEventListener('pointerup', onUp);
+      disc.removeEventListener('pointercancel', onCancel);
+    };
+    const onMove = (ev) => {
+      if (!dragging) {
+        if (Math.abs(ev.clientX - startX) < 6 && Math.abs(ev.clientY - startY) < 6) return;
+        dragging = true;
+        suppressClick = true;
+        row.classList.add('dragging');
+      }
+      // Hit target: the ring list under the cursor (±10px grace), then the
+      // first row whose midpoint is still below the cursor.
+      const secs = [...document.querySelectorAll('#ring-lists > .ring-sec')];
+      dest = null;
+      for (const sec of secs) {
+        const list = sec.querySelector(':scope > .seg-list');
+        if (!list) continue;                         // empty ring — no list to read indices from
+        const box = list.getBoundingClientRect();
+        if (ev.clientY < box.top - 10 || ev.clientY > box.bottom + 10) continue;
+        const rows = [...list.querySelectorAll(':scope > .seg-row')].filter((r) => r !== row);
+        const before = rows.find((r) => { const rb = r.getBoundingClientRect(); return ev.clientY < rb.top + rb.height / 2; });
+        dest = { ring: sec.dataset.ring, index: before ? rows.indexOf(before) : rows.length };
+        list.insertBefore(line, before || null);
+        placed = true;
+        return;
+      }
+      if (!dest && placed) line.remove();
+      if (!dest) placed = false;
+    };
+    const onUp = () => {
+      cleanup();
+      if (!dragging) return;
+      setTimeout(() => { suppressClick = false; }, 0);   // swallow the click this gesture ends with
+      const R = ringsModel();
+      const owner = R[ctx.ring];
+      const fromIndex = owner.indexOf(ctx.item);
+      if (fromIndex < 0 || !dest) return;
+      const destArr = String(dest.ring) === String(ctx.ring) ? owner : (R[dest.ring] ||= []);
+      if (destArr !== owner && destArr.length >= 24) {
+        toast(`Ring ${dest.ring} holds at most 24 segments — drop refused`, true);
+        return;
+      }
+      owner.splice(fromIndex, 1);
+      destArr.splice(Math.min(dest.index, destArr.length), 0, ctx.item);   // dest.index counted the array WITHOUT this row
+      pendingFocus = { key, sel: '.seg-main' };       // the keyboard dragged; the keyboard keeps the row
+      touch();
+    };
+    const onCancel = () => { cleanup(); setTimeout(() => { suppressClick = false; }, 0); };
+    disc.addEventListener('pointermove', onMove);
+    disc.addEventListener('pointerup', onUp);
+    disc.addEventListener('pointercancel', onCancel);
+  });
+}
+
 function segRow(ctx) {
   const { owner, item, key, depth } = ctx;
   const row = el('div', 'seg-row');
   row.dataset.segKey = key;
   if (depth > 0) row.classList.add('seg-kid');
-  const main = el('div', 'seg-main', {}, row);
-
-  // Proper disclosure button (mouse click on the row also opens the editor below).
-  const disc = el('button', 'btn mini seg-disc', {
-    title: openEditorKey === key ? 'Close editor' : 'Edit segment',
-    'aria-label': `Edit segment ${item.label || '(no name)'}`,
-    'aria-expanded': String(openEditorKey === key)
-  }, main);
-  el('span', 'g', { text: '\uE70D' }, disc);   // ChevronDown
+  // The ROW is the disclosure control: focusable, aria-expanded, Enter/Space
+  // to open, Esc to close. (It used to be a click-anywhere div with a separate
+  // chevron BUTTON — so the chevron was the only keyboard door, the row's
+  // :focus-visible rule could never fire, and aria-expanded lived on a control
+  // the row's own click handler lied about. Making the row the control removes
+  // all three at once — the critique's center-of-gravity.)
+  // The label carries the row's full meaning (name, kind, target): a
+  // role=button's aria-label REPLACES its subtree for screen readers, and the
+  // chip + caption spans inside would otherwise go silent.
+  const rowVal = rowValueText(item);
+  // Disclosure state, computed once: openSelf = this row owns the open editor;
+  // openDesc = the open editor is one of its descendants. A folder with an
+  // open DESCENDANT counts as expanded — its whole editor (fields included)
+  // stays on screen below the row, and the chevron shows which branch you are
+  // inside. Opening a child used to collapse the parent's own fields, which
+  // made the folder you had just clicked through evaporate mid-edit.
+  const openSelf = openEditorKey === key;
+  const openDesc = !openSelf && typeof openEditorKey === 'string' && openEditorKey.startsWith(key + '/');
+  const expanded = openSelf || openDesc;
+  const main = el('div', 'seg-main', {
+    role: 'button',
+    tabindex: '0',
+    'aria-expanded': String(expanded),
+    'aria-label': `${item.label || '(no name)'}, ${typeChip(item.type)}${rowVal ? ', ' + rowVal : ''} — ${expanded ? 'close editor' : 'edit segment'}`
+  }, row);
+  const disc = el('span', 'seg-disc', { 'aria-hidden': 'true' }, main);  // chevron: decorative affordance + drag grip now
+  if (depth === 0) disc.title = 'Drag to reorder — or use the move buttons';
+  el('span', 'g', { text: '\uE70D' }, disc);                               // ChevronDown
 
   const icoSpan = el('span', 'seg-ico', {}, main);
   registerIconSpan(icoSpan, item, item.icon || (item.type === 'folder' ? '\uE838' : item.type === 'recent' ? '\uE823' : item.type === 'mixer' ? '\uE767' : item.type === 'sys' || item.type === 'setting' ? '\uE713' : '\uE76C'));
@@ -483,21 +616,24 @@ function segRow(ctx) {
      not the captured index: hold-to-repeat keeps stepping across rerenders
      while the item itself keeps moving. Ring-move and Duplicate live in the
      editor — seven anonymous glyphs on one row read like a generic toolbar. */
-  const stepMove = (dir) => {
+  // Move one slot; focus is restored to the same button after the rerender
+  // (P1-B: keyboard reorder used to drop your place on every single step).
+  const stepMove = (dir, focusSel) => {
     const a = owner;
     const j = a.indexOf(item);
     const k = j + dir;
     if (j < 0 || k < 0 || k >= a.length) return false;
+    pendingFocus = { key, sel: focusSel };
     [a[j], a[k]] = [a[k], a[j]];
     touch();
     return true;
   };
-  const holdRepeat = (btn, dir) => {
+  const holdRepeat = (btn, dir, focusSel) => {
     let t0 = null, t1 = null;
     const stop = () => { clearTimeout(t0); clearInterval(t1); t0 = t1 = null; };
     btn.addEventListener('pointerdown', () => {
       // click = one step; holding past 420ms steps every 110ms until release or edge
-      t0 = setTimeout(() => { t1 = setInterval(() => { if (!stepMove(dir)) stop(); }, 110); }, 420);
+      t0 = setTimeout(() => { t1 = setInterval(() => { if (!stepMove(dir, focusSel)) stop(); }, 110); }, 420);
       // the row rerenders mid-hold (touch() rebuilds it), so the release
       // listener sits on window — but registered only WHILE a hold is live:
       // at-render-time registration left rows×2 window listeners behind on
@@ -507,8 +643,8 @@ function segRow(ctx) {
     btn.addEventListener('pointercancel', stop);
     btn.addEventListener('blur', stop);
   };
-  holdRepeat(mini('\uE74A', 'Move earlier', () => stepMove(-1), '', 'Move earlier — hold to keep moving'), -1);
-  holdRepeat(mini('\uE74B', 'Move later', () => stepMove(1), '', 'Move later — hold to keep moving'), 1);
+  holdRepeat(mini('\uE74A', 'Move earlier', () => stepMove(-1, '.mv-up'), 'mv-up', 'Move earlier — hold to keep moving'), -1, '.mv-up');
+  holdRepeat(mini('\uE74B', 'Move later', () => stepMove(1, '.mv-down'), 'mv-down', 'Move later — hold to keep moving'), 1, '.mv-down');
   // One hairline separates the transport pair from the live-action pair —
   // the slip-guard margins were conceding the mis-click; this resolves it.
   el('span', 'act-sep', { 'aria-hidden': 'true' }, acts);
@@ -523,7 +659,13 @@ function segRow(ctx) {
         armed = true;
         runBtn.querySelector('.g').textContent = '\uE7BA';   // Warning
         runBtn.classList.add('armed');
-        runBtn.title = `Really run “${item.label}”? This ${item.type} can affect other apps — click again within 3s`;
+        // The arm must be READABLE, not just colourful — the swap was painted
+        // into title+glyph only, invisible to a screen reader and to anyone
+        // whose keyboard never sees a tooltip (critique P2-D).
+        const warn = `Really run “${item.label}”? This ${item.type} can affect other apps — activate again within 3s`;
+        runBtn.title = warn;
+        runBtn.setAttribute('aria-label', warn);
+        toast(`Armed — activate again within 3s to run “${item.label}”`, false, null, 3000);
         clearTimeout(armTimer);
         armTimer = setTimeout(disarm, 3000);
         return;
@@ -538,6 +680,7 @@ function segRow(ctx) {
       runBtn.querySelector('.g').textContent = '\uE768';
       runBtn.classList.remove('armed');
       runBtn.title = 'Try this action now';
+      runBtn.setAttribute('aria-label', 'Try this action now');
     }
   }
   mini('\uE74D', 'Delete segment', () => {   // Trash (E894 stays reserved for clear/close)
@@ -551,14 +694,24 @@ function segRow(ctx) {
     const from = owner;
     const idx = from.indexOf(item);
     from.splice(idx, 1);
+    // The keyboard lands on whoever inherited the slot (or its new last
+    // neighbour); P1-B: deleting used to throw focus to the top of the page.
+    const heir = from[Math.min(idx, from.length - 1)];
+    const pp = key.slice(0, key.lastIndexOf('/') + 1);   // '' at ring level — keys are ids now
+    pendingFocus = heir ? { key: pp + heir.id, sel: '.seg-main' }
+      : (depth === 0 ? { ringAdd: ctx.ring } : { key: key.slice(0, key.lastIndexOf('/')), sel: '.seg-main' });
     touch();
-    toast(`Removed “${item.label}”`, false, () => {
+    // The receipt names the blast radius — a folder row eats a whole sub-menu,
+    // and the caption that told you so is off-screen by then.
+    const n = countInside(item);
+    toast(`Removed “${item.label}”${n ? ` — ${n} segment${n === 1 ? '' : 's'} inside` : ''}`, false, () => {
       // Re-fetch the live array: an external-config swap replaces ring arrays
       // wholesale; a folder's children array rides on its parent item.
       const RM = ringsModel();
       const cur = depth === 0 ? (RM[ctx.ring] || (RM[ctx.ring] = [])) : owner;
       if (cur.some((x) => x.id === item.id)) return;   // already restored meanwhile
       cur.splice(Math.min(idx, cur.length), 0, item);
+      pendingFocus = { key, sel: '.seg-main' };        // the undo returns the caret to the restored row
       touch();
     });
   }, 'act-del');
@@ -574,17 +727,34 @@ function segRow(ctx) {
     const rowEl = document.querySelector(`[data-seg-key="${key}"]`);
     const ed = rowEl && rowEl.querySelector('.seg-edit');
     if (ed) ed.querySelector('input')?.focus();
-    else rowEl?.querySelector('.seg-disc')?.focus();
+    else rowEl?.querySelector('.seg-main')?.focus();   // collapsed → focus stays on the row control itself
   };
-  disc.onclick = (e) => { e.stopPropagation(); toggleEditor(); };
-  main.addEventListener('click', toggleEditor);
+  main.addEventListener('click', () => {
+    if (suppressClick) { suppressClick = false; return; }   // a finished drag is not a click-to-toggle
+    toggleEditor();
+  });
+  main.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleEditor(); }
+  });
+  // Esc closes THIS row's editor — from the row itself or from any field in
+  // it (the editor lives inside the row, so the event bubbles here). With an
+  // open DESCENDANT it peels one step of the branch ladder instead: the
+  // deepest open editor collapses toward here, so Esc-in-place always backs
+  // out one level no matter which ancestor's field had focus. Open combo
+  // dropdowns stopPropagation their own Esc first (see combo()), so this
+  // never fights the autocomplete.
+  row.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && expanded) {
+      e.stopPropagation();
+      const was = openSelf ? key : openEditorKey;
+      openEditorKey = collapseEditorKey(was);
+      renderSegments();
+      document.querySelector(`[data-seg-key="${was}"] .seg-main`)?.focus();
+    }
+  });
+  if (depth === 0) enableDrag(row, disc, ctx, key);
 
-  // Own editor opens the full form; a DESCENDANT's editor keeps just the
-  // folder manager visible, so opening a child never hides the child list
-  // you clicked through.
-  const openSelf = openEditorKey === key;
-  const openDesc = !openSelf && typeof openEditorKey === 'string' && openEditorKey.startsWith(key + '/');
-  if (openSelf || openDesc) row.appendChild(segEditor(ctx, openSelf));
+  if (expanded) row.appendChild(segEditor(ctx));
   return row;
 }
 
@@ -683,13 +853,15 @@ function settingLabel(id) {
   return c ? c.label : id;
 }
 
-function segEditor(ctx, withFields = true) {
+function segEditor(ctx) {
   const { owner, item, key, depth } = ctx;
   const ring = ctx.ring;
   const f = el('div', 'seg-edit');
-  // A DESCENDANT editor is open (this folder's own fields are collapsed):
-  // keep just the branch manager on screen so the tree never hides itself.
-  if (withFields === false && item.type === 'folder') { folderManager(ctx, f); return f; }
+  // Folders always render their FULL fields, even while a descendant's editor
+  // is open inside their Sub-menu manager below. The old collapse-to-manager-only
+  // render made the parent's Label/Type vanish the instant you clicked a child
+  // — the one move an author makes constantly. The tree reads top-down now:
+  // parent fields, parent manager, child row, child editor, in visible order.
   const uid = `se-${item.id}`;
   // Text inputs must NOT rerender the row list mid-keystroke — renderSegments()
   // tears down host.innerHTML and destroys the focused input. Write the model,
@@ -705,6 +877,13 @@ function segEditor(ctx, withFields = true) {
     if (name) name.textContent = item.label || '(no name)';
     const val = row.querySelector('.seg-val');
     if (val) val.textContent = rowValueText(item);
+    // Keep the row control's spoken label in step with its visible text —
+    // typing edits the captions in place (no rerender), the aria-label must
+    // not lag a keystroke behind.
+    const mainEl = row.querySelector('.seg-main');
+    if (mainEl) {
+      mainEl.setAttribute('aria-label', `${name?.textContent || '(no name)'}, ${row.querySelector('.seg-type')?.textContent || ''}${val?.textContent ? ', ' + val.textContent : ''} — ${mainEl.getAttribute('aria-expanded') === 'true' ? 'close editor' : 'edit segment'}`);
+    }
   };
 
   /* One form row = label cell + control cell; every control shares one left
@@ -788,7 +967,10 @@ function segEditor(ctx, withFields = true) {
       item.args = '';                                // the arguments slot is app-only
     }
     touch();                                     // rebuilds the editor for the new type
-    document.querySelector(`[data-seg-key="${key}"] .seg-edit select`)?.focus();   // keep the keyboard in the editor
+    // Land focus back on the Type control the user just operated — the old
+    // '.seg-edit select' hit the FIRST select in the form, which is Label
+    // position, walking keyboard users out of the control they changed.
+    document.querySelector(`[data-seg-key="${key}"] select[id="${uid}-type"]`)?.focus();
   });
 
   if (item.type === 'folder') {
@@ -918,9 +1100,13 @@ function segEditor(ctx, withFields = true) {
   clr.onclick = () => { item.icon = ''; item.iconImage = ''; renderSegments(); touch(); };
 
   const cColor = field('Color');
-  const chkAuto = el('input', null, { type: 'checkbox' }, cColor);
+  // The 'auto' checkbox was a bare input next to a muted word — nothing bound
+  // them, so a screen reader announced an unlabeled checkbox. One label now
+  // wraps input + text, like the Hide-label row above.
+  const autoLb = el('label', 'chk', { title: 'Use the ring colour for this segment — no custom colour' }, cColor);
+  const chkAuto = el('input', null, { type: 'checkbox' }, autoLb);
   chkAuto.checked = !item.color;
-  el('span', 'muted ctl-note', { text: 'auto' }, cColor);
+  el('span', 'muted ctl-note', { text: 'auto' }, autoLb);
   const colIn = el('input', null, { type: 'color', value: item.color || cfg.appearance.colors[Number(ring) % 2 === 1 ? 'ring1' : 'ring2'] }, cColor);
   chkAuto.addEventListener('change', () => { item.color = chkAuto.checked ? null : colIn.value; touch(false); });
   colIn.addEventListener('input', () => { if (!chkAuto.checked) { item.color = colIn.value; touch(false); } });
@@ -946,7 +1132,9 @@ function segEditor(ctx, withFields = true) {
         const idx = from.indexOf(item);
         from.splice(idx, 1);
         RM[r].push(item);
-        openEditorKey = null;
+        // Keys are ids, so the editor FOLLOWS the item across rings — closing
+        // it was a position-key-era habit that threw keyboard users out.
+        pendingFocus = { key, sel: '.ring-pick input:checked' };
         touch();
         // Inverse-op undo — returns the item to its old ring and position;
         // later edits made after the move survive.
@@ -960,6 +1148,7 @@ function segEditor(ctx, withFields = true) {
           cur.splice(k, 1);
           const back = R2[ring] || (R2[ring] = []);
           back.splice(Math.min(idx, back.length), 0, item);
+          pendingFocus = { key, sel: '.ring-pick input:checked' };
           touch();
         });
       }
@@ -967,13 +1156,13 @@ function segEditor(ctx, withFields = true) {
     rb.value = r;
     lb.appendChild(document.createTextNode(ringRadioLabel(r, allKeys)));
   }
-  makeDupButton(ringBox, ringsModel()[ring], 24, item, 'A ring holds at most 24 segments');
+  makeDupButton(ringBox, ringsModel()[ring], 24, item, 'A ring holds at most 24 segments', key);
   } else {
     // Duplicate is the only child-level placement control (the ring radios are
     // root-only); no label needed — the button names itself.
     const cPlace = field(null);
     const box = el('div', 'ring-pick', {}, cPlace);
-    makeDupButton(box, owner, MAX_CHILDREN, item, `A sub-menu holds at most ${MAX_CHILDREN} segments`);
+    makeDupButton(box, owner, MAX_CHILDREN, item, `A sub-menu holds at most ${MAX_CHILDREN} segments`, key);
   }
   return f;
 }
@@ -1153,19 +1342,20 @@ function macroBuilder(item, f, inV, syncRowText) {
 
 /* One Duplicate button for both placement levels. Cap + toast text vary
    (24-per-ring vs 12-per-sub-menu); the copy always gets fresh ids so the
-   overlay's live-config id match (ipc.js) stays unambiguous. */
-function makeDupButton(host, ownerArr, cap, item, capMsg) {
-  const dup = el('button', 'btn small', { type: 'button', text: 'Duplicate', title: 'Copy this segment into the next position' }, host);
+   overlay's live-config id match (ipc.js) stays unambiguous. The editor stays
+   open on the ORIGINAL (keys are ids) and focus returns to this button. */
+function makeDupButton(host, ownerArr, cap, item, capMsg, key) {
+  const dup = el('button', 'btn small dup-btn', { type: 'button', text: 'Duplicate', title: 'Copy this segment into the next position' }, host);
   dup.onclick = (e) => {
     e.stopPropagation();
     if (ownerArr.length >= cap) { toast(capMsg, true); return; }
     const copy = renewIds(item);
     ownerArr.splice(ownerArr.indexOf(item) + 1, 0, copy);
-    openEditorKey = null;
+    pendingFocus = { key, sel: '.dup-btn' };
     touch();
     toast(`Duplicated “${item.label || '(no name)'}”`, false, () => {
       const k = ownerArr.findIndex((x) => x.id === copy.id);
-      if (k >= 0) { ownerArr.splice(k, 1); touch(); }
+      if (k >= 0) { ownerArr.splice(k, 1); pendingFocus = { key, sel: '.dup-btn' }; touch(); }
     });
   };
   return dup;
@@ -1173,8 +1363,9 @@ function makeDupButton(host, ownerArr, cap, item, capMsg) {
 
 /* Sub-menu list inside a folder's editor. Child rows reuse the ordinary
    segment row component — editors, reorder, delete-and-undo, icon picker and
-   all — addressed by path keys (parent key + "/index"), so the nesting UI is
-   literally the same UI at every level. */
+   all — addressed by path keys (parent key + "/" + the child's ID), so the
+   nesting UI is literally the same UI at every level, and a child reorder
+   never retargets an open editor. */
 function folderManager(ctx, host) {
   const item = ctx.item;
   if (!Array.isArray(item.children)) item.children = [];
@@ -1183,8 +1374,9 @@ function folderManager(ctx, host) {
   const canNest = d + 1 < MAX_FOLDER_DEPTH;
   const addKid = (type) => {
     if (kids.length >= MAX_CHILDREN) { toast(`A sub-menu holds at most ${MAX_CHILDREN} segments`, true); return; }
-    kids.push(newSegItem(type));
-    openEditorKey = `${ctx.key}/${kids.length - 1}`;
+    const kid = newSegItem(type);
+    kids.push(kid);
+    openEditorKey = `${ctx.key}/${kid.id}`;
     touch();
     // land the caret in the new row's Label box, pre-selected like ring rows do
     const lbl = document.querySelector(`[data-seg-key="${openEditorKey}"] .seg-edit input`);
@@ -1193,10 +1385,15 @@ function folderManager(ctx, host) {
   const addButtons = (where) => {
     const b = el('button', 'btn small', { type: 'button', text: '+ Add segment', title: 'Add an action inside this sub-menu' }, where);
     b.onclick = (e) => { e.stopPropagation(); addKid('app'); };
-    if (canNest) {
-      const s = el('button', 'btn small', { type: 'button', text: '+ Add sub-folder', title: 'Add a folder that branches further outward' }, where);
-      s.onclick = (e) => { e.stopPropagation(); addKid('folder'); };
-    }
+    // At the last nest level the button STAYS, disabled and self-explaining —
+    // a control that evaporates between levels reads as a bug, not a limit.
+    const s = el('button', 'btn small', {
+      type: 'button', text: '+ Add sub-folder',
+      title: canNest ? 'Add a folder that branches further outward'
+        : `Sub-menus nest ${MAX_FOLDER_DEPTH} levels deep — this branch is at the last one`
+    }, where);
+    s.disabled = !canNest;
+    s.onclick = (e) => { e.stopPropagation(); addKid('folder'); };
   };
   if (!kids.length) {
     // One dashed empty state — explains what belongs here and offers the action.
@@ -1211,7 +1408,7 @@ function folderManager(ctx, host) {
       : `Deepest folder level — its segments branch out as actions.`
   }, host);
   const listBox = el('div', 'kid-list', {}, host);
-  kids.forEach((kid, j) => listBox.appendChild(segRow({ owner: kids, item: kid, i: j, key: `${ctx.key}/${j}`, depth: d + 1 })));
+  kids.forEach((kid) => listBox.appendChild(segRow({ owner: kids, item: kid, key: `${ctx.key}/${kid.id}`, depth: d + 1 })));
   addButtons(el('div', 'row-line kid-add', {}, host));
 }
 
