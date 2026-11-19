@@ -36,7 +36,7 @@
   "build": {
     "appId": "local.nucleus",
     "productName": "Nucleus",
-    "buildNumber": "2",
+    "buildNumber": "3",
     "directories": {
       "output": "dist"
     },
@@ -51,7 +51,13 @@
         "nsis"
       ],
       "icon": "assets/tray.ico",
-      "signExecutable": false
+      "signtoolOptions": {
+        "sign": "scripts/azure-sign.cjs",
+        "signingHashAlgorithms": [
+          "sha256"
+        ]
+      },
+      "forceCodeSigning": true
     },
     "nsis": {
       "oneClick": true,
