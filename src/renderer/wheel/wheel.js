@@ -495,10 +495,14 @@ function mxDiffSessions(sessions) {
     const key = mixerRowKey(s);
     if (!key) continue;
     seen.add(key);
+    // Hoisted: the fallback label below (outside the create-block) needs the
+    // pid too — main's listSessions always labels today, but this line's own
+    // `s.label ||` contract says a missing label must print the pid, and a
+    // block-scoped const here threw ReferenceError the moment that fired.
+    const pid = s.pid;
     let st = mixer.rows.get(key);
     if (!st) {
       if (created >= MX_MAX_ROWS) { extra++; continue; }
-      const pid = s.pid;
       st = mxRow(host, {
         icon: '\uE767', label: s.label || 'audio session ' + pid,
         aria: 'Volume for ' + (s.label || 'audio session ' + pid),
