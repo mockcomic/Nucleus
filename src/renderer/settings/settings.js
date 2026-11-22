@@ -454,6 +454,18 @@ function removeRing(ring) {
   const moved = items.slice();
   toast(`Removed ${ringTitle(ring, ringKeys().length + 1)}`, false, () => {
     const R2 = ringsModel();
+    const live = R2[ring];
+    // Two ways the restore loses data silently instead of honestly: the ring
+    // slot came back with its own new segments (overwriting them), or raising
+    // it would create a 5th key that config.js slices off at save.
+    if (live && live.length) {
+      toast(`Ring ${ring} is back and in use — the segments stay folded`, true);
+      return;
+    }
+    if (!live && Object.keys(R2).length >= MAX_RINGS) {
+      toast(`Ring limit reached (${MAX_RINGS}) — the segments stay folded`, true);
+      return;
+    }
     for (const it of moved) {
       const k = inner.indexOf(it);
       if (k >= 0) inner.splice(k, 1);        // pull the migrated items back
@@ -708,7 +720,28 @@ function segRow(ctx) {
       // Re-fetch the live array: an external-config swap replaces ring arrays
       // wholesale; a folder's children array rides on its parent item.
       const RM = ringsModel();
-      const cur = depth === 0 ? (RM[ctx.ring] || (RM[ctx.ring] = [])) : owner;
+      let cur;
+      if (depth === 0) {
+        cur = RM[ctx.ring];
+        // Restoring a deleted ring would mint a 5th key — config.js renumbers
+        // and slices rings down to MAX_RINGS at save, which would silently
+        // evaporate this whole ring. Fail honestly instead.
+        if (!cur && Object.keys(RM).length >= MAX_RINGS) {
+          toast(`Ring ${ctx.ring} is gone and all ${MAX_RINGS} ring slots are full — segment not restored`, true);
+          return;
+        }
+        cur = RM[ctx.ring] || (RM[ctx.ring] = []);
+        if (cur.length >= 24) {
+          toast('Ring full — segment not restored', true);
+          return;
+        }
+      } else {
+        cur = owner;
+        if (cur.length >= MAX_CHILDREN) {
+          toast(`Sub-menu full (${MAX_CHILDREN}) — segment not restored`, true);
+          return;
+        }
+      }
       if (cur.some((x) => x.id === item.id)) return;   // already restored meanwhile
       cur.splice(Math.min(idx, cur.length), 0, item);
       pendingFocus = { key, sel: '.seg-main' };        // the undo returns the caret to the restored row
@@ -1174,11 +1207,20 @@ function segEditor(ctx) {
         toast(`Moved “${item.label || '(no name)'}” to ${dest}`, false, () => {
           const R2 = ringsModel();
           const cur = R2[r];
-          const k = cur.indexOf(item);
+          const k = cur ? cur.indexOf(item) : -1;
           if (k < 0) return;                        // moved on — inverse op is a no-op
+          const back = R2[ring];
+          if (!back && Object.keys(R2).length >= MAX_RINGS) {
+            toast(`Ring ${ring} is gone and all ${MAX_RINGS} ring slots are full — item stays put`, true);
+            return;                                 // before removing it from the current ring
+          }
+          const target = back || (R2[ring] = []);
+          if (target.length >= 24) {
+            toast('Ring full — item stays in the new ring', true);
+            return;
+          }
           cur.splice(k, 1);
-          const back = R2[ring] || (R2[ring] = []);
-          back.splice(Math.min(idx, back.length), 0, item);
+          target.splice(Math.min(idx, target.length), 0, item);
           pendingFocus = { key, sel: '.ring-pick input:checked' };
           touch();
         });
@@ -1518,6 +1560,12 @@ function renderProfileBar() {
       touch();
       renderProfileBar();
       toast(`Deleted profile “${p.name || 'Profile'}”`, false, () => {
+        // config.js slices profiles to MAX_PROFILES at save — restoring a 9th
+        // would silently evict whichever profile sorts last, not this one.
+        if (list.length >= MAX_PROFILES) {
+          toast(`Profile limit reached (${MAX_PROFILES}) — profile not restored`, true);
+          return;
+        }
         list.splice(Math.min(idx, list.length), 0, p);
         activeProfileId = p.id;
         touch();
