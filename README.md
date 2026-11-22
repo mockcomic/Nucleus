@@ -325,6 +325,24 @@ keyed by Win32 message id and the last decoded `mouseData` / `flags`. `calls` ri
 `seen` stays 0 means the button never reaches the hook (vendor driver remap, or another
 app's hook took it first). Dev builds only — inert once packaged.
 
+## Automated smoke & E2E
+
+`npm run test:smoke` — ~10 s. Pops the wheel, screenshots the screen, verifies the
+painted hub/ring1/ring2 band colors and label text against `config.json`.
+`npm run test:e2e` — smoke plus two click-injection passes: a temporary `ZZTEST`
+command segment is clicked with a real injected mouse click and its action must
+run (proof file), then an app segment (`notepad` by default) must launch and is
+killed after. Both run headless-style against the working tree, so after any
+change `npm test && npm run test:e2e` is the full regression pass.
+
+Details in `tests/e2e.ps1` (params `-Checks`, `-Config`, `-AppName`,
+`-KeepRunning`). It reuses a running dev instance (`npm run start:agent --
+--hidden`) or starts one and stops it again afterwards. The wheel is popped
+through the app's own `--show-wheel` second-instance path — synthesized
+keyboard events don't reach `globalShortcut` from agent/CI shells, while
+injected *mouse* input works everywhere. Takes over the mouse for a few
+seconds and restores its position; screenshots land in `.cache/` (gitignored).
+
 ## Manual test checklist
 
 1. `npm start` → tray icon appears, no console/taskbar window; first-run opens the Welcome guide (replay via tray → Show welcome…; seen-state in `state.json`).

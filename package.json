@@ -15,7 +15,9 @@
     "make-icons": "node scripts/make-icons.mjs",
     "build": "npm run dist",
     "dist": "node scripts/make-icons.mjs && node scripts/bump-build.mjs && electron-builder",
-    "test": "node --test tests/*.test.js tests/unit/*.test.js"
+    "test": "node --test tests/*.test.js tests/unit/*.test.js",
+    "test:smoke": "powershell -NoProfile -ExecutionPolicy Bypass -File tests/e2e.ps1 -Checks render",
+    "test:e2e": "powershell -NoProfile -ExecutionPolicy Bypass -File tests/e2e.ps1"
   },
   "dependencies": {
     "koffi": "^2.9.2",
