@@ -34,14 +34,33 @@ function execReg(key) {
   });
 }
 
+/* reg.exe never echoes the alias back: a query for `HKCU\…` prints headers as
+   `HKEY_CURRENT_USER\…`. Matching headers on the raw query prefix dropped
+   every subkey block, so the registry source silently yielded zero apps and
+   the 'reg' kind never reached the picker. Canonicalize the alias first, and
+   compare case-insensitively — the header's casing is the OS's, not ours. */
+const ROOT_ALIASES = {
+  HKCU: 'HKEY_CURRENT_USER',
+  HKLM: 'HKEY_LOCAL_MACHINE',
+  HKCR: 'HKEY_CLASSES_ROOT',
+  HKU: 'HKEY_USERS',
+  HKCC: 'HKEY_CURRENT_CONFIG'
+};
+function fullRoot(key) {
+  const m = String(key).match(/^(HK(?:CU|LM|CR|U|CC))(?=\\)/i);
+  if (!m) return String(key);
+  return ROOT_ALIASES[m[1].toUpperCase()] + String(key).slice(m[1].length);
+}
+
 function parseUninstallDump(out, rootKey) {
   const results = [];
+  const want = fullRoot(rootKey).toLowerCase();
   let cur = null;
   const lines = out.split(/\r?\n/);
   for (const line of lines) {
     if (!line.trim()) { continue; }
     if (!/^\s/.test(line)) {                       // subkey header line
-      if (!line.startsWith(rootKey)) { cur = null; continue; }
+      if (!line.toLowerCase().startsWith(want)) { cur = null; continue; }
       cur = { name: '', DisplayIcon: '', InstallLocation: '', WindowsInstaller: '' };
       results.push(cur);
       continue;
@@ -108,4 +127,4 @@ async function listApps(force = false) {
   return items;
 }
 
-module.exports = { listApps };
+module.exports = { listApps, parseUninstallDump, fullRoot };
