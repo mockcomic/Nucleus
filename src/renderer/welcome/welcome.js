@@ -188,7 +188,7 @@ function finish(openSettings) {
   if (first) {
     const row = $('autostart-row');
     const box = $('welcome-autostart');
-    const onLast = step === LAST && info.autostartAllowed && row && !row.classList.contains('hidden');
+    const onLast = step === LAST && !!(info && info.autostartAllowed) && row && !row.classList.contains('hidden');
     applyAutostart = onLast && box ? !!box.checked : false;
   }
   api.finish({ openSettings: !!openSettings, applyAutostart });
