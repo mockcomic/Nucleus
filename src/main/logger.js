@@ -33,12 +33,18 @@ const MAX_LINE_CHARS = 2000;      // one serialized argument list, clamped
 const LEVELS = { debug: 10, info: 20, warn: 30, error: 40 };
 const LEVEL_TAG = { debug: 'DEBUG', info: 'INFO ', warn: 'WARN ', error: 'ERROR' };
 
+/* Own-property check — LEVELS['constructor'] is a function, not a level:
+   prototype-chain lookups turned NUCLEUS_LOG_LEVEL=toString (or a renderer
+   payload with level='constructor') into a threshold that compares numeric
+   level scores against a function, silencing the logger with no error. */
+function isLevel(v) { return typeof v === 'string' && Object.prototype.hasOwnProperty.call(LEVELS, v); }
+
 /* ------------------------------- configuration ------------------------------ */
 
 function requestedLevel() {
   const fromArgv = (process.argv.find((a) => /^--log-level=/i.test(a)) || '').split('=')[1];
   const want = String(fromArgv || process.env.NUCLEUS_LOG_LEVEL || process.env.RADIALWHEEL_LOG_LEVEL || '').toLowerCase();
-  if (LEVELS[want] != null) return want;
+  if (isLevel(want)) return want;
   /* dev builds want the chatty lines (hotkey probes, mouse-hook stats); a
      resident packaged build should only accrue what matters: info and up. */
   return 'info';
@@ -131,6 +137,16 @@ function writeToDisk(line) {
   }
   bytesWritten += line.length + 1;
   fs.appendFileSync(activeFile, line + '\n');   // sync: lines survive a hard kill
+  /* The cap has to latch HERE, not only at the next-day reopen: this app is
+     resident, so a pathological log loop would otherwise blow through
+     MAX_FILE_BYTES by gigabytes within one session while the header comment
+     promised "once hit, only the summary line keeps flowing". Recovery is the
+     rollover in writeToDisk (openToday re-stats the fresh file and clears
+     the flag). */
+  if (bytesWritten >= MAX_FILE_BYTES) {
+    capped = true;
+    try { process.stdout.write(`${TAG} log file hit ${Math.round(MAX_FILE_BYTES / 1048576)} MB — file logging paused for today\n`); } catch { /* ignore */ }
+  }
 }
 
 function emit(level, prefix, args) {
@@ -171,7 +187,7 @@ function ensureDir() {
 
 function init() {
   const want = requestedLevel();
-  threshold = LEVELS[want] != null ? LEVELS[want] : LEVELS.info;
+  threshold = LEVELS[want];
   const app = appSafe();
   debugAllowed = app ? !app.isPackaged : false;
   return ensureDir();
@@ -217,7 +233,7 @@ function banner() {
 function forwardRenderer(payload) {
   try {
     if (!payload || typeof payload !== 'object') return;
-    const lvl = LEVELS[payload.level] != null ? payload.level : 'info';
+    const lvl = isLevel(payload.level) ? payload.level : 'info';
     const page = String(payload.page || 'renderer').replace(/[^\w-]/g, '').slice(0, 24) || 'renderer';
     const where = payload.source ? ` (${String(payload.source).replace(/[\r\n]/g, ' ').slice(0, 160)}${payload.line ? ':' + (payload.line | 0) : ''})` : '';
     emit(lvl, `[renderer:${page}]${where}`, [payload.args]);
