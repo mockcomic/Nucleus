@@ -109,9 +109,12 @@ export function isMixerItem(item) {
 }
 
 /* ---------------- default-device pickers (the card's two rows) --------------
-   `devices` is main's listDevices answer: [{id, name, isDefault}]. Entries are
-   OS-supplied, so every helper here is junk-tolerant and nothing here touches
-   the DOM — wheel.js paints the result. */
+   `devices` is main's listDevices answer: [{id, name, isDefault, hidden}] —
+   `hidden` is applied by main (tagHiddenDevices) so no surface can disagree
+   about what "hidden" means. Hidden endpoints are NOT dropped anywhere in the
+   card: they paint dimmed below the visible list with a one-click Show again.
+   Entries are OS-supplied, so every helper here is junk-tolerant and nothing
+   here touches the DOM — wheel.js paints the result. */
 
 /** True only for a usable endpoint entry (a string id is the one requirement). */
 function isDevice(d) {
@@ -127,32 +130,41 @@ export function pickDefaultDevice(devices) {
 }
 
 /** Cheap change detector for the 2 s poll: two lists paint identically iff
- *  their signatures match (id, name and default flag in enumeration order).
- *  Junk answers '' — which never equals a real signature, so a failed read
- *  cannot leave a stale list looking freshly re-read. */
+ *  their signatures match (id, name, default flag and hidden flag in
+ *  enumeration order — a hide/restore must repaint even when nothing else
+ *  moved). Junk answers '' — which never equals a real signature, so a failed
+ *  read cannot leave a stale list looking freshly re-read. */
 export function deviceSignature(devices) {
   if (!Array.isArray(devices) || !devices.length) return '';
   const parts = [];
   for (const d of devices) {
     if (!isDevice(d)) continue;
-    parts.push(d.id + '\u0000' + String(d.name == null ? '' : d.name) + '\u0000' + (d.isDefault ? '1' : '0'));
+    parts.push(d.id + '\u0000' + String(d.name == null ? '' : d.name) + '\u0000' + (d.isDefault ? '1' : '0')
+      + '\u0000' + (d.hidden ? '1' : '0'));
   }
   return parts.length ? parts.join('\u0001') : '';
 }
 
-/** Cap the visible list to what the card can hold: {items, extra} keeps
- *  Windows' own order (the caller never re-sorts endpoints) and reports how
- *  many rows fell to the "…and N more" line. The current default is pinned in
- *  view even when it sits past the cap. Junk list → empty, not null. */
+/** Split one endpoint list for the card: {items, extra, hidden}. `items` is
+ *  the visible block, capped to what the list can hold and keeping Windows'
+ *  own order (the caller never re-sorts endpoints); `extra` counts the visible
+ *  rows that fell to the "…and N more" line; `hidden` is EVERY hidden endpoint
+ *  in OS order — the dimmed block is the whole recovery UI, so it is never
+ *  silently truncated (the list scrolls). The current default is pinned into
+ *  `items` even when it sits past the cap, and can never appear in `hidden`
+ *  (main exempts it). Junk list → empty fields, not null. */
 export function capDeviceList(devices, max = MAX_VISIBLE_DEVICES) {
   const cap = (typeof max === 'number' && isFinite(max) && max > 0) ? Math.floor(max) : MAX_VISIBLE_DEVICES;
   const usable = (Array.isArray(devices) ? devices : []).filter(isDevice);
-  if (usable.length <= cap) return { items: usable, extra: 0 };
-  const items = usable.slice(0, cap);
-  const def = pickDefaultDevice(usable);
+  const vis = [];
+  const hid = [];
+  for (const d of usable) (d.hidden === true && d.isDefault !== true ? hid : vis).push(d);
+  if (vis.length <= cap) return { items: vis, extra: 0, hidden: hid };
+  const items = vis.slice(0, cap);
+  const def = pickDefaultDevice(vis);
   // The current default is always pinned into the visible window: a machine
   // with more endpoints than the cap must never hide the device the user is
   // listening through — they could not switch back from inside the card.
   if (def && items.indexOf(def) < 0) items[cap - 1] = def;
-  return { items, extra: Math.max(0, usable.length - items.length) };
+  return { items, extra: Math.max(0, vis.length - items.length), hidden: hid };
 }

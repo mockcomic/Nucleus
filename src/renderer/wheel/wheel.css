@@ -239,6 +239,38 @@ html, body {
 .mx-dev-opt[aria-selected="true"] .mx-dev-text { font-weight: 600; }
 .mx-dev-waiting .mx-dev-text { opacity: .6; }
 .mx-dev-empty, .mx-dev-more { font-size: 11px; opacity: .6; padding: 2px 6px; }
+/* Hidden endpoints sit at the list foot, dimmed but never silent: the row
+   names itself as Hidden and carries its own way back. The Hide button rides
+   the right edge of visible rows (always visible on touch-sized rows is fine
+   — the card is compact and a ghost button reads calmer than a bare hover
+   reveal here); Show on hidden rows is always on, because finding the button
+   is the whole point of the block. */
+/* Dimming steps the name's color instead of thinning the row: row-level
+   opacity would multiply onto the caption tag and push it under the
+   contrast floor — the tag is what tells you why the row looks away.
+   (Same law as the Settings list's .au-drow.hid.) */
+.mx-dev-hidden { cursor: default; }
+.mx-dev-hidden .mx-dev-text { color: color-mix(in srgb, var(--mx-text) 55%, transparent); }
+.mx-dev-hidden .mx-dev-check { opacity: .5; }
+.mx-dev-hidden:hover .mx-dev-text { color: var(--mx-text, #dfe7f0); }
+.mx-dev-tag { flex: none; font-size: 10px; letter-spacing: .02em; }
+.mx-dev-act {
+  flex: none; margin-left: auto;
+  font: inherit; font-size: 11px;
+  padding: 1px 7px; border-radius: 6px;
+  border: 1px solid var(--mx-edge, rgba(255,255,255,0.08));
+  background: transparent; color: inherit; cursor: pointer;
+  transition: opacity .12s ease-out;
+}
+/* No hover on touch — the button is the affordance, never a hover secret.
+   Wheel rows always show their act anyway (the card has no resting quiet-list
+   rule); coarse-pointer users get it without a hover they will never get. */
+@media (pointer: coarse) {
+  .mx-dev-act { color: inherit; }
+}
+.mx-dev-act:hover { background: color-mix(in srgb, var(--mx-hover, #2e7dd1) 34%, transparent); }
+.mx-dev-act:focus-visible { outline: 2px solid var(--mx-accent, #4c9ff0); outline-offset: 1px; }
+.mx-dev-act:disabled { opacity: .4; cursor: default; }
 
 /* Height budget: with an endpoint list open, the app list gives room. The card
    carries .mx-pickers-open (wheel.js devToggle) while an open ROW carries

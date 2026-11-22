@@ -562,12 +562,23 @@ function bootstrap() {
 }
 
 /* ------------------------------ app lifecycle ------------------------------ */
-if (!app.requestSingleInstanceLock()) {
+/* Dev-only smoke-test exit: come all the way up (boot banner, tray, hotkey,
+   the whole bootstrap) and leave immediately. Lets a sandboxed harness —
+   which can't create Chromium's singleton lock file, so it always reads as
+   "held" here — prove that startup works even though it can never keep the
+   app resident. */
+const SMOKE_QUIT = process.argv.includes('--quit-quit') && !app.isPackaged;
+/* how long the smoke instance lives; default 3 s, the CDP verifier passes
+   --smoke-ms=20000 to give the drive time to click through the tabs */
+const SMOKE_MS = Math.max(1000, Number((process.argv.find((a) => a.startsWith('--smoke-ms=')) || '').split('=')[1]) || 3000);
+
+if (!app.requestSingleInstanceLock() && !SMOKE_QUIT) {
   /* Second launch: say so in the log — an exe double-click that "does nothing"
      is otherwise indistinguishable from a crash. */
   log.warn('another instance already holds the single-instance lock — this launch exits');
   app.quit();
 } else {
+  if (SMOKE_QUIT) app.once('ready', () => { setTimeout(() => app.quit(), SMOKE_MS); });
   app.setAppUserModelId('local.nucleus');
 
   /* Tray-resident launcher: never hostage to a usable GPU process. A locked

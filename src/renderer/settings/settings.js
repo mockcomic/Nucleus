@@ -808,30 +808,52 @@ let appSettingsCatalogCache = null;
 
 /* ---------------- audio endpoint caches (shared by the Audio tab and the
    segment editor's device picker) -------------------------------------------
-   Lists come from main's Core Audio module; names are cached by endpoint id
-   so a bound segment can still show "Headphones" as its caption after the
-   user moves on. The caches are per-flow and lazy — cold until first asked. */
-const audioDeviceCache = { render: null, capture: null };
-const audioDeviceNames = new Map();          // endpoint id -> friendly name
+   Lists come from main's Core Audio module — every row already carries its
+   `hidden` flag (main applies behavior.audioHidden in the IPC layer), and the
+   store's own hidden entries ride back in the same answer, so the pickers
+   need the full truth in one round trip and never filter or fetch twice.
+   Names are cached by endpoint id so a bound segment can still show
+   "Headphones" as its caption after the user moves on. The caches are
+   per-flow and lazy — cold until first asked.
 
-async function loadAudioDevices(flow, force = false) {
-  if (audioDeviceCache[flow] && !force) return audioDeviceCache[flow];
-  const r = await safe(() => api.audioDevices(flow));
-  const list = (r && r.ok && Array.isArray(r.devices)) ? r.devices : [];
-  list.forEach((d) => { if (d && d.id) audioDeviceNames.set(d.id, d.name || d.id); });
-  audioDeviceCache[flow] = list;
-  return list;
+   Cache discipline (the 2026-11 disappearing-device fix): a FAILED read never
+   overwrites the last good snapshot (the old code cached [] on failure and
+   then served that empty list forever, so a single cold IPC reply blanked the
+   picker until a manual Refresh); and a cached EMPTY list expires after five
+   seconds, because an enumeration taken mid-replug is transient by nature.
+   A transient empty reply while a good list is held keeps the devices and
+   only refreshes the hidden entries — never poisoning the cache with what is
+   almost certainly half the truth. */
+const audioDeviceCache = { render: null, capture: null };   // {devices, hidden, at} | null
+const audioDeviceNames = new Map();          // endpoint id -> friendly name
+const AUDIO_EMPTY_TTL_MS = 5000;
+
+function rememberNames(list) {
+  for (const d of list) if (d && d.id) audioDeviceNames.set(d.id, d.name || d.id);
 }
 
-/* The hidden-device manager's view of the SAME endpoint list: main filters
-   the shared audio:devices channel app-wide, so the manager asks for the
-   unfiltered truth (strict includeHidden === true) and offers Hide/Restore
-   for every endpoint Windows has, not just the visible ones. */
-async function loadAllAudioDevices(flow) {
-  const r = await safe(() => api.audioDevices(flow, true));
-  const list = (r && r.ok && Array.isArray(r.devices)) ? r.devices : null;
-  if (list) list.forEach((d) => { if (d && d.id) audioDeviceNames.set(d.id, d.name || d.id); });
-  return list;
+/* Resolves to a snapshot {devices, hidden, at, stale?} — NEVER null, so every
+   caller reads .devices and the failure path is a flag, not a shape change.
+   `stale: true` means "this is the last good read, the live one failed" and
+   the Audio tab paints it as a one-line note with the Refresh escape. */
+async function loadAudioDevices(flow, force = false) {
+  const hit = audioDeviceCache[flow];
+  const fresh = hit && (hit.devices.length || Date.now() - hit.at < AUDIO_EMPTY_TTL_MS);
+  if (hit && fresh && !force) return hit;
+  const r = await safe(() => api.audioDevices(flow));
+  if (!r || r.ok !== true || !Array.isArray(r.devices)) {
+    return hit ? Object.assign({}, hit, { stale: true })
+      : { devices: [], hidden: [], at: Date.now(), stale: true };
+  }
+  const snap = { devices: r.devices, hidden: Array.isArray(r.hidden) ? r.hidden : [], at: Date.now() };
+  rememberNames(snap.devices);
+  if (!snap.devices.length && hit && hit.devices.length) {
+    const merged = Object.assign({}, hit, { hidden: snap.hidden, at: snap.at });
+    audioDeviceCache[flow] = merged;
+    return merged;
+  }
+  audioDeviceCache[flow] = snap;
+  return snap;
 }
 
 /* Caption for a bound endpoint id when the cache is cold: the id's own tail,
@@ -1011,28 +1033,37 @@ function segEditor(ctx) {
     /* hasDevice (set_output_device / set_input_device): the same `dir` field,
        filled from the live endpoint list instead of free text. A bound id
        that's no longer present (unplugged device) keeps a visible orphan row
-       so the segment never silently points at nothing. */
+       so the segment never silently points at nothing. Hidden endpoints DO
+       appear here (flagged · hidden): the store exempts the current default
+       from hiding and set-default is unfiltered, so a segment bound to a
+       device the user later hid must stay visible AND switchable — silently
+       dropping it here would be the same disappearing-device bug wearing a
+       different hat. */
     const devEnt = sysEntry(item.value) || {};
     if (devEnt.hasDevice) {
       const flow = devEnt.hasDevice === 'capture' ? 'capture' : 'render';
       const cDev = field('Audio device', uid + '-dev');
       const selDev = el('select', null, { id: uid + '-dev', 'aria-label': 'Audio device this segment switches to' }, cDev);
-      const fillDev = (devices) => {
+      const fillDev = (snap) => {
+        const devices = (snap && Array.isArray(snap.devices)) ? snap.devices : [];
         selDev.innerHTML = '';
         el('option', null, { text: '(pick a device…)', value: '' }, selDev);
         const orphan = item.dir && !devices.some((d) => d.id === item.dir);
         if (orphan) el('option', null, { text: '(unplugged — re-pick) ' + audioDeviceLabel(item.dir), value: item.dir }, selDev);
-        devices.forEach((d) => el('option', null, { text: d.name + (d.isDefault ? '  ·  system default' : ''), value: d.id }, selDev));
+        devices.forEach((d) => el('option', null, {
+          text: d.name + (d.isDefault ? '  ·  system default' : '') + (d.hidden ? '  ·  hidden' : ''),
+          value: d.id
+        }, selDev));
         selDev.value = item.dir || '';
       };
-      fillDev(audioDeviceCache[flow] || []);
-      if (!audioDeviceCache[flow]) loadAudioDevices(flow).then((ds) => { if (selDev.isConnected) fillDev(ds); });
+      if (audioDeviceCache[flow]) fillDev(audioDeviceCache[flow]);
+      else loadAudioDevices(flow).then((snap) => { if (selDev.isConnected) fillDev(snap); });
       const devRg = el('button', 'btn small', { title: 'Reload the device list', 'aria-label': 'Reload the device list' }, cDev);
       el('span', 'g', { text: '\uE72C' }, devRg);   // Refresh
       devRg.addEventListener('click', async (ev) => {
         ev.stopPropagation();
-        const ds = await loadAudioDevices(flow, true);
-        if (selDev.isConnected) fillDev(ds);
+        const snap = await loadAudioDevices(flow, true);
+        if (selDev.isConnected) fillDev(snap);
       });
       selDev.addEventListener('change', () => { item.dir = selDev.value; syncRowText(); touch(false); });
       hint({
@@ -2861,120 +2892,199 @@ async function wireAudio() {
   if (ss) ss.onclick = () => api.previewAction({ type: 'sys', value: 'sound' });
   if (!live) return;
 
-  /* One direction of the mixer: device select + master slider + mute. */
+  /* One direction of the mixer: device list (the picker) + master slider +
+     mute. The picker is the 2026-11 design: a carved inset list of every
+     active endpoint — click a row to make it the default, hover (or tab to)
+     a row to Hide it (toast + Undo), hidden devices stay listed dimmed at the
+     foot of the list with a one-click Show again, and hidden-while-unplugged
+     ghosts sit under their own heading with Forget. Nothing ever vanishes
+     from this tab without saying so — the old dropdown silently dropped
+     hidden endpoints (and GUID churn silently re-hid real ones), which is
+     exactly the bug this rewrite closes. */
   function wireDevice(spec) {
-    const sel = $(spec.sel), rg = $(spec.refresh), vol = $(spec.vol), out = $(spec.out), mute = $(spec.mute);
-    let loading = false;
+    const listEl = $(spec.list), rg = $(spec.refresh), vol = $(spec.vol), out = $(spec.out), mute = $(spec.mute);
+    let loading = false, lastSig = '';
     let volBusy = false, volIdle = null;
 
     // A dead ladder is process-wide knowledge, so the row admits it before the
     // first doomed click: the list stays readable, the switch is explained, and
     // the escape hatch is named by its label rather than by a direction.
     if (!canSwitch) {
-      const line = sel.closest('.row-line') || sel.parentNode;
-      if (line && line.parentNode) {
+      const host = listEl.parentNode;
+      if (host) {
         const hint = el('div', 'hint muted', {
           text: 'Apps cannot change the default here on this Windows install \u2014 the Open Windows sound settings button at the bottom of this page is the escape hatch.'
-        }, line.parentNode);
-        line.parentNode.insertBefore(hint, line.nextSibling);
+        }, host);
+        host.insertBefore(hint, listEl.nextSibling);
       }
     }
 
-    const fillDevices = (devices) => {
-      sel.innerHTML = '';
-      devices.forEach((d) => {
-        el('option', null, { text: d.name + (d.isDefault ? '  ·  default' : ''), value: d.id }, sel);
-      });
-      const def = devices.find((d) => d.isDefault);
-      if (def) sel.value = def.id;
-      if (!devices.length) el('option', null, { text: '(no devices found)', value: '' }, sel);
-    };
-    async function loadDevices(force) {
-      if (loading) return;
-      loading = true;
-      const devices = await loadAudioDevices(spec.flow, force);
-      loading = false;
-      fillDevices(devices);
-    }
-
-    /* ---- hidden devices (behavior.audioHidden) ----
-       Hiding here removes an endpoint from EVERY picker (this list, the
-       wheel's mixer card, the segment editor) — main filters the shared
-       audio:devices channel, so all surfaces agree. The manager itself
-       fetches the full list (loadAllAudioDevices) and keeps hidden names in
-       the store, so an unplugged device still reads as its name. The current
-       default is exempt app-wide: hiding can never make a picker misreport
-       what Windows actually plays through. */
-    const mg = $(spec.manage), panel = $(spec.panel);
-    let allCache = null;                        // the full live list, while the panel is open
-    const hiddenList = () => {
+    const lowName = (s) => String(s == null ? '' : s).trim().toLowerCase();
+    // If the snapshot raced a local cfg edit, cfg is the last known truth of
+    // the store's list; the reply echo usually wins.
+    function hiddenFallback() {
       const b = ((cfg.behavior || {}).audioHidden || {})[spec.flow];
       return Array.isArray(b) ? b : [];
-    };
-    const setHidden = (list) => {
+    }
+
+    /* Mirror main's post-write hidden list into the local cfg copy: main has
+       already written the file, so the next debounced autosave (or the exit
+       flush) must never resurrect the stale list over the fresh one. */
+    function mirrorHidden(list) {
       cfg.behavior = cfg.behavior || {};
       cfg.behavior.audioHidden = cfg.behavior.audioHidden || { render: [], capture: [] };
       cfg.behavior.audioHidden[spec.flow] = list;
-      touch(false);                             // the same debounced save every other edit uses
-    };
-    function hRow(parent, name, note, btnText, btnTitle, onClick, disabled) {
-      const row = el('div', 'au-hrow', {}, parent);
-      el('span', 'au-hname', { text: name }, row);
-      if (note) el('span', 'au-hnote muted', { text: note }, row);
-      const b = el('button', 'btn small', { type: 'button', text: btnText, title: btnTitle }, row);
-      b.disabled = !!disabled;
-      b.addEventListener('click', onClick);
+    }
+
+    async function setHidden(id, name, hide) {
+      const r = await safe(() => api.audioSetHidden(spec.flow, { id, name, hide }));
+      if (!r || r.ok !== true) {
+        toast('Could not update the device list: ' + ((r && r.error) || 'unknown'), true);
+        return false;
+      }
+      mirrorHidden(Array.isArray(r.hidden) ? r.hidden : []);
+      await loadDevices(true);
+      return true;
+    }
+
+    async function switchDefault(id) {
+      const r = await safe(() => api.audioSetDefault(spec.flow, id));
+      if (!r.ok) {
+        // Main's own line already says what happened; only the OS-wide refusal
+        // needs a second door, and that door is named — never "(below)".
+        const advice = r.code === 'policy_unavailable'
+          ? ' \u2014 the Open Windows sound settings button at the bottom of this page can still try it'
+          : '';
+        toast('Could not switch the ' + spec.noun + ': ' + (r.error || 'unknown') + advice, true);
+        console.log('[audio] set-default refused:', spec.flow, r.code || 'failed', r.detail || r.error || '');
+        loadDevices(true);
+        return;
+      }
+      toast('Default ' + spec.noun + ' switched');
+      await Promise.all([loadDevices(true), readLevels()]);
+    }
+
+    /* Row skeleton shared by all three sections: tick column + name + optional
+       caption tag + optional trailing action button. The tick column exists on
+       every row so name columns align whether or not the row can carry the
+       selection mark. */
+    function drow(cls, name, tagText, act, disabled) {
+      const row = el('div', 'au-drow' + cls, {}, listEl);
+      el('span', 'au-dtick', { 'aria-hidden': 'true' }, row);
+      el('span', 'au-dname', { text: name }, row);
+      if (tagText) el('span', 'au-dtag muted', { text: tagText }, row);
+      if (act) {
+        const b = el('button', 'btn small au-dact', {
+          type: 'button', text: act.text, title: act.title, 'aria-label': act.aria || act.title
+        }, row);
+        b.disabled = !!disabled;
+        b.addEventListener('click', (e) => { e.stopPropagation(); void act.onClick(); });
+      }
       return row;
     }
-    async function toggleHidden(id, name, hide) {
-      const cur = hiddenList();
-      setHidden(hide
-        ? cur.concat([{ id, name: String(name || '').slice(0, 512) }])
-        : cur.filter((h) => h.id !== id));
-      allCache = await loadAllAudioDevices(spec.flow);
-      if (panel.isConnected) buildHiddenPanel();
-      await loadDevices(true);                  // the dropdown re-reads main's filtered list
-    }
-    function buildHiddenPanel() {
-      panel.innerHTML = '';
-      const hidden = hiddenList();
-      const hiddenIds = new Set(hidden.map((h) => h.id));
-      const live = allCache || [];
-      el('div', 'hint muted', {
-        text: 'Hidden devices disappear from every picker — here, the wheel\u2019s mixer card, and the segment editor. The current default is always shown, so this list can never hide what you are actually listening through.'
-      }, panel);
-      live.forEach((d) => {
-        const isDef = d.isDefault === true;
-        const isHid = hiddenIds.has(d.id) && !isDef;   // default shows whatever the list says
-        hRow(panel, d.name || d.id,
-          isDef ? '\u00b7 current default' : (isHid ? '\u00b7 hidden' : ''),
-          isHid ? 'Restore' : 'Hide',
-          isDef ? 'The current default device is always shown'
-            : (isHid ? 'Show this device in the pickers again' : 'Remove this device from the pickers'),
-          () => { void toggleHidden(d.id, d.name || d.id, !isHid); },
-          isDef);
-      });
-      const orphans = hidden.filter((h) => !live.some((d) => d.id === h.id));
-      if (orphans.length) {
-        el('div', 'au-hsec muted', { text: 'Hidden while unplugged' }, panel);
-        for (const h of orphans) {
-          hRow(panel, h.name || audioDeviceLabel(h.id), '\u00b7 unplugged',
-            'Restore', 'Show this device again if it comes back',
-            () => { void toggleHidden(h.id, h.name, false); });
+
+    function buildList(devices, hiddenEntries, stale) {
+      const sig = (devices || []).map((d) => d.id + '\u0000' + (d.name || '') + '\u0000' + (d.isDefault ? 1 : 0) + (d.hidden ? 'h' : '')).join('\u0001')
+        + '\u0002' + (hiddenEntries || []).map((h) => (h && h.id ? h.id + '\u0000' + lowName(h.name) : '')).join('\u0002');
+      if (sig === lastSig) return;                // a poll that changed nothing keeps carets and rows
+      lastSig = sig;
+      listEl.innerHTML = '';
+      if (stale) {
+        el('div', 'au-dnote muted', {
+          role: 'presentation',
+          text: 'Could not refresh this list \u2014 press Refresh to try again.'
+            + ((devices || []).length ? ' The devices below are the last ones read.' : '')
+        }, listEl);
+      }
+      const visible = (devices || []).filter((d) => d && d.id && d.hidden !== true);
+      const hidden = (devices || []).filter((d) => d && d.id && d.hidden === true);
+      for (const d of visible) {
+        const name = d.name || d.id;
+        // The current default has no Hide button at all, and says so: main
+        // exempts it from hiding, so a button there would click, write, and
+        // change nothing — a lie the old manager told with a greyed row.
+        const row = drow('', name, d.isDefault ? '\u00b7 current default' : '', d.isDefault ? null : {
+          text: 'Hide', title: 'Hide ' + name + ' from the pickers until shown again',
+          aria: 'Hide ' + name,
+          onClick: async () => {
+            if (await setHidden(d.id, name, true)) {
+              // Undo is the exact inverse (the one device comes back); the
+              // row itself stays reachable as the permanent way back.
+              toast('Hid ' + name, false, () => { void setHidden(d.id, name, false); });
+            }
+          }
+        }, !canSwitch);
+        row.setAttribute('role', 'option');
+        row.setAttribute('aria-selected', d.isDefault ? 'true' : 'false');
+        if (d.isDefault) row.title = 'Current default device';
+        else if (canSwitch) {
+          row.tabIndex = 0;
+          row.title = 'Make ' + name + ' the default ' + spec.noun;
+          const go = () => void switchDefault(d.id);
+          row.addEventListener('click', (e) => { if (!e.target.closest('.au-dact')) go(); });
+          row.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); }
+          });
         }
       }
-      if (!live.length && !orphans.length) {
-        el('div', 'hint muted', { text: '(no devices found)' }, panel);
+      for (const d of hidden) {
+        const name = d.name || d.id;
+        const row = drow(' hid', name, 'hidden', {
+          text: 'Show again', title: 'Show ' + name + ' in the pickers again', aria: 'Show ' + name + ' again',
+          onClick: () => setHidden(d.id, name, false)
+        });
+        // Hidden rows are options like any other: a listbox whose children are
+        // not options can have its recovery affordances pruned by assistive
+        // tech, and Show again is precisely what must stay reachable.
+        row.setAttribute('role', 'option');
+        row.setAttribute('aria-selected', 'false');
       }
+      /* Ghosts: hidden entries no live endpoint answers — matched by id OR
+         lowercased name, the same rule main's tagHiddenDevices uses, so a
+         churned GUID can't fake a ghost of a device that is actually on the
+         list. They can only be forgotten. */
+      const orphans = (hiddenEntries || []).filter((h) => h && h.id
+        && !(devices || []).some((d) => d && (d.id === h.id
+          || (lowName(h.name) !== '' && lowName(d.name) === lowName(h.name)))));
+      if (orphans.length) {
+        el('div', 'au-dsec muted', { role: 'presentation', text: 'Hidden while unplugged' }, listEl);
+        for (const h of orphans) {
+          const label = h.name || audioDeviceLabel(h.id);
+          const row = el('div', 'au-drow hid ghost', {}, listEl);
+          row.setAttribute('role', 'option');
+          row.setAttribute('aria-selected', 'false');
+          el('span', 'au-dtick', { 'aria-hidden': 'true' }, row);
+          el('span', 'au-dname', { text: label }, row);
+          el('span', 'au-dtag muted', { text: 'unplugged' }, row);
+          const b = el('button', 'btn small au-dact', {
+            type: 'button', text: 'Forget',
+            title: 'Forget ' + label + ' \u2014 a re-plugged device returns to the list normally',
+            'aria-label': 'Forget ' + label
+          }, row);
+          b.addEventListener('click', (e) => { e.stopPropagation(); void setHidden(h.id, h.name, false); });
+        }
+      }
+      if (!visible.length && !hidden.length && !orphans.length && !stale) {
+        el('div', 'au-dnote muted', { role: 'presentation', text: spec.empty }, listEl);
+      }
+      // The 300px scroll cap must never hide the row that carries the app's
+      // answer — wheel the current default into view, same promise the flyout
+      // makes by pinning it inside its own cap.
+      const chosen = listEl.querySelector('[aria-selected="true"]');
+      if (chosen && chosen.scrollIntoView) chosen.scrollIntoView({ block: 'nearest' });
     }
-    if (mg && panel) {
-      mg.addEventListener('click', async () => {
-        const open = !panel.classList.toggle('hidden');
-        mg.setAttribute('aria-expanded', String(open));
-        if (!open) return;
-        allCache = await loadAllAudioDevices(spec.flow);
-        if (mg.isConnected) buildHiddenPanel();
-      });
+
+    async function loadDevices(force) {
+      if (loading) return;
+      loading = true;
+      if (!listEl.firstChild) {
+        // Same 'reading' promise the flyout keeps: the well is never silently
+        // blank while the first enumeration is in flight.
+        el('div', 'au-dnote muted', { role: 'presentation', text: 'Reading devices\u2026', 'data-loading': '1' }, listEl);
+      }
+      const snap = await loadAudioDevices(spec.flow, force);
+      loading = false;
+      buildList(snap.devices, Array.isArray(snap.hidden) ? snap.hidden : hiddenFallback(), snap.stale === true);
     }
 
     async function readLevels() {
@@ -3003,37 +3113,14 @@ async function wireAudio() {
       const r = await safe(() => api.audioSetVolume(spec.flow, { muted: want }));
       if (!r.ok) { toast('Mute change failed: ' + (r.error || 'unknown'), true); mute.checked = !want; }
     });
-    sel.addEventListener('change', async () => {
-      const id = sel.value;
-      if (!id) return;
-      const r = await safe(() => api.audioSetDefault(spec.flow, id));
-      if (!r.ok) {
-        // Main's own line already says what happened; only the OS-wide refusal
-        // needs a second door, and that door is named — never "(below)".
-        const advice = r.code === 'policy_unavailable'
-          ? ' \u2014 the Open Windows sound settings button at the bottom of this page can still try it'
-          : '';
-        toast('Could not switch the ' + spec.noun + ': ' + (r.error || 'unknown') + advice, true);
-        console.log('[audio] set-default refused:', spec.flow, r.code || 'failed', r.detail || r.error || '');
-        loadDevices(true);
-        return;
-      }
-      toast('Default ' + spec.noun + ' switched');
-      await Promise.all([loadDevices(true), readLevels()]);
-    });
     rg.onclick = async () => {
       await Promise.all([loadDevices(true), readLevels()]);
-      // The panel keeps its own (unfiltered) view — refresh it in step too.
-      if (mg && panel && !panel.classList.contains('hidden')) {
-        allCache = await loadAllAudioDevices(spec.flow);
-        if (mg.isConnected) buildHiddenPanel();
-      }
     };
 
     return { reload: async () => { await loadDevices(false); await readLevels(); }, readLevels };
   }
-  const outCtl = wireDevice({ sel: '#au-out-select', refresh: '#au-out-refresh', manage: '#au-out-manage', panel: '#au-out-hidden', vol: '#au-out-vol', out: '#au-out-vol-out', mute: '#au-out-mute', flow: 'render', noun: 'output device' });
-  const inCtl = wireDevice({ sel: '#au-in-select', refresh: '#au-in-refresh', manage: '#au-in-manage', panel: '#au-in-hidden', vol: '#au-in-vol', out: '#au-in-vol-out', mute: '#au-in-mute', flow: 'capture', noun: 'input device' });
+  const outCtl = wireDevice({ list: '#au-out-devs', refresh: '#au-out-refresh', vol: '#au-out-vol', out: '#au-out-vol-out', mute: '#au-out-mute', flow: 'render', noun: 'output device', empty: 'No output devices are connected \u2014 connect one and press Refresh.' });
+  const inCtl = wireDevice({ list: '#au-in-devs', refresh: '#au-in-refresh', vol: '#au-in-vol', out: '#au-in-vol-out', mute: '#au-in-mute', flow: 'capture', noun: 'input device', empty: 'No input devices are connected \u2014 connect one and press Refresh.' });
   audioRefreshLevels = () => Promise.all([outCtl.readLevels(), inCtl.readLevels()]).then(() => {});
 
   /* ---- per-app mixer ---- rows keyed by pid (system-sounds keeps its own),

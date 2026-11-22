@@ -98,33 +98,33 @@
         <div id="autostart-hint" class="hint muted hidden">Startup is only available in the installed app. This copy will not register a login item.</div>
       </div>
       <div class="card">
-        <div class="card-title">Wheel behavior</div>
-        <div class="row-line" style="align-items:center;gap:10px">
-          <label for="bh-app-open" style="flex:1">Where opened programs appear</label>
-          <select id="bh-app-open" style="max-width:280px">
-            <option value="default">Let the app decide (default)</option>
-            <option value="cursor">At the mouse cursor</option>
-            <option value="center">Center of the screen</option>
-          </select>
-        </div>
-        <div class="hint muted">Where programs opened <b>from the wheel</b> place their window: left to the app, pulled under the mouse, or centered on the monitor your mouse is on (taskbar excluded). Only freshly-opened windows move — apps that raise an already-open window, or that start maximized, keep their spot. The wheel itself always opens under the cursor. Takes a few seconds as the program starts.</div>
+        <div class="card-title">Dismissing &amp; mouse</div>
         <label class="chk"><input type="checkbox" id="bh-esc"> Dismiss with Esc</label>
         <label class="chk"><input type="checkbox" id="bh-right"> Right-click dismisses the wheel</label>
         <label class="chk"><input type="checkbox" id="bh-retrigger"> Pressing the hotkey again hides the wheel</label>
         <label class="chk"><input type="checkbox" id="bh-mouse-through"> Let the mouse button through to the app under the cursor</label>
-        <div class="hint muted">Only applies when the shortcut's main key is a mouse button: Middle, Back or Forward. Off (the default) means the wheel treats it like a real hotkey and the app never sees the click — so Middle click stops pasting while it is your summon button. Turn it on if you want both.</div>
+        <details class="why">
+          <summary>Why?</summary>
+          <div class="hint muted">Only applies when the shortcut's main key is a mouse button: Middle, Back or Forward. Off (the default) means the wheel treats it like a real hotkey and the app never sees the click — so Middle click stops pasting while it is your summon button. Turn it on if you want both.</div>
+        </details>
+      </div>
+      <div class="card">
+        <div class="card-title">Selecting &amp; feedback</div>
         <label class="chk"><input type="checkbox" id="bh-marking"> Drag to select — press, sweep to a segment, release to fire</label>
-        <div class="hint muted">The pie-menu way: hold the left button anywhere on the wheel, sweep (folder fans branch as you pass), and release on a segment to fire it. Releasing off the wheel cancels. Ordinary clicks still work exactly as before.</div>
+        <details class="why">
+          <summary>Why?</summary>
+          <div class="hint muted">The pie-menu way: hold the left button anywhere on the wheel, sweep (folder fans branch as you pass), and release on a segment to fire it. Releasing off the wheel cancels. Ordinary clicks still work exactly as before.</div>
+        </details>
         <label class="chk"><input type="checkbox" id="bh-filter"> Type to filter while the wheel is open</label>
-        <div class="hint muted">Start typing and non-matching segments fade back; the selection jumps to the best match and Enter fires it. Backspace edits, Esc clears the query. Folder sub-menus open themselves when their contents match.</div>
+        <details class="why">
+          <summary>Why?</summary>
+          <div class="hint muted">Start typing and non-matching segments fade back; the selection jumps to the best match and Enter fires it. Backspace edits, Esc clears the query. Folder sub-menus open themselves when their contents match.</div>
+        </details>
         <label class="chk"><input type="checkbox" id="bh-sound"> Sound feedback — soft ticks on hover and select</label>
-        <div class="hint muted">A gentle blip when the selection lands on a segment and when a segment fires. The ticks are synthesized on the fly (no audio files, no network); off by default.</div>
-        <label class="chk"><input type="checkbox" id="bh-focus"> Focus an app that's already open instead of opening another copy</label>
-        <div class="hint muted">When a program segment fires and that app already has a window on screen, the existing window comes to the front instead of a second copy starting — a running app with no window (tray-only) still launches normally. Applies to segments that point at an .exe; shortcuts, scripts, and links always open as before. Off by default.</div>
-        <label class="chk"><input type="checkbox" id="bh-update-checks"> Check GitHub Releases for new versions</label>
-        <div class="hint muted">A few seconds after startup and once a day, Nucleus asks the GitHub Releases page whether a newer version is out — and if there is one, it <b>asks you</b> before doing anything. "Update now" downloads the published installer to your Downloads folder, checks its SHA-256 against the one GitHub published, and runs it after confirming; Nucleus quits while the update installs and your settings stay put. "Open release page" and "Later" are always offered, and nothing is ever installed without a yes. Turning this off stops the background check; the manual "Check for updates" in the tray menu and below still works.</div>
-        <label class="chk"><input type="checkbox" id="bh-lan-icons"> Allow custom icons from my local network</label>
-        <div class="hint muted">Off by default: a pasted icon URL must be HTTPS and can never point at your own machine or network (127.0.0.x, 192.168.x.x, 10.x, …), so a bad URL can’t probe your LAN. Turn this on only if an icon genuinely lives on a box you own — it also allows plain http for icon downloads.</div>
+        <details class="why">
+          <summary>Why?</summary>
+          <div class="hint muted">A gentle blip when the selection lands on a segment and when a segment fires. The ticks are synthesized on the fly (no audio files, no network); off by default.</div>
+        </details>
         <div class="slider-row" style="margin-top:10px">
           <label class="slider-lbl" for="bh-flyout">Sub-menu delay
             <input type="range" id="bh-flyout" min="0" max="600" step="10" style="flex:1">
@@ -139,6 +139,36 @@
           </label>
         </div>
         <div class="hint muted">How many of your most-recently-used segments fill a <b>Recents</b> segment's sub-menu. Add one from the Segments tab's type list.</div>
+      </div>
+      <div class="card">
+        <div class="card-title">Apps &amp; updates</div>
+        <div class="row-line" style="align-items:center;gap:10px">
+          <label for="bh-app-open" style="flex:1">Where opened programs appear</label>
+          <select id="bh-app-open" style="max-width:280px">
+            <option value="default">Let the app decide (default)</option>
+            <option value="cursor">At the mouse cursor</option>
+            <option value="center">Center of the screen</option>
+          </select>
+        </div>
+        <details class="why">
+          <summary>Why?</summary>
+          <div class="hint muted">Where programs opened <b>from the wheel</b> place their window: left to the app, pulled under the mouse, or centered on the monitor your mouse is on (taskbar excluded). Only freshly-opened windows move — apps that raise an already-open window, or that start maximized, keep their spot. The wheel itself always opens under the cursor. Takes a few seconds as the program starts.</div>
+        </details>
+        <label class="chk"><input type="checkbox" id="bh-focus"> Focus an app that's already open instead of opening another copy</label>
+        <details class="why">
+          <summary>Why?</summary>
+          <div class="hint muted">When a program segment fires and that app already has a window on screen, the existing window comes to the front instead of a second copy starting — a running app with no window (tray-only) still launches normally. Applies to segments that point at an .exe; shortcuts, scripts, and links always open as before. Off by default.</div>
+        </details>
+        <label class="chk"><input type="checkbox" id="bh-update-checks"> Check GitHub Releases for new versions</label>
+        <details class="why">
+          <summary>Why?</summary>
+          <div class="hint muted">A few seconds after startup and once a day, Nucleus asks the GitHub Releases page whether a newer version is out — and if there is one, it <b>asks you</b> before doing anything. "Update now" downloads the published installer to your Downloads folder, checks its SHA-256 against the one GitHub published, and runs it after confirming; Nucleus quits while the update installs and your settings stay put. "Open release page" and "Later" are always offered, and nothing is ever installed without a yes. Turning this off stops the background check; the manual "Check for updates" in the tray menu and sidebar still works.</div>
+        </details>
+        <label class="chk"><input type="checkbox" id="bh-lan-icons"> Allow custom icons from my local network</label>
+        <details class="why">
+          <summary>Why?</summary>
+          <div class="hint muted">Off by default: a pasted icon URL must be HTTPS and can never point at your own machine or network (127.0.0.x, 192.168.x.x, 10.x, …), so a bad URL can’t probe your LAN. Turn this on only if an icon genuinely lives on a box you own — it also allows plain http for icon downloads.</div>
+        </details>
       </div>
       <div class="card">
         <div class="card-title">App profiles</div>
@@ -164,12 +194,11 @@
       <div id="au-unavailable" class="err cfg-warn hidden" role="alert"></div>
       <div class="card audio-live">
         <div class="card-title">Output device</div>
-        <div class="row-line">
-          <select id="au-out-select" class="au-dev" aria-label="Default audio output device"></select>
+        <div class="au-dlist" id="au-out-devs" role="listbox" aria-label="Default audio output device"></div>
+        <div class="row-line" style="margin-top:8px">
           <button class="btn small glyph" id="au-out-refresh" title="Reload the output device list" aria-label="Reload the output device list">&#xE72C;</button>
-          <button class="btn small" id="au-out-manage" aria-expanded="false" title="Choose which devices appear in this list" aria-label="Manage hidden output devices">Manage&#8230;</button>
+          <span class="hint muted">Click any device to make it the default; Hide tucks it to the bottom of the list, Show again brings it back. Hidden devices stay out of every picker until shown.</span>
         </div>
-        <div id="au-out-hidden" class="au-hidden hidden" role="group" aria-label="Hidden output devices"></div>
         <div class="slider-row" style="margin-top:10px">
           <label class="slider-lbl" for="au-out-vol">Master volume
             <input type="range" id="au-out-vol" min="0" max="100" step="1" style="flex:1">
@@ -180,12 +209,11 @@
       </div>
       <div class="card audio-live">
         <div class="card-title">Input device</div>
-        <div class="row-line">
-          <select id="au-in-select" class="au-dev" aria-label="Default audio input device"></select>
+        <div class="au-dlist" id="au-in-devs" role="listbox" aria-label="Default audio input device"></div>
+        <div class="row-line" style="margin-top:8px">
           <button class="btn small glyph" id="au-in-refresh" title="Reload the input device list" aria-label="Reload the input device list">&#xE72C;</button>
-          <button class="btn small" id="au-in-manage" aria-expanded="false" title="Choose which devices appear in this list" aria-label="Manage hidden input devices">Manage&#8230;</button>
+          <span class="hint muted">Click any device to make it the default; Hide tucks it to the bottom of the list, Show again brings it back.</span>
         </div>
-        <div id="au-in-hidden" class="au-hidden hidden" role="group" aria-label="Hidden input devices"></div>
         <div class="slider-row" style="margin-top:10px">
           <label class="slider-lbl" for="au-in-vol">Microphone volume
             <input type="range" id="au-in-vol" min="0" max="100" step="1" style="flex:1">

@@ -132,22 +132,43 @@ function fallbackName(id) {
   return (t || s).slice(0, 60);
 }
 
-/** Drop the user-hidden endpoints from one device list (the behavior.audioHidden
- *  feature — the filtering happens in ipc.js, right after listDevices).
+/** Flag the user-hidden endpoints inside one device list (the behavior.audioHidden
+ *  feature — the flagging happens in ipc.js, right after listDevices). The
+ *  2026-11 picker redesign stopped REMOVING hidden endpoints: every surface
+ *  dims their rows and offers a one-click way back, so the mark travels to
+ *  every surface as a `hidden` boolean on each row instead of a filter.
+ *
+ *  An endpoint matches a hidden entry by id OR by the friendly name remembered
+ *  when it was hidden: Windows re-issues endpoint GUIDs whenever it
+ *  re-enumerates (DisplayPort hot-plug, USB replug, driver reset), and a
+ *  hidden list keyed on ids alone produced the exact "my devices keep
+ *  disappearing on their own" report — an old entry claimed a freshly reissued
+ *  id weeks later and the device vanished from every UI that could restore it.
+ *  Name matching keeps the hide honest across that churn; the id is kept so a
+ *  renamed device stays hidden too. (Two different devices that share a
+ *  friendly name hide together — intended, and the dimmed row with its 'Hidden'
+ *  chip makes the rule visible rather than silent.)
+ *
  *  The CURRENT default is exempt by rule: a hidden device that Windows makes
  *  the default must still appear in every picker, so the list can never fail
  *  to show the truth. `hidden` is the store's already-validated [{id, name}]
  *  array, but junk entries are ignored rather than trusted. Pure — unit
  *  tested; no COM. */
-function filterHiddenDevices(devices, hidden) {
+function tagHiddenDevices(devices, hidden) {
   const list = Array.isArray(devices) ? devices : [];
-  const set = new Set(
-    (Array.isArray(hidden) ? hidden : [])
-      .filter((h) => h && typeof h === 'object' && typeof h.id === 'string' && h.id)
-      .map((h) => h.id)
-  );
-  if (!set.size) return list.slice();
-  return list.filter((d) => !d || !set.has(d.id) || d.isDefault === true);
+  const entries = (Array.isArray(hidden) ? hidden : [])
+    .filter((h) => h && typeof h === 'object' && typeof h.id === 'string' && h.id);
+  const ids = new Set(entries.map((h) => h.id));
+  const names = new Set(entries
+    .map((h) => String(h.name == null ? '' : h.name).trim().toLowerCase())
+    .filter(Boolean));
+  return list.map((d) => {
+    if (!d || typeof d !== 'object') return d;
+    const name = String(d.name == null ? '' : d.name).trim().toLowerCase();
+    return Object.assign({}, d, {
+      hidden: d.isDefault !== true && (ids.has(d.id) || (name !== '' && names.has(name)))
+    });
+  });
 }
 
 /** Group raw session rows (one per stream) into mixer rows (one per process),
@@ -777,6 +798,6 @@ module.exports = {
   _guidBytes: guidBytes, _parseFlow: parseFlow, _clampPercent: clampPercent,
   _percentToScalar: percentToScalar, _scalarToPercent: scalarToPercent,
   _sanitizeDeviceId: sanitizeDeviceId, _fallbackName: fallbackName, _groupSessions: groupSessions,
-  _filterHiddenDevices: filterHiddenDevices,
+  _tagHiddenDevices: tagHiddenDevices,
   _policyRoutes: POLICY_ROUTES
 };

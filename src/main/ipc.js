@@ -104,20 +104,25 @@ function registerIpc(deps) {
     'config:restore-backup': ['settings'],
     'welcome:done': ['welcome'], 'settings:close': ['settings'], 'app:quit': ['settings'],
     // Audio writers reach the system's audio policy — same trust level as the
-    // other machine-touching writers. All three writers are granted the wheel
-    // frame deliberately: the volume-mixer panel legitimately drags levels AND
-    // switches the default output/input device, exactly like the Settings
-    // Audio tab it mirrors. That is a reviewed security decision (see
-    // tests/unit/ipc-gating.test.js, which pins these owner lists): the wheel
-    // renderer is as trusted as the overlay that already executes any
-    // configured segment, and every argument is clamped in main/audio.js
-    // before it reaches COM — the endpoint id through sanitizeDeviceId, the
-    // flow through parseFlow, and a switch is verified by reading the default
-    // back through the documented enumerator before {ok:true} is claimed. The
-    // read channels (audio:devices/levels/sessions/available) stay ungated
-    // like sys:catalog: they hand back data the on-screen UI already shows.
+    // other machine-touching writers. All of them are granted the wheel frame
+    // deliberately: the volume-mixer panel legitimately drags levels, switches
+    // the default output/input device, and hides/restores picker rows, exactly
+    // like the Settings Audio tab it mirrors. That is a reviewed security
+    // decision (see tests/unit/ipc-gating.test.js, which pins these owner
+    // lists): the wheel renderer is as trusted as the overlay that already
+    // executes any configured segment, and every argument is clamped in
+    // main/audio.js before it reaches COM — the endpoint id through
+    // sanitizeDeviceId, the flow through parseFlow, and a switch is verified
+    // by reading the default back through the documented enumerator before
+    // {ok:true} is claimed. audio:set-hidden writes no system state at all —
+    // just behavior.audioHidden in the config store, the list validate()
+    // already owns — but it changes what every picker shows, so it is gated
+    // like its neighbours. The read channels (audio:devices/levels/sessions/
+    // available) stay ungated like sys:catalog: they hand back data the
+    // on-screen UI already shows.
     'audio:set-default': ['settings', 'wheel'],
     'audio:set-volume': ['settings', 'wheel'], 'audio:set-session': ['settings', 'wheel'],
+    'audio:set-hidden': ['settings', 'wheel'],
     // The update channels are Settings-only: the chip and the Check-now button
     // live in this window (the tray reaches main directly, not through IPC).
     // open-release still re-validates its URL against main's sanitized
@@ -674,30 +679,73 @@ function registerIpc(deps) {
   /* ---- audio (Core Audio control; every answer is {ok,…}|{ok:false,error}) --
      Reads are ungated like sys:catalog — endpoint ids, display names, and
      volume levels are exactly what the on-screen UI shows. The writers
-     (set-default / set-volume / set-session) flip real system state and are
-     PRIVILEGED-gated to the two pages that own audio UI — Settings and the
-     wheel's mixer card (the PRIVILEGED map records why the wheel holds all
-     three writers); argument shapes are clamped in main/audio.js before
-     anything reaches COM. */
+     (set-default / set-volume / set-session / set-hidden) flip real system
+     state (or the config that describes it) and are PRIVILEGED-gated to the
+     two pages that own audio UI — Settings and the wheel's mixer card (the
+     PRIVILEGED map records why the wheel holds every writer); argument shapes
+     are clamped in main/audio.js before anything reaches COM. */
   guardHandle('audio:available', () => audio.available());
-  guardHandle('audio:devices', (ev, flow, includeHidden) => {
+  guardHandle('audio:devices', (ev, flow) => {
     const r = audio.listDevices(flow);
     /* The app-level hidden list (behavior.audioHidden) applies HERE — every
        surface (Settings tab, wheel card, editor picker) reads through this
-       channel, so none can disagree about what is "in the list", and a
-       renderer can't opt out of the filter. The one legitimate exception is
-       the Settings Audio tab's hidden-device manager, which passes
-       includeHidden === true (strict) to see the whole picture; anything else
-       — absent, junk, a truthy string — stays filtered. The current default
-       is exempt inside filterHiddenDevices, and audio:set-default is
+       channel, so none can disagree about what "hidden" means. Hidden
+       endpoints are not dropped but FLAGGED (`hidden: true`): the pickers
+       dim their rows and show the way back, and a surface that wants them
+       silent (the segment editor's dropdown) filters on the flag itself. The
+       store's own entries ride back as `hidden` so a surface listing
+       hidden-but-unplugged ghosts never round-trips through a possibly-stale
+       settings copy. (The old includeHidden third argument is ignored — the
+       filtered/unfiltered split died with the Manage panel.) The current
+       default is exempt inside tagHiddenDevices, and audio:set-default is
        deliberately unfiltered: a device hidden after being bound to a segment
        must still be switchable. */
-    if (r.ok && includeHidden !== true) {
+    if (r.ok) {
       const hidden = (store.get().behavior || {}).audioHidden || {};
-      r.devices = audio._filterHiddenDevices(r.devices,
-        audio._parseFlow(flow) === 1 ? hidden.capture : hidden.render);
+      const entries = audio._parseFlow(flow) === 1 ? hidden.capture : hidden.render;
+      r.devices = audio._tagHiddenDevices(r.devices, entries);
+      r.hidden = Array.isArray(entries) ? entries : [];
     }
     return r;
+  });
+  guardHandle('audio:set-hidden', (ev, flow, op) => {
+    /* {id, name, hide} — the single writer of behavior.audioHidden. One op
+       covers Hide, Show again, and Forget. Entries are matched out by id OR
+       by the endpoint's reported name (case/trim-insensitive): a device the
+       user hid a month ago is still the same device under a re-issued GUID,
+       and an op that only matched ids would leave ghosts and let the same
+       real-world device be hidden under five different ids (exactly how the
+       pre-2026-11 picker lost people's speakers). A hide REPLACES same-name
+       entries rather than appending, so re-enumerations consolidate instead
+       of accumulating. The write goes through store.set (validate() clamps
+       the shape), and an open Settings window gets the same reconcile push
+       applySetting uses — rev/echo/dirty-queue logic updates its copy of the
+       config instead of clobbering unsaved edits. */
+    const f = audio._parseFlow(flow);
+    if (f === null) return { ok: false, error: 'flow must be render or capture' };
+    const id = audio._sanitizeDeviceId(op && op.id);
+    if (!id) return { ok: false, error: 'device id not usable' };
+    const name = String((op && op.name) || '').trim().slice(0, 512);
+    const key = f === 1 ? 'capture' : 'render';
+    const low = name.toLowerCase();
+    const matches = (h) => !!h && (h.id === id
+      || (low !== '' && String(h.name == null ? '' : h.name).trim().toLowerCase() === low));
+    try {
+      const cur = JSON.parse(JSON.stringify(store.get()));
+      const bhv = (cur.behavior = cur.behavior && typeof cur.behavior === 'object' ? cur.behavior : {});
+      const ah = (bhv.audioHidden = bhv.audioHidden && typeof bhv.audioHidden === 'object' ? bhv.audioHidden : {});
+      const list = Array.isArray(ah[key]) ? ah[key] : [];
+      const kept = list.filter((h) => !matches(h));
+      ah[key] = op && op.hide === true ? kept.concat([{ id, name }]) : kept;
+      store.set(cur);
+      try {
+        settings.send('config:changed', { config: JSON.parse(JSON.stringify(store.get())), rev: store.rev });
+      } catch { /* settings may be closed */ }
+    } catch (err) {
+      return { ok: false, error: String((err && err.message) || err) };
+    }
+    const after = ((store.get().behavior || {}).audioHidden || {})[key];
+    return { ok: true, hidden: Array.isArray(after) ? after : [] };
   });
   guardHandle('audio:levels', (ev, flow) => audio.getLevels(flow));
   guardHandle('audio:sessions', () => audio.listSessions());

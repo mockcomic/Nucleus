@@ -88,6 +88,10 @@ test('side-effect surfaces sit on their legitimate pages only', () => {
   // An owner-list change here is a security decision, not a refactor.
   assert.deepEqual(gated.get('audio:set-volume'), ['settings', 'wheel'], 'mixer card contract');
   assert.deepEqual(gated.get('audio:set-session'), ['settings', 'wheel'], 'mixer card contract');
+  // ...and since 2026-11 the pickers own the hidden list directly (dimmed rows
+  // with one-click Show again on both surfaces), so the fourth audio writer is
+  // gated the same way: it only writes behavior.audioHidden — no system state.
+  assert.deepEqual(gated.get('audio:set-hidden'), ['settings', 'wheel'], 'device-picker hide/restore contract');
   // ...welcome appears only where the FTU contract needs it.
   assert.deepEqual(gated.get('hotkey:set'), ['settings', 'welcome']);
   assert.deepEqual(gated.get('overlay:show'), ['settings', 'welcome']);

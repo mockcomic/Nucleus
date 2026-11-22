@@ -92,6 +92,7 @@ test('deviceSignature is stable for an identical read and sensitive to every vis
   assert.equal(deviceSignature(DEV), deviceSignature(DEV.map((d) => ({ ...d }))));
   assert.notEqual(deviceSignature(DEV), deviceSignature(DEV.map((d) => ({ ...d, isDefault: d.id === 'render:0' }))), 'a default flip must repaint the rows');
   assert.notEqual(deviceSignature(DEV), deviceSignature(DEV.map((d) => ({ ...d, name: d.name + ' ' }))), 'a rename must repaint');
+  assert.notEqual(deviceSignature(DEV), deviceSignature(DEV.map((d) => ({ ...d, hidden: d.id === 'render:0' }))), 'a hide/unhide must repaint (2026-11 dimmed rows)');
   assert.notEqual(deviceSignature(DEV), deviceSignature([DEV[1], DEV[0], DEV[2]]), 'enumeration order is visible');
   assert.equal(deviceSignature([]), '');
   assert.equal(deviceSignature(null), '');
@@ -113,13 +114,30 @@ test('capDeviceList keeps Windows order, caps the visible rows, and reports the 
   assert.equal(pinned.items[MAX_VISIBLE_DEVICES - 1].id, 'e7', 'the current default is always reachable from the card');
   assert.equal(pinned.extra, 8 - MAX_VISIBLE_DEVICES);
   const empty = capDeviceList([]);
-  assert.deepEqual(empty, { items: [], extra: 0 });
+  assert.deepEqual(empty, { items: [], extra: 0, hidden: [] });
   for (const junk of [null, undefined, 'x', 7]) {
     const r = capDeviceList(junk);
     assert.deepEqual(r.items, [], `junk ${String(junk)} yields an empty list, not a throw`);
     assert.equal(r.extra, 0);
+    assert.deepEqual(r.hidden, [], `junk ${String(junk)} yields an empty hidden block`);
   }
   assert.deepEqual(capDeviceList([{ id: 'a' }, null, { name: 'x' }, 5]).items.map((d) => d.id), ['a'], 'junk entries drop out before the cap');
+});
+
+test('capDeviceList parks hidden endpoints in their own block, outside the visible cap', () => {
+  // The never-silent rule (2026-11): hidden rows are flagged, not dropped —
+  // they get a dimmed block under the '…and N more' line and never eat a
+  // visible slot, however many there are.
+  const many = Array.from({ length: 12 }, (_, i) => ({ id: 'd' + i, name: 'Device ' + i, isDefault: i === 0, hidden: i > 5 }));
+  const capped = capDeviceList(many, 2);
+  assert.deepEqual(capped.items.map((d) => d.id), ['d0', 'd1'], 'only unhidden devices compete for the cap');
+  assert.equal(capped.extra, 6 - 2);
+  assert.deepEqual(capped.hidden.map((d) => d.id), ['d6', 'd7', 'd8', 'd9', 'd10', 'd11']);
+  // A hidden device can never be the default (main exempts it), but a junk
+  // row that merely claims both flags still lands in the visible block.
+  const odd = capDeviceList([{ id: 'x', name: 'X', hidden: true, isDefault: true }]);
+  assert.deepEqual(odd.items.map((d) => d.id), ['x'], 'the default is never parked, whatever it claims');
+  assert.deepEqual(odd.hidden, []);
 });
 
 test('the tallest legal card still fits the geometry clamp that budgets the window grow', () => {

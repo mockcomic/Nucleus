@@ -258,7 +258,7 @@ function mxRow(host, { icon, label, aria, onVolume, onMute }) {
 /* One default-device picker: a button naming the endpoint Windows currently
    uses for this direction, opening an in-card list of every active endpoint —
    clicking an entry makes it the system default, like the Settings Audio tab's
-   dropdown does.
+   device list does.
 
    Deliberately NOT a <select>: the overlay window hides itself on blur
    (main/windows.js), and a native dropdown is an OS widget that takes
@@ -268,10 +268,16 @@ function mxRow(host, { icon, label, aria, onVolume, onMute }) {
    two pickers are an accordion (opening one closes the other) to keep the
    card inside its height budget (shared/wheel-mixer.js, TALLEST_CARD_PX).
 
+   User-hidden endpoints (behavior.audioHidden, flagged in main) are NOT
+   removed here either: they sit dimmed below the visible rows with a Show
+   button, and every hideable row carries a Hide button on hover/focus.
+   Nothing ever leaves this picker silently — that is the 2026-11 rule behind
+   the whole audio-UI overhaul (the disappearing-device bug).
+
    The widget never fetches: mxRefresh owns the round trips and hands results
    to st.setList / st.fail / st.setUnavailable, so one seq guard covers
    levels, sessions, and endpoints alike. */
-function mxDevice(host, { icon, kind, noun, onPick, onToggle }) {
+function mxDevice(host, { icon, kind, noun, onPick, onHidden, onToggle }) {
   const lid = 'mx-dev-list-' + String(noun).replace(/[^a-z]+/gi, '-');   // one id for aria-controls
   const row = h('div', 'mx-row mx-dev', null, host);
   h('span', 'mx-ico g', { text: icon, 'aria-hidden': 'true' }, row);
@@ -288,7 +294,7 @@ function mxDevice(host, { icon, kind, noun, onPick, onToggle }) {
 
   const st = {
     row, btn, cur, list,
-    devices: [], sig: null, loaded: false,
+    devices: [], sig: null, loaded: false, emptyStreak: 0,
     open: false, busy: false
   };
 
@@ -308,20 +314,54 @@ function mxDevice(host, { icon, kind, noun, onPick, onToggle }) {
     st.sig = sig;
     list.innerHTML = '';
     const capped = capDeviceList(st.devices);
-    if (!capped.items.length) h('div', 'mx-dev-empty', { text: '(no devices found)' }, list);
-    for (const d of capped.items) {
-      const name = d.name || d.id;
-      const opt = h('button', 'mx-dev-opt', {
-        type: 'button', role: 'option', title: name,
-        'aria-selected': d.isDefault ? 'true' : 'false'
-      }, list);
-      h('span', 'mx-dev-check', { 'aria-hidden': 'true' }, opt);  // CSS-drawn tick on the current default
-      h('span', 'mx-dev-text', { text: name }, opt);
-      if (locked()) opt.disabled = true;         // an unavailable stack locks late nodes too
-      opt.addEventListener('click', () => pick(d, opt));
-    }
-    if (capped.extra > 0) h('div', 'mx-dev-more', { text: '\u2026and ' + capped.extra + ' more' }, list);
+    if (!capped.items.length) h('div', 'mx-dev-empty', { text: 'No devices found', role: 'presentation' }, list);
+    for (const d of capped.items) deviceRow(d, false);
+    if (capped.extra > 0) h('div', 'mx-dev-more', { text: '\u2026and ' + capped.extra + ' more', role: 'presentation' }, list);
+    /* The dimmed block below the fold: every hidden endpoint, always restorable
+       from here. This is what makes hiding safe — the row says "Hidden" and
+       shows its own way back, instead of vanishing into a settings page. */
+    for (const d of capped.hidden) deviceRow(d, true);
     if (st.open) positionMixer();                // the card just changed height
+  }
+
+  /* One list row: the whole row switches the default, the trailing mini button
+     hides/restores. On hidden rows the row itself only shows the name (picking
+     a hidden device first needs a Show — one deliberate step, never a click
+     into a control that then reveals it changed nothing). */
+  function deviceRow(d, isHidden) {
+    const name = d.name || d.id;
+    const cls = 'mx-dev-opt' + (isHidden ? ' mx-dev-hidden' : '');
+    const opt = h('div', cls, {
+      role: 'option', title: name,
+      'aria-selected': d.isDefault ? 'true' : 'false'
+    }, list);
+    if (!isHidden) {
+      h('span', 'mx-dev-check', { 'aria-hidden': 'true' }, opt);  // CSS-drawn tick on the current default
+    }
+    h('span', 'mx-dev-text', { text: name }, opt);
+    if (isHidden) h('span', 'mx-dev-tag', { text: 'Hidden' }, opt);
+    /* Same law as the Settings list: the current default gets no Hide button,
+       because main exempts it from hiding — a button there would click, write,
+       and change nothing, and the written entry would silently re-claim the
+       device the moment the default moves elsewhere. No handler, no button
+       either: a dead act is the same lie in a different costume. */
+    if (typeof onHidden === 'function' && (isHidden || d.isDefault !== true)) {
+      const act = h('button', 'mx-dev-act', {
+        type: 'button', text: isHidden ? 'Show again' : 'Hide',
+        title: isHidden ? 'Show this device in the list again' : 'Hide this device from the list',
+        'aria-label': (isHidden ? 'Show ' : 'Hide ') + name + (isHidden ? ' again' : '')
+      }, opt);
+      act.addEventListener('click', (e) => { e.stopPropagation(); hideShow(d, !isHidden); });
+      if (locked()) act.disabled = true;          // an unavailable stack locks late nodes too
+    }
+    if (!isHidden) {
+      opt.tabIndex = 0;
+      opt.addEventListener('click', () => pick(d, opt));
+      opt.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(d, opt); }
+      });
+    }
+    return opt;
   }
 
   function repaint() { st.sig = null; paintList(); paintButton(); }
@@ -360,6 +400,33 @@ function mxDevice(host, { icon, kind, noun, onPick, onToggle }) {
     mxRefresh({ devices: true });                // levels + sessions track the NEW endpoint
   }
 
+  /* One Hide/Show-again round trip. On success nothing repaints locally — the
+     store's answer (via the audio:devices re-read) drives the new list, which
+     keeps this card and the Settings tab telling the same story at once.
+     Failure behaves exactly like a refused pick: sticky reason, re-read of
+     the truth, aria-live announcement. */
+  async function hideShow(d, hide) {
+    if (st.busy || !d || !d.id || !onHidden) return;
+    mxNoteHoldUntil = 0;                         // a new gesture retires the previous error line
+    st.busy = true;
+    list.querySelectorAll('button').forEach((b) => { b.disabled = true; });
+    const r = await apiCall(() => onHidden(d.id, d.name || d.id, hide));
+    st.busy = false;
+    if (!mixer.el) return;                       // the card closed mid-write: nothing to update
+    if (!r || r.ok === false) {
+      const why = (r && r.error) || 'unknown';
+      mxNoteSticky(kind + ': ' + why);
+      ensureLive().textContent = 'Could not ' + (hide ? 'hide ' : 'show ')
+        + (d.name || 'the device') + ': ' + why;
+      repaint();                                 // re-enable the rows and show the truth
+      mxRefresh({ devices: true });              // re-read what the store actually holds
+      return;
+    }
+    mxNote('');
+    ensureLive().textContent = (hide ? 'Hidden ' : 'Shown again ') + (d.name || 'device');
+    mxRefresh({ devices: true });
+  }
+
   function setOpen(on) {
     if (st.open === on) return;
     st.open = on;
@@ -374,6 +441,15 @@ function mxDevice(host, { icon, kind, noun, onPick, onToggle }) {
 
   st.setList = (devices) => {
     const next = Array.isArray(devices) ? devices.filter((d) => d && typeof d.id === 'string' && d.id) : [];
+    /* An empty read after a healthy list is almost always a transient
+       enumeration hiccup (a DisplayPort monitor mid hot-plug, a USB hub
+       re-handshaking) — and wiping the picker over one was half of the
+       "my devices keep disappearing" report. Hold the last good list and
+       trust a *sustained* empty instead: three consecutive device reads
+       (≈18 s of 6 s device ticks) before '(no devices found)' becomes the
+       truth. Any non-empty read resets the streak. */
+    if (!next.length && st.loaded && st.devices.length && ++st.emptyStreak < 3) return;
+    st.emptyStreak = 0;
     const same = st.loaded && deviceSignature(next) === deviceSignature(st.devices);
     st.devices = next;
     st.loaded = true;
@@ -532,6 +608,7 @@ function buildMixerCard(seg) {
   mixer.devOut = mxDevice(body, {
     icon: '\uE767', kind: 'Output', noun: 'output device',
     onPick: (id) => api.audioSetDefault('render', id),
+    onHidden: (id, name, hide) => api.audioSetHidden('render', { id, name, hide }),
     onToggle: devToggle
   });
   mixer.masterOut = mxRow(body, {
@@ -542,6 +619,7 @@ function buildMixerCard(seg) {
   mixer.devIn = mxDevice(body, {
     icon: '\uE720', kind: 'Input', noun: 'input device',
     onPick: (id) => api.audioSetDefault('capture', id),
+    onHidden: (id, name, hide) => api.audioSetHidden('capture', { id, name, hide }),
     onToggle: devToggle
   });
   mixer.masterIn = mxRow(body, {

@@ -84,29 +84,39 @@ test('fallbackName trims an id into something a human can scan', () => {
   assert.equal(audio._fallbackName(''), '');
 });
 
-/* ---- filterHiddenDevices (behavior.audioHidden filtering, ipc.js side) ---- */
+/* ---- tagHiddenDevices (behavior.audioHidden flagging, ipc.js side) ---- */
 const dev = (id, isDefault) => ({ id, name: id, isDefault: !!isDefault });
-test('filterHiddenDevices drops hidden ids and keeps everything else', () => {
+const flags = (r) => r.map((d) => (d && d.id ? d.id + (d.hidden ? ':h' : ':v') : String(d)));
+test('tagHiddenDevices flags hidden ids and keeps everything else', () => {
   const list = [dev('a'), dev('b', true), dev('c')];
-  assert.deepEqual(audio._filterHiddenDevices(list, [{ id: 'a', name: 'A' }]).map((d) => d.id), ['b', 'c']);
-  assert.deepEqual(audio._filterHiddenDevices(list, []).map((d) => d.id), ['a', 'b', 'c']);
-  assert.deepEqual(audio._filterHiddenDevices(list, null).map((d) => d.id), ['a', 'b', 'c']);
+  assert.deepEqual(flags(audio._tagHiddenDevices(list, [{ id: 'a', name: 'A' }])), ['a:h', 'b:v', 'c:v']);
+  assert.deepEqual(flags(audio._tagHiddenDevices(list, [])), ['a:v', 'b:v', 'c:v']);
+  assert.deepEqual(flags(audio._tagHiddenDevices(list, null)), ['a:v', 'b:v', 'c:v']);
 });
 
 test('the CURRENT default is never hidden, whatever the hidden list claims', () => {
   const list = [dev('a', true), dev('b')];
-  assert.deepEqual(audio._filterHiddenDevices(list, [{ id: 'a' }]).map((d) => d.id), ['a', 'b'],
+  assert.deepEqual(flags(audio._tagHiddenDevices(list, [{ id: 'a' }])), ['a:v', 'b:v'],
     'a picker that could hide the live default would misreport Windows');
-  // The exemption is exactly isDefault — a hidden peer is still dropped.
-  assert.deepEqual(audio._filterHiddenDevices(list, [{ id: 'a' }, { id: 'b' }]).map((d) => d.id), ['a']);
+  // The exemption is exactly isDefault — a hidden peer is still flagged.
+  assert.deepEqual(flags(audio._tagHiddenDevices(list, [{ id: 'a' }, { id: 'b' }])), ['a:v', 'b:h']);
 });
 
-test('filterHiddenDevices survives junk lists and junk hidden entries', () => {
+test('a hidden entry follows the device across endpoint-id churn (name match)', () => {
+  // The 2026-11 bug: Windows re-issued the GUID, the old hidden entry claimed
+  // nothing (id match), a NEW id arrived carrying the remembered name — with
+  // id-only matching the device reappeared un-hidden, then a later reissue
+  // re-hit the old id and vanished again. Name match kills the ghost.
+  const list = [{ id: 'y', name: ' Desk ', isDefault: false }];
+  assert.equal(audio._tagHiddenDevices(list, [{ id: 'x', name: 'desk' }])[0].hidden, true);
+});
+
+test('tagHiddenDevices survives junk lists and junk hidden entries', () => {
   const list = [dev('a'), null, dev('b', true)];
   // 'a-string' hides nothing (ids only come from {id} objects); {id:'b'} hits
-  // the exempt default; null rows pass through untouched.
-  assert.deepEqual(audio._filterHiddenDevices(list, ['a-string', { id: '' }, { nope: 1 }, { id: 'b' }]).map((d) => (d && d.id) || d), ['a', null, 'b']);
-  assert.deepEqual(audio._filterHiddenDevices('not-a-list', [{ id: 'x' }]), []);
+  // the exempt default; null rows pass through untouched (no flag to carry).
+  assert.deepEqual(flags(audio._tagHiddenDevices(list, ['a-string', { id: '' }, { nope: 1 }, { id: 'b' }])), ['a:v', 'null', 'b:v']);
+  assert.deepEqual(audio._tagHiddenDevices('not-a-list', [{ id: 'x' }]), []);
 });
 
 /* ---- groupSessions (Volume-Mixer semantics) ---- */

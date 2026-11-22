@@ -48,7 +48,8 @@ const wheelSurface = {
   audioSessions: invoke('audio:sessions'),
   audioSetDefault: invoke('audio:set-default'),
   audioSetVolume: invoke('audio:set-volume'),
-  audioSetSession: invoke('audio:set-session')
+  audioSetSession: invoke('audio:set-session'),
+  audioSetHidden: invoke('audio:set-hidden')
 };
 
 /* The settings window's full surface (settings.js codes against
@@ -95,9 +96,9 @@ const settingsSurface = {
   // only in main (src/main/donate.js), nothing is passed in from the page.
   openDonate: invoke('donate:open'),
   sysCatalog: invoke('sys:catalog'),
-  // Audio: Settings-window controls for endpoints and the mixer. The three
-  // writers (setDefault/setVolume/setSession) are Settings-gated in main;
-  // the reads are plain lookups like sysCatalog.
+  // Audio: Settings-window controls for endpoints and the mixer. The writers
+  // (setDefault/setVolume/setSession/setHidden) are gated to Settings+wheel
+  // in main; the reads are plain lookups like sysCatalog.
   audioAvailable: invoke('audio:available'),
   audioDevices: invoke('audio:devices'),
   audioLevels: invoke('audio:levels'),
@@ -105,6 +106,7 @@ const settingsSurface = {
   audioSetDefault: invoke('audio:set-default'),
   audioSetVolume: invoke('audio:set-volume'),
   audioSetSession: invoke('audio:set-session'),
+  audioSetHidden: invoke('audio:set-hidden'),
   // type: 'setting' — the app-setting dropdown (read-only catalog; the toggle
   // itself runs in main when the segment fires).
   appSettingsCatalog: invoke('appsettings:catalog'),
