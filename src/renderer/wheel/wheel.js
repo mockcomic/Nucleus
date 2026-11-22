@@ -355,7 +355,7 @@ function mxDevice(host, { icon, kind, noun, onPick, onHidden, onToggle }) {
       if (locked()) act.disabled = true;          // an unavailable stack locks late nodes too
     }
     if (!isHidden) {
-      opt.tabIndex = 0;
+      opt.tabIndex = locked() ? -1 : 0;   // a locked card's rows leave the tab order, like the old disabled buttons
       opt.addEventListener('click', () => pick(d, opt));
       opt.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(d, opt); }
@@ -367,7 +367,10 @@ function mxDevice(host, { icon, kind, noun, onPick, onHidden, onToggle }) {
   function repaint() { st.sig = null; paintList(); paintButton(); }
 
   async function pick(d, opt) {
-    if (st.busy || !d || !d.id) return;
+    // Rows are divs since the hide/restore redesign, so the old button
+    // `disabled` no longer blocks a click on a locked card: guard at the
+    // interaction itself instead of at paint time.
+    if (locked() || st.busy || !d || !d.id) return;
     mxNoteHoldUntil = 0;                         // a new gesture retires the previous error line
     st.busy = true;
     list.querySelectorAll('button').forEach((b) => { b.disabled = true; });
@@ -406,7 +409,7 @@ function mxDevice(host, { icon, kind, noun, onPick, onHidden, onToggle }) {
      Failure behaves exactly like a refused pick: sticky reason, re-read of
      the truth, aria-live announcement. */
   async function hideShow(d, hide) {
-    if (st.busy || !d || !d.id || !onHidden) return;
+    if (locked() || st.busy || !d || !d.id || !onHidden) return;
     mxNoteHoldUntil = 0;                         // a new gesture retires the previous error line
     st.busy = true;
     list.querySelectorAll('button').forEach((b) => { b.disabled = true; });
