@@ -718,9 +718,12 @@ function registerIpc(deps) {
        pre-2026-11 picker lost people's speakers). A hide REPLACES same-name
        entries rather than appending, so re-enumerations consolidate instead
        of accumulating. The write goes through store.set (validate() clamps
-       the shape), and an open Settings window gets the same reconcile push
-       applySetting uses — rev/echo/dirty-queue logic updates its copy of the
-       config instead of clobbering unsaved edits. */
+       the shape). A WHEEL-initiated op pushes config:changed to an open
+       Settings window — its rev/echo/dirty-queue logic reconciles the copy
+       instead of clobbering unsaved edits — but a SETTINGS-initiated op gets
+       no push: the invoke reply's hidden list is already the reconcile path,
+       and echoing the change back at the page that just performed it would
+       queue a bogus conflict against the user's unsaved edits. */
     const f = audio._parseFlow(flow);
     if (f === null) return { ok: false, error: 'flow must be render or capture' };
     const id = audio._sanitizeDeviceId(op && op.id);
@@ -738,9 +741,18 @@ function registerIpc(deps) {
       const kept = list.filter((h) => !matches(h));
       ah[key] = op && op.hide === true ? kept.concat([{ id, name }]) : kept;
       store.set(cur);
-      try {
-        settings.send('config:changed', { config: JSON.parse(JSON.stringify(store.get())), rev: store.rev });
-      } catch { /* settings may be closed */ }
+      /* When Settings itself performed the op, no push: the invoke reply's
+         hidden list is already the reconcile path (settings.js mirrors it into
+         its local cfg), and a config:changed landing while the user has
+         unsaved edits would be queued by the dirty-guard and pop a bogus
+         conflict banner for a change the page just made with its own hand.
+         A wheel-initiated op is a genuine external write — an open Settings
+         window must hear about it and reconcile the normal way. */
+      if (!frameOn(ev, 'settings')) {
+        try {
+          settings.send('config:changed', { config: JSON.parse(JSON.stringify(store.get())), rev: store.rev });
+        } catch { /* settings may be closed */ }
+      }
     } catch (err) {
       return { ok: false, error: String((err && err.message) || err) };
     }
