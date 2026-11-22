@@ -35,12 +35,16 @@ function attachLogHooks(win, name) {
   wc.__rwLogHooks = true;
   lockNavigation(win);
   const LEVELS = { logging: 'debug', verbose: 'debug', info: 'info', warning: 'warn', error: 'error' };
-  wc.on('console-message', (e) => {
-    // Older Electron shape: (event, level 0-3, message, line, sourceId).
-    const d = (e && e.params) || e || {};
+  wc.on('console-message', (e, details) => {
+    // Electron ≥32 (this app pins 44): the payload arrives as the SECOND
+    // argument — MessageDetails {level 0-3 verbose/info/warning/error,
+    // message, sourceUrl, lineNumber}. The event itself is a bare
+    // preventDefault/stopPropagation shell. The `e.params`/`e` fallbacks
+    // keep any older merged-into-event shape working.
+    const d = details || (e && e.params) || e || {};
     const lvl = typeof d.level === 'string' ? (LEVELS[d.level] || 'info')
       : (Number(d.level) >= 3 ? 'error' : Number(d.level) === 2 ? 'warn' : Number(d.level) === 1 ? 'info' : 'debug');
-    log.forwardRenderer({ level: lvl, page: name, args: d.message, source: d.sourceId || '', line: d.line });
+    log.forwardRenderer({ level: lvl, page: name, args: d.message, source: d.sourceUrl || d.sourceId || '', line: d.lineNumber != null ? d.lineNumber : d.line });
   });
   wc.on('render-process-gone', (ev, d) => {
     log.error(`renderer '${name}' process gone: ${d && d.reason} (exit code ${d && d.exitCode})`);
