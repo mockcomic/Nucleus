@@ -202,13 +202,16 @@ The overlay's ring fills (**Ring Inner**, **Ring Outer**, **Wheel Center**) are 
 
 ### Runtime theme presets
 The catalog ships in `src/main/themes.mjs` (single source of truth; the main
-process loads the same literal through `themes.js`). Fourteen curated themes in
+process loads the same literal through `themes.js`). Twenty curated themes in
 families — **dark**: Midnight (default, blue-black + Pilot Blue), Ocean (deep
 teal + cyan), Grape (violet), Graphite (light plates, dark chrome), Ember (rust
 + amber), Solar (sienna + gold), Meadow (forest + mint), Space Gray (iOS dark —
-neutral elevated greys + dark System Blue); **light**: Porcelain
+neutral elevated greys + dark System Blue), Aurora (indigo night + periwinkle),
+Synthwave (violet black + magenta), Nord Frost (frost-bluish arctic greys +
+glacier cyan), Toxic (near-black green + acid lime); **light**: Porcelain
 (cool grey plates), Linen (warm cream + terracotta), Paper (white dial, electric
-blue), Aqua (Apple light — white plates on iOS group grey + System Blue);
+blue), Aqua (Apple light — white plates on iOS group grey + System Blue),
+Terracotta (warm clay + burnt sienna), Sage (soft green greys + forest);
 **high-contrast**: HC Black (black/yellow/white) and HC White. Every
 theme carries the same 7-role map (bg, ring1, ring2, hover, accent, text,
 center) plus persona fields (`mode`, `stroke`, `edge`, `shadow`, `sheen`) and an
