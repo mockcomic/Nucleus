@@ -1,6 +1,6 @@
 import { buildWheel, createFlyoutNavigator } from '../shared/wheel-core.js';
 import { THEMES, themeById, themeBySignature, signature, computeChrome, chromeVarMap, paletteMode } from '../../main/themes.mjs';
-import { ICON_CATALOG } from '../shared/icon-catalog.js';
+import { ICON_CATALOG, TYPE_ICON, typeIconFor } from '../shared/icon-catalog.js';
 import { collapseEditorKey } from '../shared/seg-keys.js';
 
 const api = window.wheelAPI;
@@ -610,7 +610,7 @@ function segRow(ctx) {
   el('span', 'g', { text: '\uE70D' }, disc);                               // ChevronDown
 
   const icoSpan = el('span', 'seg-ico', {}, main);
-  registerIconSpan(icoSpan, item, item.icon || (item.type === 'folder' ? '\uE838' : item.type === 'recent' ? '\uE823' : item.type === 'mixer' ? '\uE767' : item.type === 'sys' || item.type === 'setting' ? '\uE713' : '\uE76C'));
+  registerIconSpan(icoSpan, item, typeIconFor(item));   // shared per-type defaults (icon-catalog)
   el('span', 'seg-name', { text: item.label || '(no name)' }, main);
   // Friendly chip (program/website/Windows…) — the raw type word only survives
   // as the tooltip and as the fallback for types the UI does not list.
@@ -978,6 +978,12 @@ function segEditor(ctx) {
   selType.addEventListener('change', () => {
     const oldType = item.type;
     item.type = selType.value;
+    // A default glyph is the map's property, not the item's — the moment the
+    // type changes it belongs to the old type and must step aside, or a
+    // folder-turned-app would wear a folder icon forever. A glyph the user
+    // picked from the wall is theirs and stays.
+    if (item.icon && item.icon === TYPE_ICON[oldType]) item.icon = '';
+    if (item.iconImage === APP_ICON_IMAGE_KEY && item.type !== 'setting') item.iconImage = '';
     // Each type owns a disjoint value namespace — carrying an old one over
     // left the parameter box showing a sys catalog id as "Keys" (and an
     // unknown id parked in the Action select at selectedIndex -1).
@@ -986,19 +992,16 @@ function segEditor(ctx) {
       item.args = '';
       item.dir = '';                                 // folders execute nothing
       if (!Array.isArray(item.children)) item.children = [];
-      if (!item.icon && !item.iconImage) item.icon = '\uE838';   // open-folder glyph
     } else if (item.type === 'recent') {
       item.value = '';
       item.args = '';
       item.dir = '';
       item.children = [];                            // main fills the fan at summon time
-      if (!item.icon && !item.iconImage) item.icon = '\uE823';   // history-clock glyph
     } else if (item.type === 'mixer') {
       item.value = '';
       item.args = '';
       item.dir = '';
       item.children = [];                            // the card is built live from Core Audio — nothing stored
-      if (!item.icon && !item.iconImage) item.icon = '\uE767';   // volume-mixer glyph
     } else if (oldType === 'folder' || oldType === 'recent' || oldType === 'mixer') {
       item.children = [];                            // the sub-menu slot is container-only
     } else if (item.type === 'sys') {
@@ -1021,6 +1024,9 @@ function segEditor(ctx) {
     } else if (oldType === 'app') {
       item.args = '';                                // the arguments slot is app-only
     }
+    // Stamp the new type's default mark (stored so exports and older builds
+    // draw the same icon; live rendering falls back to the map regardless).
+    if (!item.icon && !item.iconImage && TYPE_ICON[item.type]) item.icon = TYPE_ICON[item.type];
     touch();                                     // rebuilds the editor for the new type
     // Land focus back on the Type control the user just operated — the old
     // '.seg-edit select' hit the FIRST select in the form, which is Label
@@ -1154,8 +1160,10 @@ function segEditor(ctx) {
   }
 
   const cIcon = field('Icon');
+  // Dimmed when the segment carries no chosen art: what shows is the type's
+  // default glyph — same mark the row and the wheel draw, not a blank em-dash.
   const iconPrev = el('span', 'seg-ico' + (item.icon || item.iconImage ? '' : ' none'), {}, cIcon);
-  registerIconSpan(iconPrev, item, item.icon || '—');
+  registerIconSpan(iconPrev, item, typeIconFor(item));
   const pick = el('button', 'btn small', { text: 'Choose…' }, cIcon);
   pick.onclick = () => openIconModal(item, pick);
   const clr = el('button', 'btn small glyph', { text: '\uE894', title: 'Clear icon', 'aria-label': 'Clear icon' }, cIcon);
@@ -1939,12 +1947,15 @@ function closeIconModal() {
   iconModalOpener = null;
 }
 
-/* The glyph wall runs deep — nobody scans that. A curated dozen is the
+/* The glyph wall runs deep — nobody scans that. A curated wall is the
    default decision surface; the full grid is one explicit click away.
    Every code here is shape-checked against Segoe Fluent / MDL2 (see
-   icon-catalog.js) — the first twelve are the original curated intents. */
+   icon-catalog.js) — the original curated intents, plus the TYPE_ICON
+   defaults so a segment's type glyph stays re-pickable as a deliberate
+   (permanent) choice after Clear icon. */
 const CURATED_GLYPHS = new Set(['\uE713', '\uE774', '\uE756', '\uE715', '\uE70B', '\uE8EF',
-  '\uE719', '\uE7FC', '\uE768', '\uE722', '\uE8D6', '\uE72E', '\uE80F', '\uE721']);
+  '\uE719', '\uE7FC', '\uE768', '\uE722', '\uE8D6', '\uE72E', '\uE80F', '\uE721',
+  '\uE71D', '\uE8A5', '\uE8FC', '\uE767', '\uE838', '\uE823', '\uE765']);
 
 (function buildIconGrid() {
   const grid = $('#icon-grid');
@@ -2275,7 +2286,7 @@ function miniWheel(host, colors) {
       (() => { const RM = ringsModel(); return ringKeys().map((k, i) => [k, ring(RM && RM[k], i === 0 ? 6 : 10)]); })()
     ),
   };
-  buildWheel(host, mini, { preview: true, scale: 1, pad: CHIP_PAD, shadowBlur: 3, shadowDy: 1 });
+  buildWheel(host, mini, { preview: true, scale: 1, pad: CHIP_PAD, shadowBlur: 3, shadowDy: 1, noTypeIcon: true });
 }
 
 function renderThemes() {

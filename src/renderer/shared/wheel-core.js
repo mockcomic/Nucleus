@@ -9,6 +9,8 @@
    config caps the data tree at MAX_FOLDER_DEPTH levels (src/main/config.js),
    and a depth fuse here mirrors that ceiling. */
 
+import { TYPE_ICON, TYPE_ICON_FALLBACK } from './icon-catalog.js';
+
 export const PAD = 26;
 export const ICON_FONT = "'Segoe Fluent Icons','Segoe MDL2 Assets',system-ui";
 export const UI_FONT = "'Segoe UI',system-ui,sans-serif";
@@ -146,7 +148,15 @@ export function sectorPath(cx, cy, r0, r1, a0, a1) {
 
 /* Shared plate decoration for ring segments AND flyout children: the hover
    lift vector, icon (logo image or glyph), truncated label, and the folder
-   chevron. Returns the resolved imgHref for the segment record. */
+   chevron. Returns { imgHref, glyph } for the segment record.
+
+   Plate-content rule: every plate carries at least one mark — a label, the
+   chosen art, or (when the plate shows no label) the segment type's default
+   glyph from TYPE_ICON. A plate with neither was a blank square: the exact
+   "what is this?" complaint. Chosen icons always win; a plate that shows
+   its label stays deliberately art-free (that's the clean text-only look);
+   opts.noTypeIcon suppresses the fallback for decorative chips whose plates
+   ARE the message. */
 function paintItemContent(g, item, cx, cy, r0, r1, center, ap, opts) {
   const band = r1 - r0;
   const rm = (r0 + r1) / 2;
@@ -156,8 +166,10 @@ function paintItemContent(g, item, cx, cy, r0, r1, center, ap, opts) {
   g.style.setProperty('--ty', ty + 'px');
 
   const imgHref = iconHrefFor(opts, item.iconImage);
-  const showIcon = !!item.icon || !!imgHref;
   const showLabel = ap.showLabels && !!item.label && !item.hideLabel;
+  const iconText = item.icon || (showLabel || opts.noTypeIcon
+    ? '' : (TYPE_ICON[item.type] || TYPE_ICON_FALLBACK));
+  const showIcon = !!iconText || !!imgHref;
   const iconSize = Math.max(13, Math.min(26, band * 0.30));
   // Per-segment label placement (config's labelPos, '' = the classic outward
   // layout). A label that claims the hub side of the plate pushes the icon to
@@ -179,7 +191,7 @@ function paintItemContent(g, item, cx, cy, r0, r1, center, ap, opts) {
         x: ix, y: iy, 'text-anchor': 'middle', 'dominant-baseline': 'central',
         'font-family': ICON_FONT, 'font-size': iconSize, fill: ap.colors.text, class: 'seg-icon'
       });
-      t.textContent = item.icon;
+      t.textContent = iconText;
       g.appendChild(t);
     }
   }
@@ -215,7 +227,7 @@ function paintItemContent(g, item, cx, cy, r0, r1, center, ap, opts) {
     t.textContent = CHEVRON_GLYPH;
     g.appendChild(t);
   }
-  return imgHref;
+  return { imgHref, glyph: imgHref ? '' : iconText };
 }
 
 /**
@@ -302,9 +314,9 @@ export function buildWheel(container, cfg, opts = {}) {
       });
       g.appendChild(path);
 
-      const imgHref = paintItemContent(g, item, cx, cy, rg.r0, rg.r1, center, ap, opts);
+      const mark = paintItemContent(g, item, cx, cy, rg.r0, rg.r1, center, ap, opts);
       gRing.appendChild(g);
-      segments.push({ el: g, path, item, imgHref, ring: rg.ring, r0: rg.r0, r1: rg.r1, center, halfSpan, baseFill: plateFill });
+      segments.push({ el: g, path, item, imgHref: mark.imgHref, glyph: mark.glyph, ring: rg.ring, r0: rg.r0, r1: rg.r1, center, halfSpan, baseFill: plateFill });
     });
     shadow.appendChild(gRing);
   }
@@ -385,10 +397,10 @@ export function buildWheel(container, cfg, opts = {}) {
       } else {
         hubImg.removeAttribute('href');
         hubImg.setAttribute('visibility', 'hidden');
-        hubIcon.textContent = hovered.item.icon || '';
+        hubIcon.textContent = hovered.glyph || '';
       }
       hubLabel.textContent = hovered.item.label || '';
-      centerLabel.setAttribute('fill-opacity', hovered.item.label || hovered.item.icon || hovered.imgHref ? 0 : 0.85);
+      centerLabel.setAttribute('fill-opacity', hovered.item.label || hovered.glyph || hovered.imgHref ? 0 : 0.85);
     } else {
       hubIcon.textContent = '';
       hubImg.removeAttribute('href');
@@ -453,10 +465,10 @@ export function buildWheel(container, cfg, opts = {}) {
         fill: plateFill, stroke: persona.edge, 'stroke-width': 1, 'fill-rule': 'evenodd'
       });
       g.appendChild(path);
-      const imgHref = paintItemContent(g, child, cx, cy, r0f, r1f, center, ap, opts);
+      const mark = paintItemContent(g, child, cx, cy, r0f, r1f, center, ap, opts);
       gFly.appendChild(g);
       const rec = {
-        el: g, path, item: child, imgHref, ring: parentSeg.ring,
+        el: g, path, item: child, imgHref: mark.imgHref, glyph: mark.glyph, ring: parentSeg.ring,
         flyout: true, flyLevel: depth, parentSeg,
         r0: r0f, r1: r1f, center, halfSpan: Math.max(2, halfSpan), baseFill: plateFill
       };
@@ -594,14 +606,20 @@ export function createFlyoutNavigator(built, opts = {}) {
     clearTimers();
     if (fl.open(seg) && onGrow) onGrow(fl.reach());
   };
-  const startClose = (alsoUnlatch) => {
-    if (openT) { clearTimeout(openT); openT = null; }
+  // Arm (or re-arm) the delayed collapse without touching a pending dwell-open:
+  // while sweeping folders the grace timer must not cancel the open the sweep
+  // just armed, or a pointer resting on the next folder never gets its fan.
+  const armClose = (alsoUnlatch) => {
     if (closeT) clearTimeout(closeT);
     closeT = setTimeout(() => {
       closeT = null;
       fl.closeAll();
       if (alsoUnlatch) latched.clear();
     }, graceMs);
+  };
+  const startClose = (alsoUnlatch) => {
+    if (openT) { clearTimeout(openT); openT = null; }
+    armClose(alsoUnlatch);
   };
 
   function feed(seg, onWheel) {
@@ -615,10 +633,11 @@ export function createFlyoutNavigator(built, opts = {}) {
     }
     if (seg && fl.isFolder(seg) && !fl.isOpen(seg) && !latched.has(seg)) {
       // hovering a (fresh) folder: dwell-open it; any unrelated open family
-      // closes after the grace, so sweeping folders reads as one sweep
+      // closes after the grace, so sweeping folders reads as one sweep.
+      // armClose (not startClose): the sweep's own pending open must survive.
       if (openT) clearTimeout(openT);
       openT = setTimeout(() => doOpen(seg), dwellMs);
-      if (fl.levels()) startClose();
+      if (fl.levels()) armClose();
       return;
     }
     clearTimers();

@@ -31,3 +31,37 @@ export const ICON_CATALOG = [
   { code: '\uEB51', name: 'Heart' }, { code: '\uECA5', name: 'Tiles' }, { code: '\uEDA2', name: 'Storage' },
   { code: '\uE8D6', name: 'Music' }, { code: '\uF0E2', name: 'Grid' }, { code: '\uF7ED', name: 'Screenshot' }
 ];
+
+/* One unique default mark per segment type — the answer to "what is this
+   plate?" when the user hasn't chosen art. Every codepoint is in the catalog
+   above (shape-checked), and each glyph mirrors the type chip's word so the
+   picture and the label agree at a glance: program → the All-apps grid,
+   website → Globe, file → Document, Windows → the Start flag, mixer →
+   Speaker, app toggle → Settings gear, folder → Open folder, recents → the
+   history clock, command → Terminal, keystrokes → Keyboard. Setting segments
+   normally wear the app's own image (iconImage); the gear is what shows
+   before that resolves. The wheel, the segment rows and the icon picker all
+   read this map — never restack a private ternary chain. */
+export const TYPE_ICON = {
+  app: '\uE71D',       // All apps
+  url: '\uE774',       // Globe
+  file: '\uE8A5',      // Document
+  sys: '\uE8FC',       // Start flag
+  mixer: '\uE767',     // Speaker
+  setting: '\uE713',   // Settings
+  folder: '\uE838',    // Open folder
+  recent: '\uE823',    // Recent
+  command: '\uE756',   // Terminal
+  macro: '\uE765'      // Keyboard
+};
+/* ChevronRight — the neutral mark for types the map doesn't know (legacy or
+   hand-edited configs). Same glyph the folder plates' sub-menu chevron uses. */
+export const TYPE_ICON_FALLBACK = '\uE76C';
+
+/* The glyph a segment shows: its chosen icon if it has one, else its type's
+   default. Callers that also resolve iconImage (the wheel, the row spans)
+   layer the image precedence themselves. */
+export function typeIconFor(item) {
+  if (item && item.icon) return item.icon;
+  return (item && TYPE_ICON[item.type]) || TYPE_ICON_FALLBACK;
+}

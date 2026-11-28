@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 import { buildWheel } from '../src/renderer/shared/wheel-core.js';
+import { TYPE_ICON, TYPE_ICON_FALLBACK } from '../src/renderer/shared/icon-catalog.js';
 import { THEMES, chromeVarMap, computeChrome } from '../src/main/themes.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -78,6 +79,69 @@ test('the machined rim is the only disc appearance.showRim removes', () => {
   const off = discs({ showRim: false });
   assert.ok(!off.includes('rim'), 'off = no rim disc at all');
   assert.ok(off.includes('top-light') && off.includes('hub-top'), 'the rest of the machined-light pass survives');
+});
+
+test('every segment type has its own default glyph', () => {
+  const codes = Object.values(TYPE_ICON);
+  assert.equal(new Set(codes).size, codes.length, 'two types share a default glyph');
+  assert.ok(!codes.includes(TYPE_ICON_FALLBACK), 'the fallback must not collide with a real type');
+});
+
+/* Plate-content rule: a plate carries a label, chosen art, or — when it
+   shows no label — the TYPE_ICON default. Blank squares were the bug. */
+test('artless plates wear their type glyph; labeled plates stay clean', () => {
+  const appearance = (over) => ({
+    innerRadius: 12, outerRadius: 60, ringSplit: 0.5, startAngle: 0, gapDeg: 3,
+    showLabels: true, fontSize: 12, centerLabel: '', animationMs: 0,
+    colors: THEMES[0].colors, ...over,
+  });
+  const glyphsIn = (host) => {
+    const found = [];
+    (function walk(n) {
+      if (n.attrs && n.attrs.class === 'seg-icon') found.push(n.textContent);
+      for (const c of n.children || []) walk(c);
+    })(host);
+    return found;
+  };
+  const types = Object.keys(TYPE_ICON);
+  const items = types.map((t, i) => ({
+    id: 't' + i, label: 'Seg ' + t, icon: '', iconImage: '', type: t, value: '',
+    hideLabel: true,   // the user's live config: every container hid its label
+  }));
+  const host = makeNode();
+  buildWheel(host, { appearance: appearance({}), rings: { 1: items } }, { preview: true, scale: 1 });
+  assert.deepEqual(glyphsIn(host), types.map((t) => TYPE_ICON[t]), 'each type must draw its own default');
+
+  // A plate that shows its label keeps the deliberate text-only look.
+  const labeled = makeNode();
+  buildWheel(labeled, {
+    appearance: appearance({}),
+    rings: { 1: [{ id: 'a', label: 'Notepad', icon: '', type: 'app', value: 'notepad.exe' }] },
+  }, { preview: true, scale: 1 });
+  assert.deepEqual(glyphsIn(labeled), [], 'a labelled artless plate draws no default glyph');
+
+  // A chosen icon is never overridden by the map, label or no label.
+  const chosen = makeNode();
+  buildWheel(chosen, {
+    appearance: appearance({}),
+    rings: { 1: [{ id: 'a', label: 'X', icon: '\uE72C', type: 'folder', value: '' }] },
+  }, { preview: true, scale: 1 });
+  assert.deepEqual(glyphsIn(chosen), ['\uE72C']);
+
+  // Legacy/hand-edited configs: an unmapped type still gets a neutral mark,
+  // and the decorative theme chips opt out entirely (plates are the message).
+  const legacy = makeNode();
+  buildWheel(legacy, {
+    appearance: appearance({}),
+    rings: { 1: [{ id: 'a', label: '', icon: '', type: 'widget', value: '' }] },
+  }, { preview: true, scale: 1 });
+  assert.deepEqual(glyphsIn(legacy), [TYPE_ICON_FALLBACK]);
+  const chip = makeNode();
+  buildWheel(chip, {
+    appearance: appearance({ showLabels: false }),
+    rings: { 1: [{ id: 'a', label: 'X', icon: '', type: 'app', value: '' }] },
+  }, { preview: true, scale: 1, noTypeIcon: true });
+  assert.deepEqual(glyphsIn(chip), [], 'noTypeIcon suppresses the default');
 });
 
 test('chromeVarMap covers exactly the vars settings.css consumes from <html>', () => {
