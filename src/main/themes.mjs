@@ -402,6 +402,67 @@ export const THEMES = [
       },
     },
   },
+  /* ── modern flat-era additions (six) ── */
+  {
+    id: 'aurora', name: 'Aurora',
+    colors: {
+      bg: '#0b1021', ring1: '#1b2340', ring2: '#141b33', hover: '#2c4cac',
+      accent: '#7aa2ff', text: '#e9edff', center: '#070b18',
+      mode: 'dark',
+      chrome: { ...DARK_CHROME, track: '#26304d', previewHi: '#141c33', previewLo: '#070b18' },
+    },
+  },
+  {
+    id: 'synthwave', name: 'Synthwave',
+    colors: {
+      bg: '#12081f', ring1: '#2b1147', ring2: '#1e0b33', hover: '#702595',
+      accent: '#ff5ecf', text: '#f4e9ff', center: '#0a0413',
+      mode: 'dark',
+      chrome: { ...DARK_CHROME, track: '#3c1e5e', previewHi: '#22103a', previewLo: '#0a0413' },
+    },
+  },
+  {
+    id: 'nord', name: 'Nord Frost',
+    colors: {
+      bg: '#2e3440', ring1: '#3b4252', ring2: '#434c5e', hover: '#425a78',
+      accent: '#88c0d0', text: '#eceff4', center: '#272c36',
+      mode: 'dark',
+      chrome: {
+        panel: '#353c4a', card: '#3e4552', line: '#4c5566', dim: '#aeb5c3',
+        btnBg: '#434c5e', wellHover: '#465064', wellEdit: '#373e4d', wellTabHover: '#414a5b',
+        codeInk: '#a3d1e0', danger: '#d07880', errBg: '#4a2e33', errInk: '#f0b8bd',
+        track: '#4c5566', previewHi: '#3b4252', previewLo: '#272c36',
+        scrollThumb: '#4c5566', sheenColor: '#eceff4',
+      },
+    },
+  },
+  {
+    id: 'toxic', name: 'Toxic',
+    colors: {
+      bg: '#0a0f0a', ring1: '#16251a', ring2: '#0f1c13', hover: '#2b6020',
+      accent: '#8df56b', text: '#eaffe6', center: '#050a06',
+      mode: 'dark', stroke: '#bff0aa',
+      chrome: { ...DARK_CHROME, track: '#1e3a22', previewHi: '#102415', previewLo: '#050a06' },
+    },
+  },
+  {
+    id: 'terracotta', name: 'Terracotta',
+    colors: {
+      bg: '#faf3ec', ring1: '#e8cbae', ring2: '#f0dcc8', hover: '#c89066',
+      accent: '#9a4423', text: '#3a2317', center: '#fdf8f3',
+      mode: 'light', stroke: '#3a2317',
+      chrome: { dim: '#6b4d38', codeInk: '#8a4526' },
+    },
+  },
+  {
+    id: 'sage', name: 'Sage',
+    colors: {
+      bg: '#eef3ed', ring1: '#cfe0cd', ring2: '#dbe7da', hover: '#a9c9ab',
+      accent: '#2e6540', text: '#1b2a1e', center: '#f8fbf7',
+      mode: 'light', stroke: '#1b2a1e',
+      chrome: { dim: '#43584a', codeInk: '#2e6540' },
+    },
+  },
 ];
 
 export function themeById(id) {

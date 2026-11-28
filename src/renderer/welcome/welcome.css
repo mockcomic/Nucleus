@@ -11,16 +11,14 @@
   --well-hover: #182330; --well-edit: #121a23; --well-tab-hover: #1a2430;
   --code-ink: #a8d0f0;
   --danger: #e56b6b; --err-bg: #3a1d1d; --err-ink: #ffb3b3;
-  --radius: 10px;
+  --radius: 12px;
   --icon-font: 'Segoe Fluent Icons','Segoe MDL2 Assets',sans-serif;
-  --ease-out: cubic-bezier(.25,.6,.25,1);
+  --ease-out: cubic-bezier(.2,0,0,1);
   --track: #24303d;
   --ring-accent: rgba(76,159,240,.16);
   --on-accent: #fff;
-  --sheen: linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,0) 45%);
-  --sheen-quiet: linear-gradient(180deg, rgba(255,255,255,.022), rgba(255,255,255,0) 60%);
-  --well-inset: inset 0 1px 2px rgba(0,0,0,.35);
-  --float-low: 0 6px 20px rgba(0,0,0,.4);
+  /* Flat surfaces: no lit plates or carved insets (settings.css cadence). */
+  --float-low: 0 1px 2px rgba(0,0,0,.28), 0 4px 12px rgba(0,0,0,.32);
 }
 * { box-sizing: border-box; }
 html, body { height: 100%; }
@@ -78,8 +76,7 @@ h2 { font-size: 20px; margin: 4px 0 0; }
 
 .hk-chip {
   background: var(--field); border: 1px solid var(--accent-dim); color: var(--text);
-  font-weight: 600; padding: 8px 14px; border-radius: 8px; letter-spacing: .4px;
-  box-shadow: var(--well-inset);
+  font-weight: 600; padding: 8px 14px; border-radius: 10px; letter-spacing: .4px;
 }
 .hk-chip.recording { border-style: dashed; color: var(--accent); }
 
@@ -94,27 +91,27 @@ h2 { font-size: 20px; margin: 4px 0 0; }
 #hk-status.bad { color: var(--danger); }
 
 .err { background: var(--err-bg); border: 1px solid var(--danger); color: var(--err-ink);
-  padding: 8px 12px; border-radius: 8px; font-size: 12.5px; }
+  padding: 8px 12px; border-radius: 10px; font-size: 12.5px; }
 
 .facts { list-style: none; margin: 2px 0 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
 .facts li { display: flex; gap: 12px; align-items: flex-start; background: var(--card);
   border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px;
-  font-size: 13px; line-height: 1.5; box-shadow: var(--sheen-quiet); }
+  font-size: 13px; line-height: 1.5; }
 .facts b { font-weight: 600; }
 .fact-n {
   flex: 0 0 auto; width: 22px; height: 22px; border-radius: 50%; margin-top: 1px;
-  background: var(--sheen), var(--accent-deep); color: var(--on-accent);
+  background: var(--accent-deep); color: var(--on-accent);
   display: grid; place-items: center; font-size: 12px; font-weight: 700;
 }
 
-/* ── buttons (settings.css cadence: sheen-lit plates, accent-primary) ───── */
-.btn { background: var(--sheen), var(--btn-bg); border: 1px solid var(--line); color: var(--text);
+/* ── buttons (settings.css cadence: flat fills, accent-primary) ──────────── */
+.btn { background: var(--btn-bg); border: 1px solid var(--line); color: var(--text);
   padding: 7px 13px; border-radius: 8px; cursor: pointer; font-size: 13px;
   transition: border-color .12s var(--ease-out), filter .12s var(--ease-out), transform .08s var(--ease-out); }
-.btn:hover { border-color: var(--accent); filter: brightness(1.05); }
-.btn:active { transform: scale(.985); filter: brightness(.94); }
+.btn:hover { background: var(--well-hover); border-color: var(--accent); }
+.btn:active { background: var(--field); transform: scale(.985); }
 .btn:disabled { opacity: .45; cursor: default; }
-.btn.primary { background: var(--sheen), var(--accent-deep); border-color: var(--accent-deep); color: var(--on-accent); }
+.btn.primary { background: var(--accent-deep); border-color: var(--accent-deep); color: var(--on-accent); }
 
 /* ── footer nav ──────────────────────────────────────────────────────────── */
 #nav {

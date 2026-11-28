@@ -21,11 +21,11 @@ straight to the Win32 API through `user32.dll` (via `koffi`).
 
 *Click the thumbnail to play — the Settings page adds and removes rings and segments, and recolors them on the **live preview**. The wheel is a real user's `config.json`. More films: **[horizontal 16:9](media/promo/wide.mp4)** · **[vertical 9:16](media/promo/vertical.mp4)** · **[square 1:1](media/promo/square.mp4)**.*
 
-**[▶ The launch film — 21 s, sound on](media/promo/brag.mp4)** ([vertical 9:16 cut](media/promo/brag-vertical.mp4)) — summon, sweep, release, and the wheel re-tinted through six of its fourteen themes, all captured from the running app:
+**[▶ The launch film — 21 s, sound on](media/promo/brag.mp4)** ([vertical 9:16 cut](media/promo/brag-vertical.mp4)) — summon, sweep, release, and the wheel re-tinted through six of its twenty themes, all captured from the running app:
 
 [![Nucleus launch film poster — the wheel on a real desktop, segment glowing](media/promo/brag.jpg)](media/promo/brag.mp4)
 
-Eight of the fourteen themes, same `config.json`:
+Eight of the twenty themes, same `config.json`:
 
 [![Eight built-in themes: Space Gray, Midnight, Ember, Grape, Solar, Meadow, Aqua, Porcelain](media/promo/wheel-themes-mosaic.png)](media/promo/wheel-themes-mosaic.png)
 

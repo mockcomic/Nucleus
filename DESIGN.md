@@ -1,6 +1,6 @@
 ---
 name: Nucleus
-description: A machined midnight action hub for Windows — launcher, macro recorder, and system-actions panel at the cursor.
+description: A flat midnight action hub for Windows — launcher, macro recorder, and system-actions panel at the cursor.
 colors:
   pilot-blue: "#4c9ff0"
   pilot-blue-deep: "#2e7dd1"
@@ -78,10 +78,10 @@ typography:
 rounded:
   xxs: "4px"
   xs: "6px"
-  sm: "7px"
-  md: "8px"
-  lg: "10px"
-  xl: "12px"
+  sm: "8px"
+  md: "10px"
+  lg: "12px"
+  xl: "14px"
   pill: "20px"
   full: "999px"
 spacing:
@@ -162,17 +162,17 @@ components:
 
 ## Overview
 
-**Creative North Star: "The Machined Object"** — an Apple-inspired physical system. Every surface reads as real material on a dark desk: machined edges lit from above, controls that press, a dial that springs under the finger. Depth comes from light and shadow on solid matter, never from glow.
+**Creative North Star: "The Instrument Flat"** — a modern flat system on a dark desk. Surfaces are quiet, matte planes differentiated by a tonal ramp, not by simulated lighting; controls change state through tonal tier steps, and elevation appears only when something actually floats. The dial still springs under the finger — the one place physics earns its keep. Depth comes from tone and restrained layered shadow, never from glow.
 
-Machined midnight hardware. The Settings window is a well-built instrument panel — three deliberate columns, dense but breathable rows, hairline seams instead of decoration. The wheel itself is the product's hero object: a two-ring dial of tinted metal plates at the cursor, popping in with weight and springing under hover. Color is nearly absent from the chrome and precisely present where it means something — Pilot Blue for the thing you're about to act on.
+Flat midnight instrument. The Settings window is a well-built control panel — three deliberate columns, dense but breathable rows, hairline seams instead of decoration. The wheel itself is the product's hero object: a two-ring dial of tinted metal plates at the cursor, popping in with weight and springing under hover. Color is nearly absent from the chrome and precisely present where it means something — Pilot Blue for the thing you're about to act on.
 
 **Key Characteristics:**
 - One family, five weights: Segoe UI carries everything; Segoe Fluent Icons is the only pictographic voice; Consolas marks machine truth (paths, values, code).
 - Tonal midnight ramp (bg → panel → card → field) with hairline borders; shadows reserved exclusively for floating objects.
 - On Windows 11 the sidebar and preview bay float on real DWM acrylic (see Vibrant chrome); everywhere else they keep the solid Panel step.
-- Machined light discipline: buttons and cards carry a whisper of top-down sheen, inputs are carved with an inner shadow, and the wheel gets an off-center specular wash, a lit rim, and a crowned hub — Apple hardware lighting, never glow.
+- Flat-state discipline: buttons and cards are solid fills that step tone on hover/press; inputs read sunken through the darker Field step alone — no sheen gradients, no carved insets. The wheel keeps its hardware lighting as the product's hero object.
 - A single accent — Pilot Blue — speaking for selection, focus, and primary action.
-- Motion with physics: the wheel's 160 ms pop and spring-hover overshoot are the system's signature; everything else is ease-out under 200 ms, and press feedback is a quiet sink, never a bounce.
+- Motion with physics: the wheel's 160 ms pop and spring-hover overshoot are the system's signature; everything else uses the standard modern curve (cubic-bezier(0.2, 0, 0, 1)) under 200 ms, and press feedback is a quiet tonal sink, never a bounce.
 - Radius and padding steps are small and consistent; nothing is more decorative than its function.
 
 ## Colors
@@ -202,13 +202,16 @@ The overlay's ring fills (**Ring Inner**, **Ring Outer**, **Wheel Center**) are 
 
 ### Runtime theme presets
 The catalog ships in `src/main/themes.mjs` (single source of truth; the main
-process loads the same literal through `themes.js`). Fourteen curated themes in
+process loads the same literal through `themes.js`). Twenty curated themes in
 families — **dark**: Midnight (default, blue-black + Pilot Blue), Ocean (deep
 teal + cyan), Grape (violet), Graphite (light plates, dark chrome), Ember (rust
 + amber), Solar (sienna + gold), Meadow (forest + mint), Space Gray (iOS dark —
-neutral elevated greys + dark System Blue); **light**: Porcelain
+neutral elevated greys + dark System Blue), Aurora (indigo night + periwinkle),
+Synthwave (violet black + magenta), Nord Frost (frost-bluish arctic greys +
+glacier cyan), Toxic (near-black green + acid lime); **light**: Porcelain
 (cool grey plates), Linen (warm cream + terracotta), Paper (white dial, electric
-blue), Aqua (Apple light — white plates on iOS group grey + System Blue);
+blue), Aqua (Apple light — white plates on iOS group grey + System Blue),
+Terracotta (warm clay + burnt sienna), Sage (soft green greys + forest);
 **high-contrast**: HC Black (black/yellow/white) and HC White. Every
 theme carries the same 7-role map (bg, ring1, ring2, hover, accent, text,
 center) plus persona fields (`mode`, `stroke`, `edge`, `shadow`, `sheen`) and an
@@ -264,8 +267,8 @@ Hybrid, tonal-first. Surfaces at rest are flat: depth between regions is communi
 - **Float high** (`0 12px 32px rgba(0,0,0,0.55)`): dropdown/combo lists, the icon picker modal, and modal cards — the highest layer.
 - **Float low** (`0 6px 20px rgba(0,0,0,0.4)`): toasts and ephemeral notices.
 - **Pilot glow** (`0 0 10px` accent): the brand dot only.
-- **Carved well** (`inset 0 1px 2px rgba(0,0,0,.35)`): inputs, selects, and the hotkey chip read as pressed into their surface.
-- **Machined sheen** (`linear-gradient(180deg, rgba(255,255,255,.07), transparent 45%)` on buttons, `.022` on cards): the top-down light on solid matter; depth from light, never from glow.
+- **Tonal sinking** (no inset shadows): inputs, selects, and the hotkey chip sit on the darker Field step; hover and press step tone again rather than lighting the surface.
+- **Flat fills** (no gradient overlays): buttons and cards are solid color; state lives in the ramp (`btn-bg → well-hover → field`), keeping surfaces honest under any theme matter; depth from light, never from glow.
 
 The modal scrim (`rgba(5,8,11,.65)`) is the only full-viewport tint; everything else avoids translucency.
 
@@ -273,30 +276,30 @@ The modal scrim (`rgba(5,8,11,.65)`) is the only full-viewport tint; everything 
 
 ## Shapes
 
-The form language is machined rectangles with small, disciplined corner radii: cards settle at 10px (the `--radius` invariant), modals at 12px, buttons and tabs at 8px, inputs at 7px, chips and type-tags as full pills (20px), mini controls at 6px. Nothing rounds past 12px except true pills — oversized 24–32px cards are AI chrome, not this system. The signature silhouette is the circle: the hub is a stroked disc, segments are true annular sectors separated by angular gaps, and the empty-state affordance is a dashed hairline outline — the one place a border becomes a shape statement.
+The form language is soft rectangles with disciplined corner radii: cards settle at 12px (the `--radius` invariant), modals at 14px, buttons and tabs at 8px, inputs at 7px, chips and type-tags as full pills (20px), mini controls at 6px. Nothing rounds past 12px except true pills — oversized 24–32px cards are AI chrome, not this system. The signature silhouette is the circle: the hub is a stroked disc, segments are true annular sectors separated by angular gaps, and the empty-state affordance is a dashed hairline outline — the one place a border becomes a shape statement.
 
 ## Components
 
 ### Buttons
-- **Shape:** lightly rounded rectangles (8px, 6px at mini scale).
-- **Material:** every fill carries the machined sheen — a top-down white-at-7% gradient over the solid color, lit from above.
+- **Shape:** lightly rounded rectangles (10px, 6px at mini scale).
+- **Material:** flat solid fills; hover lifts to the well-hover tone and press sinks to the field tone — no gradient lighting.
 - **Primary:** Accent Deep fill (`{colors.accent-deep}`), white text, 7px × 13px padding; hover lifts to Accent Deep Hi — never to full Pilot Blue under white text, which fails AA.
 - **Hover / Press / Focus:** border steps to accent on secondary buttons with a 5% brightness lift; press is a quiet sink (`scale(.985)` + brightness .94, ≤100 ms ease-out, no bounce); focus stays visible via the same accent border used on inputs.
 - **Secondary:** Button Slate fill, hairline border, ink text. **Danger:** text-only red on the default secondary body — destructive actions recede, they don't shout; hover steps the border to red. **Undo** reads as accent-colored text inside toasts.
 
 ### Switch (restyled checkbox)
-- The native `input[type=checkbox]` keeps its semantics, keyboard behavior, and label association; only its skin is Apple: a 28×16 full-pill track (`scroll-thumb` slate at rest, Pilot Blue when checked, hairline border) with a 12px white knob that slides 12px on a 150 ms ease-out, knob shadow `0 1px 2px rgba(0,0,0,.35)`. Disabled at 45%.
+- The native `input[type=checkbox]` keeps its semantics, keyboard behavior, and label association; only its skin is a modern flat switch: a 28×16 full-pill track (`scroll-thumb` slate at rest, Pilot Blue when checked, hairline border) with a 12px white knob that slides 12px on a 150 ms ease-out, knob shadow `0 1px 2px rgba(0,0,0,.35)`. Disabled at 45%.
 
 ### Slider
 - 3px full-pill trough filled Pilot Blue to the thumb (`--fill` percentage stop, updated in JS), slate beyond it; 14px pure-white circular thumb with `0 1px 4px rgba(0,0,0,.45)`, scaling 1.08→1.14 on hover/press; keyboard focus paints an accent outline on the knob.
 
 ### Chips / Tags
 - **Style:** Button Slate background, muted text, 1px hairline, full-pill radius (20px); used for action-type tags on segment rows.
-- **Preset chips:** full pill (999px) with the quiet card sheen; the live palette's matching preset is `.active` — accent border, hover-well fill, inner accent ring at 25%, semibold label.
+- **Preset chips:** full pill (999px), flat card fill; the live palette's matching preset is `.active` — accent border, hover-well fill, inner accent ring at 25%, semibold label.
 
 ### Cards / Containers
 - **Corner Style:** 10px throughout.
-- **Background:** Card on the content field, Panel for chrome regions; both carry the quiet card sheen (white at 2.2% fading by 60%).
+- **Background:** Card on the content field, Panel for chrome regions; both flat solid.
 - **Shadow Strategy:** flat at rest (see Float-Only Shadow Rule); hairline seam only.
 - **Internal Padding:** 16px; section heads sit 10px above content.
 
@@ -304,7 +307,7 @@ The form language is machined rectangles with small, disciplined corner radii: c
 The iOS grouped-list pattern, CSS-only: one `.seg-list` container owns the card surface (1px hairline, 10px radius, `overflow: clip`); `.seg-row`s are borderless flush siblings separated by 1px hairline `border-top`s — never nested cards, never gapped rounded rows. Hover washes the row to `hover-well`; the expanded editor hangs below its row on the Edit Well fill behind its own hairline.
 
 ### Inputs / Fields
-- **Style:** Field-well background, hairline border, 7px radius, 7px × 9px padding, carved with an inner top shadow; checkboxes render as the Switch above and ranges as the Slider above.
+- **Style:** Field-well background, hairline border, 10px radius, 7px × 9px padding, flat (the dark Field step alone conveys the well); checkboxes render as the Switch above and ranges as the Slider above.
 - **Focus:** border steps to accent and a 3px **Focus Halo** (`{colors.focus-halo}`) rings the field — one state, both properties.
 - **Error:** dedicated red banner block (`#3a1d1d` well, Signal Red border, light-red text) rather than per-field tinting.
 
