@@ -38,7 +38,7 @@
   "build": {
     "appId": "local.nucleus",
     "productName": "Nucleus",
-    "buildNumber": "7",
+    "buildNumber": "8",
     "directories": {
       "output": "dist"
     },
